@@ -31,6 +31,14 @@
       - id: session-projection
         name: "@deepseek-ai/dsh-session-projection"
 
+      - id: session-query
+        name: "@deepseek-ai/dsh-session-query-sqlite"
+        config:
+            # Exact reads (including subagent listChildren) need the service;
+            # full-text search and its SQLite index are disabled for v1.
+            path: ":memory:"
+            openAt: never
+
       - id: session-title
         name: "@deepseek-ai/dsh-session-title"
         config:
@@ -143,6 +151,37 @@
         config:
             agents: []
 
+      # --- Goal and subagent rows (M4) -------------------------------------
+
+      - id: goal
+        name: "@deepseek-ai/dsh-goal"
+
+      - id: subagent
+        name: "@deepseek-ai/dsh-subagent"
+        config:
+            maxDepth: 1
+            maxActiveSubagents: !!js Number(process.env.NOKORIBI_MAX_ACTIVE_SUBAGENTS ?? 9007199254740991)
+
+      - id: subagent-spawn
+        name: "@deepseek-ai/dsh-subagent-spawn-in-process"
+        config:
+            providerName: spawn
+
+      - id: tool-subagent
+        name: "@deepseek-ai/dsh-tool-subagent"
+        config:
+            provider: spawn
+            maxDepth: 1
+
+      - id: tool-subagent-control
+        name: "@deepseek-ai/dsh-tool-subagent-control"
+
+      - id: tool-goal
+        name: "@deepseek-ai/dsh-tool-goal"
+
+      - id: goal-round-driver
+        name: "@deepseek-ai/dsh-goal-round-driver"
+
       # --- Nokoribi rows ---------------------------------------------------
 
       - id: nokoribi-prompt
@@ -234,3 +273,7 @@
             workspace: !!js process.env.NOKORIBI_WORKSPACE ?? dshHomePath('workspace')
             shutdownGraceMs: !!js Number(process.env.NOKORIBI_SHUTDOWN_GRACE_MS ?? 20000)
             version: !!js process.env.NOKORIBI_VERSION ?? '0.0.0-dev'
+            goalProvider: !!js process.env.NOKORIBI_GOAL_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
+            goalModel: !!js process.env.NOKORIBI_GOAL_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
+            goalReasoningEffort: !!js process.env.NOKORIBI_GOAL_REASONING_EFFORT ?? ''
+            goalRecoveryTimeoutMs: !!js Number(process.env.NOKORIBI_GOAL_RECOVERY_TIMEOUT_MS ?? 30000)
