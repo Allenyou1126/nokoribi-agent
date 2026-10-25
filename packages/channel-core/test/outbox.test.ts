@@ -109,4 +109,40 @@ describe("outbox store", () => {
         expect(reloaded.historyAfter(0).length).toBe(2);
         expect(reloaded.pendingCount).toBe(1);
     });
+    it("fails pending interaction prompts and discards terminal entries", async () => {
+        const { store: box } = await store();
+        const reply = await box.enqueue({
+            channelId: "local-test",
+            chatId: "local",
+            kind: "reply",
+            text: "keep",
+        });
+        const interaction = await box.enqueue({
+            channelId: "local-test",
+            chatId: "local",
+            kind: "interaction",
+            text: "prompt",
+            interactionId: "i-1",
+        });
+        const other = await box.enqueue({
+            channelId: "local-test",
+            chatId: "local",
+            kind: "interaction",
+            text: "other",
+            interactionId: "i-2",
+        });
+        await expect(box.failPendingInteraction("i-1")).resolves.toBe(1);
+        expect(box.pending().map((item) => item.seq)).toEqual([
+            reply.seq,
+            other.seq,
+        ]);
+        await expect(box.failPendingInteractions()).resolves.toBe(1);
+        expect(box.pendingCount).toBe(1);
+        await box.markDiscarded(reply.seq);
+        expect(box.pendingCount).toBe(0);
+        expect(
+            box.historyAfter(0).every((item) => item.state === "failed")
+        ).toBe(true);
+        expect(interaction.seq).toBe(2);
+    });
 });

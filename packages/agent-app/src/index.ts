@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-permission-presets";
 import z from "@deepseek-ai/schemastery";
 
 import { Daemon, type AgentAppConfig } from "./daemon.js";
@@ -19,6 +20,7 @@ export const inject: string[] = [
     "sessionPersistence",
     "commands",
     "channels",
+    "permissionPresets",
 ];
 
 /** Runtime configuration schema (validated by the Loader). */

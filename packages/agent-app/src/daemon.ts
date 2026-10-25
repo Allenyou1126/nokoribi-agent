@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 
 import type { Context } from "@deepseek-ai/cordis";
-import type { AgentHandle, AgentOptions } from "@deepseek-ai/dsh-agent";
+import type { Agent, AgentHandle, AgentOptions } from "@deepseek-ai/dsh-agent";
 import type {
     CommandInvocation,
     CommandResult,
 } from "@deepseek-ai/dsh-commands";
 import type { AssistantMessage } from "@deepseek-ai/dsh-llm";
+import type {} from "@deepseek-ai/dsh-permission-presets";
 import {
     SessionId,
     type Session,
@@ -112,6 +113,9 @@ export class Daemon {
         this.shuttingDown = true;
         this.ready = false;
         this.ctx.channels.pause();
+        await this.ctx.channels
+            .abortInteractions("shutdown")
+            .catch(() => undefined);
         const agent = this.handle?.agent;
         try {
             if (agent !== undefined) {
@@ -221,17 +225,60 @@ export class Daemon {
 
     private async createAgent(): Promise<AgentHandle> {
         const id = `main-${randomUUID()}`;
-        return await this.ctx.agents.create({
+        const handle = await this.ctx.agents.create({
             sessionId: SessionId(id),
             meta: { cwd: this.paths.workspaceDir },
             agentOptions: this.agentOptions(),
         });
+        this.installMainPermissions(handle.agent);
+        return handle;
     }
 
     private async resumeAgent(sessionId: string): Promise<AgentHandle> {
-        return await this.ctx.agents.resume({
+        const handle = await this.ctx.agents.resume({
             resumeSessionId: SessionId(sessionId),
             agentOptions: this.agentOptions(),
+        });
+        this.installMainPermissions(handle.agent);
+        return handle;
+    }
+
+    private installMainPermissions(agent: Agent): void {
+        this.ctx.permissionPresets.set(agent.session, "auto");
+        const current = this.ctx.permissionPresets.current(agent.session);
+        if (current !== "auto") {
+            throw new Error(
+                `failed to select the auto permission preset (got ${current})`
+            );
+        }
+        this.installPermissionCommand(agent);
+    }
+
+    private installPermissionCommand(agent: Agent): void {
+        agent.ctx.inject(["commands"], (commandCtx) => {
+            commandCtx.effect(() =>
+                commandCtx.commands.register({
+                    name: "permission",
+                    description:
+                        "Report the current permission preset; switching is disabled",
+                    input: { hint: "<preset>" },
+                    handler: (invocation) => {
+                        const current = this.ctx.permissionPresets.current(
+                            invocation.agent.session
+                        );
+                        if (invocation.rawInput.trim() !== "") {
+                            return {
+                                kind: "error",
+                                text: `不支持切换权限预设；当前为 ${current}。v1 没有 DSH 沙箱回退，切走会绕过 Auto review。`,
+                            };
+                        }
+                        return {
+                            kind: "success",
+                            text: `permission: ${current}\nAuto review 已启用；切换预设会绕过审查，v1 不支持。`,
+                        };
+                    },
+                })
+            );
         });
     }
 
@@ -280,6 +327,12 @@ export class Daemon {
                         : "idle"
                     : "starting",
             goals: [],
+            permission:
+                this.handle === undefined
+                    ? null
+                    : this.ctx.permissionPresets.current(
+                          this.handle.agent.session
+                      ),
             lastRestartReason: this.restartReason,
             ready: this.ready,
         }));
@@ -370,11 +423,12 @@ export class Daemon {
         });
     }
 
-    private stopCommand(): CommandResult {
+    private async stopCommand(): Promise<CommandResult> {
         const handle = this.handle;
         if (handle === undefined) {
             return { kind: "error", text: "主会话尚未就绪" };
         }
+        await this.ctx.channels.abortInteractions("user-stop");
         handle.agent.cancel({ kind: "user" });
         this.turnText.clear();
         return { kind: "success", text: "已停止" };
@@ -388,6 +442,7 @@ export class Daemon {
             `agent: ${status.agentStatus}`,
             `mainSession: ${status.mainSessionId ?? "-"}`,
             `model: ${this.config.model}`,
+            `permission: ${status.permission ?? "-"}`,
             `goals: ${status.goals.length}`,
             `pendingInteractions: ${status.pendingInteractions}`,
             `outbox: ${status.outboxLength}`,
@@ -426,6 +481,7 @@ export class Daemon {
     private async clearSession(): Promise<void> {
         const old = this.handle;
         if (old === undefined) throw new Error("main agent is not created");
+        await this.ctx.channels.abortInteractions("clear");
         old.agent.cancel({ kind: "user" });
         await this.ctx.sessions.flush(old.agent.session);
         const previousId = this.mainSessionId;

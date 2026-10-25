@@ -4,6 +4,8 @@ import { Context, Service } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { CommandResult } from "@deepseek-ai/dsh-commands";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import type {} from "@deepseek-ai/dsh-user-approval";
+import type {} from "@deepseek-ai/dsh-user-questions";
 import z from "@deepseek-ai/schemastery";
 import {
     createLogger,
@@ -14,6 +16,7 @@ import {
     type RestartReason,
 } from "@nokoribi/shared";
 
+import { InteractionBroker, type InteractionAbortReason } from "./broker.js";
 import type {
     ChannelDriver,
     ChannelRuntime,
@@ -42,6 +45,7 @@ export interface DaemonStatus {
     readonly goals: readonly unknown[];
     readonly pendingInteractions: number;
     readonly outboxLength: number;
+    readonly permission: string | null;
     readonly lastRestartReason: RestartReason | null;
     readonly ready: boolean;
 }
@@ -65,6 +69,8 @@ export interface ChannelCoreConfig {
     readonly outboxHistoryLimit: number;
     readonly dedupeLimit: number;
     readonly ingressBufferLimit: number;
+    readonly approvalTimeoutMs: number;
+    readonly questionTimeoutMs: number;
 }
 
 interface Waiter {
@@ -79,7 +85,12 @@ interface Waiter {
  * buffered until `attachRuntime` releases them.
  */
 export class ChannelService extends Service {
-    static readonly inject: string[] = ["agents", "commands"];
+    static readonly inject: string[] = [
+        "agents",
+        "commands",
+        "approval",
+        "userQuestions",
+    ];
 
     static readonly Config: unknown = z.object({
         allowedSenders: z.array(z.string()).default(["local-user"]),
@@ -91,12 +102,16 @@ export class ChannelService extends Service {
         outboxHistoryLimit: z.natural().min(1).default(1000),
         dedupeLimit: z.natural().min(1).default(5000),
         ingressBufferLimit: z.natural().min(1).default(1000),
+        approvalTimeoutMs: z.natural().min(1).default(60000),
+        questionTimeoutMs: z.natural().min(1).default(300000),
     });
 
     private readonly config: ChannelCoreConfig;
     private readonly logger: Logger;
     private readonly outbox: OutboxStore;
     private readonly seen: SeenStore;
+    private readonly broker: InteractionBroker;
+    private staleInteractions = 0;
     private readonly drivers = new Map<string, ChannelDriver>();
     private readonly buffer: InboundMessage[] = [];
     private readonly waiters = new Set<Waiter>();
@@ -127,7 +142,53 @@ export class ChannelService extends Service {
             join(paths.stateDir, "ingress-seen.json"),
             config.dedupeLimit
         );
+        this.broker = new InteractionBroker({
+            approvalTimeoutMs: config.approvalTimeoutMs,
+            questionTimeoutMs: config.questionTimeoutMs,
+            logger: createLogger("interaction-broker"),
+            sendPrompt: async (input) => {
+                const chat = this.lastActiveChat ?? {
+                    channelId: this.defaultChannelId(),
+                    chatId: this.config.defaultChatId,
+                };
+                await this.enqueueText(
+                    "interaction",
+                    chat.chatId,
+                    input.text,
+                    input.interactionId
+                );
+            },
+            sendNotice: async (text) => {
+                await this.notify(text);
+            },
+            onTerminal: (interactionId) => {
+                void this.outbox
+                    .failPendingInteraction(interactionId)
+                    .catch((error: unknown) => {
+                        this.logger.error(
+                            "failed to discard interaction prompt",
+                            {
+                                interactionId,
+                                error:
+                                    error instanceof Error
+                                        ? error.message
+                                        : String(error),
+                            }
+                        );
+                    });
+            },
+        });
         this.registerCommands();
+        ctx.effect(() =>
+            ctx.on("approval/request", (request) =>
+                this.broker.requestApproval(request)
+            )
+        );
+        ctx.effect(() =>
+            ctx.on("user-questions/request", (request) =>
+                this.broker.requestQuestion(request)
+            )
+        );
         ctx.effect(() => () => this.dispose());
     }
 
@@ -135,6 +196,7 @@ export class ChannelService extends Service {
     async initialize(): Promise<void> {
         await this.outbox.load();
         await this.seen.load();
+        this.staleInteractions = await this.outbox.failPendingInteractions();
     }
 
     /** Install the status source used by `/v1/status` and `/status`. */
@@ -195,6 +257,13 @@ export class ChannelService extends Service {
     /** Retry pending outbox entries and wait for the current pump pass. */
     async resumeOutbox(): Promise<void> {
         await this.pump();
+        if (this.staleInteractions > 0 && this.runtime !== undefined) {
+            const count = this.staleInteractions;
+            this.staleInteractions = 0;
+            await this.notify(
+                `上次有 ${String(count)} 条待审批/提问，进程重启后已失效。`
+            );
+        }
     }
 
     /** Release buffered ingress in arrival order. */
@@ -211,6 +280,11 @@ export class ChannelService extends Service {
                 });
             }
         }
+    }
+
+    /** Abort every pending approval/question and optionally notify the user. */
+    async abortInteractions(reason: InteractionAbortReason): Promise<void> {
+        await this.broker.abortAll(reason, reason !== "disposed");
     }
 
     /** Send one final assistant reply to the active chat. */
@@ -338,12 +412,13 @@ export class ChannelService extends Service {
                     ? ("starting" as const)
                     : this.agentStatus(),
             goals: [],
+            permission: null,
             lastRestartReason: null,
             ready: this.runtime !== undefined,
         };
         return {
             ...base,
-            pendingInteractions: base.pendingInteractions ?? 0,
+            pendingInteractions: this.broker.pendingCount,
             outboxLength: this.outbox.pendingCount,
         };
     }
@@ -408,6 +483,10 @@ export class ChannelService extends Service {
 
         if (text.startsWith("/")) {
             await this.executeCommand(runtime, text, message);
+            return { accepted: true, duplicate: false };
+        }
+
+        if (this.broker.hasPending() && (await this.broker.handleReply(text))) {
             return { accepted: true, duplicate: false };
         }
 
@@ -556,6 +635,16 @@ export class ChannelService extends Service {
             await this.outbox.load();
             for (const item of this.outbox.pending()) {
                 if (this.disposed) return;
+                if (
+                    item.kind === "interaction" &&
+                    item.interactionId !== null &&
+                    this.broker.isTerminal(item.interactionId)
+                ) {
+                    await this.outbox.markDiscarded(item.seq);
+                    this.notifyWaiters();
+                    progressed = true;
+                    continue;
+                }
                 if (item.nextAttemptAt !== null) {
                     const delay = Date.parse(item.nextAttemptAt) - Date.now();
                     if (delay > 0) {
@@ -631,6 +720,7 @@ export class ChannelService extends Service {
         this.waiters.clear();
         const drivers = [...this.drivers.values()];
         this.drivers.clear();
+        await this.broker.dispose();
         await Promise.allSettled(drivers.map((driver) => driver.stop()));
         await this.outbox.flush();
         await this.seen.flush();
@@ -639,4 +729,9 @@ export class ChannelService extends Service {
 
 export default ChannelService;
 export const name = "channel-core";
-export const inject: string[] = ["agents", "commands"];
+export const inject: string[] = [
+    "agents",
+    "commands",
+    "approval",
+    "userQuestions",
+];

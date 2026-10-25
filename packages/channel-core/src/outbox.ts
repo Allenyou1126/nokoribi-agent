@@ -129,6 +129,72 @@ export class OutboxStore {
         return retry;
     }
 
+    /** Mark every still-pending interaction as failed; returns the count. */
+    async failPendingInteractions(): Promise<number> {
+        await this.ensureLoaded();
+        const pending = this.document.items.filter(
+            (item) => item.state === "pending" && item.kind === "interaction"
+        );
+        if (pending.length === 0) return 0;
+        const failed = new Set(pending.map((item) => item.seq));
+        this.document = {
+            ...this.document,
+            items: this.document.items.map((item) =>
+                failed.has(item.seq)
+                    ? { ...item, state: "failed", nextAttemptAt: null }
+                    : item
+            ),
+        };
+        this.pruneTerminal();
+        await this.persist();
+        return pending.length;
+    }
+
+    /** Mark one pending interaction prompt as failed; returns the count. */
+    async failPendingInteraction(interactionId: string): Promise<number> {
+        await this.ensureLoaded();
+        const pending = this.document.items.filter(
+            (item) =>
+                item.state === "pending" &&
+                item.kind === "interaction" &&
+                item.interactionId === interactionId
+        );
+        if (pending.length === 0) return 0;
+        const failed = new Set(pending.map((item) => item.seq));
+        this.document = {
+            ...this.document,
+            items: this.document.items.map((item) =>
+                failed.has(item.seq)
+                    ? { ...item, state: "failed", nextAttemptAt: null }
+                    : item
+            ),
+        };
+        this.pruneTerminal();
+        await this.persist();
+        return pending.length;
+    }
+
+    /** Drop one pending entry that can no longer be delivered usefully. */
+    async markDiscarded(seq: number): Promise<void> {
+        await this.ensureLoaded();
+        const item = this.document.items.find((entry) => entry.seq === seq);
+        if (item === undefined || item.state !== "pending") return;
+        this.document = {
+            ...this.document,
+            items: this.document.items.map((entry) =>
+                entry.seq === seq
+                    ? {
+                          ...entry,
+                          state: "failed",
+                          nextAttemptAt: null,
+                      }
+                    : entry
+            ),
+        };
+        this.pruneTerminal();
+        await this.persist();
+    }
+
     /** Wait for all queued persistence work. */
     async flush(): Promise<void> {
         await this.persistChain;
