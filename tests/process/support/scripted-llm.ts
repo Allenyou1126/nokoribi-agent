@@ -12,17 +12,23 @@ export interface ScriptedRequest {
 }
 
 export type ScriptedResponse =
-    | { readonly kind: "text"; readonly text: string }
+    | {
+          readonly kind: "text";
+          readonly text: string;
+          readonly delayMs?: number;
+      }
     | {
           readonly kind: "tool-call";
           readonly name: string;
           readonly arguments: Record<string, unknown>;
+          readonly delayMs?: number;
       }
     | {
           readonly kind: "error";
           readonly status: number;
           readonly message: string;
           readonly code?: string;
+          readonly delayMs?: number;
       };
 
 export interface ScriptedLlmOptions {
@@ -232,6 +238,11 @@ export async function startScriptedLlm(
                     options.review?.(scripted, tier, index) ?? DEFAULT_REVIEW;
             } else {
                 result = options.main(scripted, mainIndex++);
+            }
+            if (result.delayMs !== undefined && result.delayMs > 0) {
+                await new Promise((resolve) =>
+                    setTimeout(resolve, result.delayMs)
+                );
             }
             if (result.kind === "error") {
                 sendError(

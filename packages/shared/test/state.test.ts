@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
     defaultAgentState,
+    isGoalChildSession,
     loadAgentState,
     saveAgentState,
+    shortGoalId,
 } from "../src/state.js";
 
 const dirs: string[] = [];
@@ -39,6 +41,22 @@ describe("agent state", () => {
             ...defaultAgentState("0.1.0"),
             mainSessionId: "main-1",
             lastActiveChat: { channelId: "local-test", chatId: "local" },
+            goals: [
+                {
+                    sessionId: "goal-a1b2c3d4-child",
+                    goalId: "goal-uuid",
+                    revision: 2,
+                    phase: "active" as const,
+                    lastKnownRounds: 3,
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                    updatedAt: "2026-01-01T00:01:00.000Z",
+                    source: "goal-command" as const,
+                    objective: "probe",
+                    maxGoalRounds: 10,
+                    label: "probe goal",
+                    model: { provider: "p", model: "m" },
+                },
+            ],
             extra: "kept",
         };
         await saveAgentState(path, state);
@@ -48,6 +66,14 @@ describe("agent state", () => {
         expect((loaded.state as unknown as { extra?: string }).extra).toBe(
             "kept"
         );
+        expect(loaded.state?.goals[0]?.objective).toBe("probe");
+        expect(loaded.state?.goals[0]?.model).toEqual({
+            provider: "p",
+            model: "m",
+        });
+        expect(isGoalChildSession("goal-a1b2-child")).toBe(true);
+        expect(shortGoalId("goal-a1b2c3d4-child")).toBe("goal-a1b");
+        expect(isGoalChildSession("main-1")).toBe(false);
     });
 
     it("backs up corrupt state instead of throwing it away", async () => {
