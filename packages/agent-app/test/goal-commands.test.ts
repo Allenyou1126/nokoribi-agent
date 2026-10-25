@@ -15,6 +15,33 @@ describe("parseGoalCommand", () => {
         });
     });
 
+    it("parses trailing model and effort flags in any order", () => {
+        expect(
+            parseGoalCommand(
+                "new 修复路由 --model p/m --effort high --rounds 2"
+            )
+        ).toEqual({
+            kind: "new",
+            objective: "修复路由",
+            maxRounds: 2,
+            model: { provider: "p", model: "m" },
+            reasoningEffort: "high",
+        });
+        expect(parseGoalCommand("new 做 --effort low")).toEqual({
+            kind: "new",
+            objective: "做",
+            reasoningEffort: "low",
+        });
+        expect(parseGoalCommand("new 做 --model bad")).toEqual({
+            kind: "error",
+            message: "--model 需要 provider/model 形式的精确路由。",
+        });
+        expect(parseGoalCommand("new 做 --model p/m --effort")).toEqual({
+            kind: "error",
+            message: "--effort 需要一个值。",
+        });
+    });
+
     it("keeps a trailing --rounds literal only when it is a flag", () => {
         expect(parseGoalCommand("new 处理 --rounds 3 的情况")).toEqual({
             kind: "new",

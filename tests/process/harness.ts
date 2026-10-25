@@ -35,6 +35,31 @@ export interface OutboundItem {
     interactionId?: string;
 }
 
+export interface StatusDetails {
+    workspace: string;
+    state: string;
+    lock: string;
+    storage: string;
+    dshVersion: string;
+    appVersion: string;
+    model: { provider: string; model: string };
+    reviewer: unknown;
+    goals: unknown[];
+    schedules: unknown[];
+    sandboxes: unknown[];
+    memory: {
+        activeEntries: number;
+        archivedEntries: number;
+        invalidEntries: number;
+        bytes: number;
+    };
+    recentErrors: unknown[];
+}
+
+export interface FullStatus extends Status {
+    details: StatusDetails;
+}
+
 export interface Status {
     version: string;
     uptimeSec: number;
@@ -215,6 +240,14 @@ export async function status(daemon: DaemonHandle): Promise<Status> {
         headers: { authorization: `Bearer ${daemon.token}` },
     });
     return (await response.json()) as Status;
+}
+
+export async function statusFull(daemon: DaemonHandle): Promise<FullStatus> {
+    const response = await fetch(
+        `http://127.0.0.1:${daemon.port}/v1/status?full=1`,
+        { headers: { authorization: `Bearer ${daemon.token}` } }
+    );
+    return (await response.json()) as FullStatus;
 }
 
 export async function readState(

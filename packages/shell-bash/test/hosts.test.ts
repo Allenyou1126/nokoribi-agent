@@ -124,6 +124,21 @@ describe("ShellHostRegistry", () => {
         expect(registry.list()).toEqual([]);
     });
 
+    it("reports which hosts expose per-session status", () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+        });
+        registry.register(localProvider());
+        registry.register(
+            sandboxProvider({
+                status: async () => ({ generation: 1 }),
+            })
+        );
+        expect(registry.hasStatus("local:workspace")).toBe(false);
+        expect(registry.hasStatus("sandbox:default")).toBe(true);
+        expect(registry.hasStatus("missing:host")).toBe(false);
+    });
+
     it("sorts host discovery output by id", () => {
         const registry = new ShellHostRegistry(new Context(), {
             defaultHost: "local:workspace",

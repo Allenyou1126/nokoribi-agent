@@ -54,7 +54,11 @@ describe("agent state", () => {
                     objective: "probe",
                     maxGoalRounds: 10,
                     label: "probe goal",
-                    model: { provider: "p", model: "m" },
+                    model: {
+                        provider: "p",
+                        model: "m",
+                        reasoningEffort: "high",
+                    },
                 },
             ],
             extra: "kept",
@@ -70,6 +74,7 @@ describe("agent state", () => {
         expect(loaded.state?.goals[0]?.model).toEqual({
             provider: "p",
             model: "m",
+            reasoningEffort: "high",
         });
         expect(isGoalChildSession("goal-a1b2-child")).toBe(true);
         expect(shortGoalId("goal-a1b2c3d4-child")).toBe("goal-a1b");
