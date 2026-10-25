@@ -27,6 +27,8 @@ import { assertSessionId, sandboxPaths } from "./paths.js";
 
 /** Runtime configuration for the sandbox host. */
 export interface SandboxHostConfig {
+    /** Whether this host should register; deployment can disable it. */
+    readonly enabled?: boolean;
     readonly id: string;
     /** `$DSH_HOME/sandboxes`. */
     readonly root: string;

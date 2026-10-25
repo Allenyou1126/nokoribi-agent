@@ -29,6 +29,9 @@ export type Config = SandboxHostConfig;
 
 /** Sandbox host configuration schema; every field has a deployment default. */
 export const Config: ObjectSchema = Schema.object({
+    enabled: Schema.boolean()
+        .default(true)
+        .description("Register the sandbox host and its tools."),
     id: Schema.string()
         .default("sandbox:default")
         .description("Host id to register; must keep the sandbox: prefix."),
@@ -75,6 +78,7 @@ export const Config: ObjectSchema = Schema.object({
  * @param config - validated sandbox configuration.
  */
 export function apply(ctx: Context, config: SandboxHostConfig): void {
+    if (config.enabled === false) return;
     const logger = createLogger("sandbox");
     const host = new SandboxHost(config, {
         spawnBash: (request) => ctx.shellHosts.spawnBash(request),

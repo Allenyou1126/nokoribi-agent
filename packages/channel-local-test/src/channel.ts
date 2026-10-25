@@ -23,6 +23,8 @@ import {
 
 /** Resolved local test channel configuration. */
 export interface LocalTestConfig {
+    /** Whether the loopback HTTP surface should be mounted. */
+    readonly enabled?: boolean;
     readonly host: string;
     readonly port: number;
     readonly token: string;

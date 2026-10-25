@@ -36,6 +36,8 @@ type ObjectSchema = ReturnType<typeof Schema.object>;
 
 /** Local host plugin configuration. */
 export interface Config {
+    /** Whether this host should register; deployment can disable it. */
+    readonly enabled?: boolean | undefined;
     /** Host id to register; must keep the `local:` prefix. */
     readonly id?: string | undefined;
     /** Default working directory passed by the daemon (workspace root). */
@@ -46,6 +48,9 @@ export interface Config {
 
 /** Local host configuration schema; the id has a stable default. */
 export const Config: ObjectSchema = Schema.object({
+    enabled: Schema.boolean()
+        .default(true)
+        .description("Register the local host for model use."),
     id: Schema.string()
         .default(LOCAL_HOST_ID)
         .description("Host id to register; must keep the local: prefix."),
@@ -103,6 +108,7 @@ export const apply: (ctx: Context, config?: Config) => () => void = (
     ctx,
     config = {}
 ) => {
+    if (config.enabled === false) return () => {};
     const id = config.id ?? LOCAL_HOST_ID;
     const extraPackages = config.extraPackages ?? [];
     const start = async (

@@ -14,6 +14,7 @@ export const inject: string[] = ["channels"];
 
 /** Runtime configuration schema (validated by the Loader). */
 export const Config: unknown = z.object({
+    enabled: z.boolean().default(true),
     host: z.string().default("127.0.0.1"),
     port: z.natural().default(8787),
     token: z.string().default(""),
@@ -30,6 +31,7 @@ export async function apply(
     ctx: Context,
     config: LocalTestConfig
 ): Promise<void> {
+    if (config.enabled === false) return;
     const channel = new LocalTestChannel(config, ctx.channels);
     await channel.listen();
     const disposeDriver = await ctx.channels.registerDriver(channel);
