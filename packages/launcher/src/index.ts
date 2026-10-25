@@ -80,6 +80,10 @@ function helpText(version: string): string {
         "  NOKORIBI_MEMORY_REASONING_EFFORT memory curator reasoning effort (optional)",
         "  NOKORIBI_MEMORY_CURATOR     enable best-effort memory extraction (default true)",
         "  NOKORIBI_MEMORY_CURATOR_TIMEOUT_MS memory curator bound (default 60000)",
+        "  NOKORIBI_GOAL_DEFAULT_MAX_ROUNDS default goal round cap (default 256)",
+        "  NOKORIBI_LOG_LEVEL          debug|info|warn|error (default info)",
+        "  NOKORIBI_SYSTEMD_NOTIFY     systemd-notify helper path (default: PATH)",
+        "  NOKORIBI_READY_TIMEOUT_MS   launcher readiness wait; 0 disables (default 30000)",
         "  NOKORIBI_PATCH               colon-separated extra overlay files",
         "  NOKORIBI_SOUL_FILE           persona file (default: repository SOUL.md)",
         "  NOKORIBI_TEMPLATES_DIR       AGENTS.md templates directory",
@@ -165,7 +169,14 @@ async function main(): Promise<void> {
 async function waitForReady(home: string): Promise<void> {
     const readyPath = resolve(home, "run/ready.json");
     const errorPath = resolve(home, "run/startup-error.json");
-    const deadline = Date.now() + 30_000;
+    const configured = Number(
+        process.env.NOKORIBI_READY_TIMEOUT_MS?.trim() || "30000"
+    );
+    const timeoutMs =
+        Number.isSafeInteger(configured) && configured >= 0
+            ? configured
+            : 30_000;
+    const deadline = timeoutMs === 0 ? undefined : Date.now() + timeoutMs;
     for (;;) {
         try {
             const raw = await readFile(errorPath, "utf8");
@@ -188,9 +199,10 @@ async function waitForReady(home: string): Promise<void> {
         } catch {
             // not ready yet
         }
-        if (Date.now() > deadline) {
+        if (deadline !== undefined && Date.now() > deadline) {
             throw new Error(
-                "daemon did not become ready within 30s; refusing to keep a half-started process"
+                `daemon did not become ready within ${String(timeoutMs)}ms; ` +
+                    "refusing to keep a half-started process"
             );
         }
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));

@@ -1,4 +1,4 @@
-# Nokoribi Agent M1-M5 bundle.
+# Nokoribi Agent M1-M6 bundle.
 #
 # This is a complete Cordis tree, not a layer over dsh-base. Rows are loaded in
 # order; `inject` declarations decide activation. Keep row ids stable: the NixOS
@@ -313,6 +313,7 @@
             goalModel: !!js process.env.NOKORIBI_GOAL_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
             goalReasoningEffort: !!js process.env.NOKORIBI_GOAL_REASONING_EFFORT ?? ''
             goalModels: !!js (process.env.NOKORIBI_GOAL_MODELS ?? '').split(',').map((value) => value.trim()).filter(Boolean)
+            goalDefaultMaxRounds: !!js Number(process.env.NOKORIBI_GOAL_DEFAULT_MAX_ROUNDS ?? 256)
             goalRecoveryTimeoutMs: !!js Number(process.env.NOKORIBI_GOAL_RECOVERY_TIMEOUT_MS ?? 30000)
             memoryProvider: !!js process.env.NOKORIBI_MEMORY_PROVIDER ?? process.env.NOKORIBI_GOAL_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
             memoryModel: !!js process.env.NOKORIBI_MEMORY_MODEL ?? process.env.NOKORIBI_GOAL_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'

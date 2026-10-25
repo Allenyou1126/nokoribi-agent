@@ -37,6 +37,7 @@ import {
     resolvePackageVersion,
     saveAgentState,
     SingleInstanceLock,
+    SystemdNotifier,
     writeJsonAtomic,
     type AgentState,
     type HomePaths,
@@ -72,6 +73,8 @@ export interface AgentAppConfig {
     readonly goalReasoningEffort?: string;
     /** Exact provider/model routes accepted for goal children. */
     readonly goalModels?: readonly string[];
+    /** Round cap for goals that omit an explicit max (default 256). */
+    readonly goalDefaultMaxRounds?: number;
     /** Bound for one cold goal recovery. */
     readonly goalRecoveryTimeoutMs?: number;
     /** One-shot memory-curator route; defaults to the goal route. */
@@ -104,6 +107,11 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+function normalizeEffort(value: string | undefined): string | undefined {
+    const trimmed = value?.trim();
+    return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+}
+
 /**
  * Daemon lifecycle: lock, state, main agent create/resume, command surface,
  * reply mirroring, system notices, and graceful shutdown.
@@ -115,6 +123,7 @@ export class Daemon {
     private readonly logger: Logger;
     private readonly goals: GoalManager;
     private readonly curator: MemoryCurator;
+    private readonly notifier: SystemdNotifier;
     private readonly goalConfigError: Error | undefined;
     private readonly turnText = new Map<number, string>();
     private lock: SingleInstanceLock | undefined;
@@ -133,6 +142,7 @@ export class Daemon {
         this.config = config;
         this.paths = resolveHomePaths(config.workspace);
         this.logger = createLogger("agent-app");
+        this.notifier = new SystemdNotifier({ logger: this.logger });
         const goalEffortRaw =
             config.goalReasoningEffort ?? config.reasoningEffort;
         const goalEffort =
@@ -160,6 +170,7 @@ export class Daemon {
                 ? {}
                 : { reasoningEffort: goalEffort }),
             allowedModels,
+            defaultMaxRounds: config.goalDefaultMaxRounds ?? 256,
             recoveryTimeoutMs: config.goalRecoveryTimeoutMs ?? 30000,
             archivePath: this.paths.goalsArchivePath,
             notify: (text) => this.ctx.channels.notify(text),
@@ -206,6 +217,8 @@ export class Daemon {
             await this.ctx.channels.initialize();
             await this.recover();
         } catch (error) {
+            this.notifier.stop();
+            await unlink(this.paths.readyPath).catch(() => undefined);
             await writeJsonAtomic(this.paths.startupErrorPath, {
                 message: errorMessage(error),
                 pid: process.pid,
@@ -221,6 +234,7 @@ export class Daemon {
         if (this.shuttingDown) return;
         this.shuttingDown = true;
         this.ready = false;
+        await this.notifier.stopping();
         this.ctx.channels.pause();
         await this.ctx.channels
             .abortInteractions("shutdown")
@@ -254,6 +268,7 @@ export class Daemon {
             });
         } finally {
             await unlink(this.paths.readyPath).catch(() => undefined);
+            this.notifier.stop();
             this.lock?.release();
             this.lock = undefined;
         }
@@ -331,6 +346,16 @@ export class Daemon {
             sessionId: this.mainSessionId,
             startedAt: new Date().toISOString(),
         });
+        if (this.notifier.enabled) {
+            try {
+                await this.notifier.ready(
+                    `ready (session ${this.mainSessionId ?? "-"})`
+                );
+            } catch (error) {
+                await unlink(this.paths.readyPath).catch(() => undefined);
+                throw error;
+            }
+        }
         this.logger.info("daemon ready", {
             session: this.mainSessionId,
             restart: this.restartReason,
@@ -399,14 +424,15 @@ export class Daemon {
     }
 
     private agentOptions(): AgentOptions {
+        const effort = normalizeEffort(this.config.reasoningEffort);
         return {
             provider: this.config.provider,
             model: this.config.model,
-            ...(this.config.reasoningEffort === undefined
+            ...(effort === undefined
                 ? {}
                 : {
-                      reasoningEffort: this.config
-                          .reasoningEffort as AgentOptions["reasoningEffort"],
+                      reasoningEffort:
+                          effort as AgentOptions["reasoningEffort"],
                   }),
             ...(this.config.maxTokens === undefined
                 ? {}

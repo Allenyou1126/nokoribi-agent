@@ -48,6 +48,7 @@ export const Config: unknown = z.object({
     goalModel: z.string(),
     goalReasoningEffort: z.string(),
     goalModels: z.array(z.string()).default([]),
+    goalDefaultMaxRounds: z.natural().min(1).default(256),
     goalRecoveryTimeoutMs: z.natural().min(1).default(30000),
     memoryProvider: z.string(),
     memoryModel: z.string(),

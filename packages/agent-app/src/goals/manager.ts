@@ -43,6 +43,8 @@ export interface GoalManagerOptions {
     readonly reasoningEffort?: string;
     /** Exact non-default routes accepted by `start_goal` and `/goal new`. */
     readonly allowedModels: readonly GoalModelRef[];
+    /** Round cap used when a caller omits `maxRounds`. */
+    readonly defaultMaxRounds: number;
     readonly recoveryTimeoutMs: number;
     readonly archivePath: string;
     readonly notify: (text: string) => Promise<void>;
@@ -181,11 +183,8 @@ export class GoalManager {
         const objective = options.objective.trim();
         if (objective === "")
             throw new Error("goal objective must not be empty");
-        const maxRounds = options.maxRounds;
-        if (
-            maxRounds !== undefined &&
-            (!Number.isSafeInteger(maxRounds) || maxRounds < 1)
-        ) {
+        const maxRounds = options.maxRounds ?? this.config.defaultMaxRounds;
+        if (!Number.isSafeInteger(maxRounds) || maxRounds < 1) {
             throw new Error("max_goal_rounds must be a positive safe integer");
         }
         const label =
@@ -201,7 +200,7 @@ export class GoalManager {
         this.pending.set(childId, details);
         const prompt = goalBootstrapPrompt({
             objective,
-            maxRounds: maxRounds ?? 256,
+            maxRounds,
             shortId,
             parentSessionId: main.id,
         });
@@ -230,9 +229,7 @@ export class GoalManager {
             );
             const view = this.ctx.goals.create(child, {
                 objective,
-                ...(maxRounds === undefined
-                    ? {}
-                    : { maxGoalRounds: maxRounds }),
+                maxGoalRounds: maxRounds,
             });
             this.tracker.upsert(view, childId, details);
             this.persist();
