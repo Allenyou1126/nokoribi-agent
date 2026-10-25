@@ -44,6 +44,10 @@
 
 **不做**：真实 IM 适配器、SSH host（后置）、Web UI（含 web-debug）、heartbeat、多人/群聊权限、token 预算、NixOS VM 测试。
 
+## 开发
+
+当前仓库只有设计规格；工具链、代码规范与提交约定见 [AGENTS.md](AGENTS.md)。提交前运行 `pnpm check`。
+
 ## 重要约定
 
 - 本套文档中的"最终决策"以 [03 决策记录](.spec/03-decision-log.md) 与各专题文档为准；[16](.spec/16-superseded-and-glossary.md) 明确列出所有被撤销或被取代的决定。
