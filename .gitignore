@@ -5,6 +5,8 @@ coverage/
 .DS_Store
 .vscode/
 *.tsbuildinfo
+/result
+/result-*
 
 .env
 .env.*
