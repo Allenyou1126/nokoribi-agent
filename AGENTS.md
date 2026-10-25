@@ -4,12 +4,13 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 
 ## 当前状态
 
-- M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）与 M5（memory、schedule、提示词收尾）已实现；M6 按 [.spec/14-roadmap.md](.spec/14-roadmap.md) 推进。代码在 `packages/`，入口是 `packages/launcher`。
+- M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词收尾）与 M6（NixOS 部署闭环）的代码已实现；M6 的 NixOS 目标机手工验收仍需执行。代码在 `packages/`，入口是 `packages/launcher`，部署在 `nix/`。
 - M2 的 reviewer 是 `packages/reviewer` 中 vendored 的 rc.3 auto-review；修改 vendor 时同步更新 `PATCHES.md`/`VERSION.md`。
 - M3 的默认 shell host 是 `sandbox:default`；sandbox 需要绝对 Nix buildEnv（`NOKORIBI_SANDBOX_BASE_ENV`）与 `setpriv`。无 Nix 的开发环境用 `NOKORIBI_DEFAULT_HOST=local:workspace`。实现细节与偏差见 [.spec/07](.spec/07-shell-hosts-and-sandbox.md) 7.12。
 - M4 的 goal child 由宿主创建（`start_goal` / `/goal new`，D136），main 隐藏 goal 工具；M5 起 goal 默认模型由 `NOKORIBI_GOAL_MODEL` 提供，可通过 `NOKORIBI_GOAL_MODELS` allowlist 在 `start_goal`/`/goal new --model` 中选择（D138/D141）。实现细节见 [.spec/10](.spec/10-goals-and-schedule.md) 10.13。
 - M5 的 memory 是**主动检索**（`memory` 工具），不会自动注入到会话；automatic injection 后移（D143）。默认 workspace 下的 sandbox 与 schedule 需要 daemon 常驻。实现细节见 [.spec/09](.spec/09-prompt-and-memory.md) 9.5 与 [.spec/10](.spec/10-goals-and-schedule.md) 10.13。
-- `pnpm check` 会先构建 workspace 包（类型检查依赖各包 `dist/*.d.ts`），然后运行 tsc/oxlint/oxfmt。
+- M6 的 Nix 包保留官方 Node 24.21.0 运行时（D145），wrapper 经 Nix glibc loader 启动；不要把它换回 nixpkgs Node，否则 `node-addon-require-builtin` 会让 daemon 启动失败。NixOS module 选项与手工清单见 [.spec/12](.spec/12-nixos-deployment.md)。
+- `pnpm check` 会先构建 workspace 包（类型检查依赖各包 `dist/*.d.ts`），然后运行 tsc/oxlint/oxfmt；`nix flake check` 额外跑 package/unit/module-eval。当前开发机是 Arch，不能执行 NixOS 12.12 手工清单。
 - 决策以 [.spec/03-decision-log.md](.spec/03-decision-log.md) 为准；被取代/撤销的决定登记在 [.spec/16-superseded-and-glossary.md](.spec/16-superseded-and-glossary.md)。
 - 实现偏离规格时必须同步更新规格与决策记录，不能只改代码。
 
@@ -31,12 +32,16 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 - `pnpm lint` / `pnpm lint:fix` — lint / 自动修复
 - `pnpm typecheck` — 先构建 workspace 包，再根与每包 `tsc --noEmit`
 - `pnpm check` — 依次执行 typecheck（含构建）、lint、format:check
-- 提交前运行 `pnpm check`。
+- `pnpm test:process` — 构建后运行进程级场景
+- `nix build .#default` — 构建发行版（官方 Node wrapper）
+- `nix run .#default -- --version` — package smoke
+- `nix flake check` — package/unit/module-eval；不能替代 NixOS 12.12 手工清单
+- 提交前运行 `pnpm check`；改 Nix 时同时跑 `nix flake check`。
 
 ## 结构
 
 - `.spec/`：设计规格；[README.md](README.md) 为索引。
-- 已创建的 `packages/*`、`vendor/profile-boot`、`templates/` 与将来的 `nix/` 见 [.spec/04-architecture-and-build.md](.spec/04-architecture-and-build.md)；保持该文件中的边界与依赖方向。
+- 已创建的 `packages/*`、`vendor/profile-boot`、`templates/`、`nix/` 与 `flake.nix` 见 [.spec/04-architecture-and-build.md](.spec/04-architecture-and-build.md)；保持该文件中的边界与依赖方向。
 - 每个 package 建立后拥有自己的 `tsconfig`，并继承根 TypeScript 约束（strict、`verbatimModuleSyntax`、`isolatedModules`）。
 - 不提交密钥、真实 token、运行时状态或本机配置。
 

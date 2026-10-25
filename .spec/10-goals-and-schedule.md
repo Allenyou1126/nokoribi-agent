@@ -33,13 +33,14 @@
 - `start_goal` 调用与子代理后续工具调用都过 Auto review。
 - 桥接通过 `goal/changed`、`subagent/start|end` 与 child session 事件跟踪（见 10.5）。
 - 模型选择：默认 `NOKORIBI_GOAL_PROVIDER`/`NOKORIBI_GOAL_MODEL`；M5 起 `NOKORIBI_GOAL_MODELS` 提供额外精确路由，`start_goal.model`/`reasoning_effort` 与 `/goal new --model/--effort` 可选择；generic `subagent` 仍继承主模型（D138/D141）。
+- 轮次上限：显式 `max_goal_rounds`/`--rounds` 优先；省略时使用 `goalDefaultMaxRounds`（env `NOKORIBI_GOAL_DEFAULT_MAX_ROUNDS`，默认 256），该值同时写入 bootstrap prompt 与 `ctx.goals.create({ maxGoalRounds })`。
 
 ## 10.4 创建路径 B：`/goal new`
 
-- `/goal new <目标> [--rounds N]` 由桥接命令处理器调用与 `start_goal` 相同的 `GoalManager.startGoal()`：
+- `/goal new <目标> [--rounds N] [--model provider/model] [--effort ID]` 由桥接命令处理器调用与 `start_goal` 相同的 `GoalManager.startGoal()`：
   - provider：`spawn`（进程内）；parent：主 agent；
   - 预留 `goal-*` child id；bootstrap prompt 说明宿主创建 goal、等待首个 round；
-  - 宿主调用 `ctx.goals.create()`；模型固定使用 `NOKORIBI_GOAL_MODEL`。
+  - 宿主调用 `ctx.goals.create()`；路由使用默认 goal 路由或 allowlist 选中的 route（D141）。
 - 该路径不产生主 agent 模型消息；子代理后续动作仍过 Auto review。
 - 创建成功后返回短 id、child sessionId 与轮次上限。
 

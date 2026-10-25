@@ -67,7 +67,7 @@ M1–M4 实现顺序：
 8. schedule 恢复（M5）：上游 `dsh-schedule` 从 `$DSH_HOME/storage/schedule.json` 读取任务；逾期任务通过 `sessionController.resolveAgent()` 等待主会话 ready 后交付。桥接在创建/恢复 main 后 bind，在 `drainBuffered()` 之后 markReady，避免在 session listener 安装前开轮。
 9. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。
 10. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
-11. `channels.drainBuffered()` 放行启动期入站；随后 `sessionController.markReady()`、写 `run/ready.json` 并开始正常收发。
+11. `channels.drainBuffered()` 放行启动期入站；随后 `sessionController.markReady()`、写 `run/ready.json`；若 systemd `NOTIFY_SOCKET` 存在，再发送 `READY=1` 并启动 watchdog（M6，D144）。
 
 > V4 验证结果（M1）：resume 会恢复 `next-turn` inbox，但**不会自动开启新轮**；下一次用户消息或显式唤醒会带上排队消息。M1 不额外重放，后续里程碑可加系统提示唤醒。
 
@@ -77,7 +77,7 @@ M1–M4 实现顺序：
 
 M1/M2 实际流程：
 
-1. `channels.pause()` 停止接受新入站。
+1. 发送 systemd `STOPPING=1`（若启用），停 watchdog；`channels.pause()` 停止接受新入站。
 2. 调用 `channels.abortInteractions("shutdown")`，中止待审批/提问并写入失效提示；outbox 持久化，下次启动继续投递。
 3. 等待当前轮完成至 `shutdownGraceMs`（默认 20s，可配）；超时用 `cancel({ kind:'disposed' })`。
 4. goal 子代理不在这里逐个清理；由 profile-boot 后续的 context teardown 交给 DSH subagent manager 释放，重启后按 active goal 冷恢复。

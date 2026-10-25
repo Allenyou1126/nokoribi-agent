@@ -138,6 +138,7 @@ nokoribi-agent/
 - **M3 新增/调整行**：`nokoribi-shell-router`（default host 可配）、`nokoribi-shell-host-local`（extraPackages）、`nokoribi-shell-host-sandbox`、`nokoribi-tool-bash-hosted`（`@nokoribi/shell-bash/tool`）。`agent-app` 启动校验 default host；`/clear` 清理 sandbox。多入口包通过 `exports` 子路径加载，进程测试已验证。
 - **M4 新增/调整行**：`session-query`（sqlite，`openAt:"never"`）、`goal`、`subagent`、`subagent-spawn`、`tool-subagent`、`tool-subagent-control`、`tool-goal`、`goal-round-driver`；`agent-app` 新增 `start_goal` 工具、goal tracker/命令/恢复/归档，`/clear` 清理 goals。
 - **M5 新增/调整行**：`storage` + `storage-json`（root `$DSH_HOME/storage`）+ `storage-domain`（backend json）、`nokoribi-session-bridge`（`@nokoribi/agent-app/session-bridge`）、`schedule` + `tool-schedule`、`time-context`、`nokoribi-memory`。`agent-app` 新增 memory curator、schedule ready-gating、`/clear` 提醒清理与 `/status full`；`packages/memory` 提供 `memory` 服务/工具。
+- **M6 新增/调整**：没有新增 bundle 行；host/channel 增加 `enabled` 配置，`agent-app` 增加 `goalDefaultMaxRounds`；Nix overlay 覆盖已有稳定行 id。运行时新增 `SystemdNotifier` 与 `NOKORIBI_LOG_LEVEL`。
 
 ## 4.5 薄启动器
 
@@ -171,33 +172,38 @@ nokoribi-agent/
   - `pnpm build`：tsdown 构建所有 `packages/*`。
   - `pnpm typecheck`：先 `pnpm build`（类型检查依赖各包 `dist/*.d.ts`），再根 `tsc --noEmit` 与每包 `tsc --noEmit`。
   - `pnpm test`：Vitest 单元 + 进程内集成；`pnpm test:process`：构建后跑进程级场景。
-  - `pnpm build:bundle` / Nix profile 生成留到 M6。
-- M1 的 bundle patch 全部使用包标识符（`@nokoribi/*`、`@deepseek-ai/*`），由 launcher 的安装锚点与 runtime resolution 解析；M6 再决定是否需要相对构建产物路径。
+  - `nix build .#default` / `nix flake check`：M6 门禁。
+- M1 的 bundle patch 全部使用包标识符（`@nokoribi/*`、`@deepseek-ai/*`），由 launcher 的安装锚点与 runtime resolution 解析；M6 不需要相对构建产物路径。
 - 类型检查兼容性：TypeScript 7 的 native 实现没有 tsdown dts 需要的 classic API，根 tsconfig 开启 `isolatedDeclarations` 以使用 Oxc 生成声明；导出的函数/常量/类成员必须写显式类型。
 - 每条行有稳定 id（如 `nokoribi-shell-router`），Nix overlay 依赖这些 id。
 
 ### Nix 打包
 
-- flake 输出 `packages.<system>.default`（整个发行版）与 `nixosModules.default`。
-- 构建步骤：pnpm 依赖固定输出（`pnpmDeps`/`fetchPnpmDeps` 或等价方案）→ `pnpm build` → 生成 bundle/profile → 安装到 store。
-- store 布局（草案）：
+- flake 输出 `packages.<system>.default`、`overlays.default` 与 `nixosModules.default`。
+- 构建步骤：`fetchPnpmDeps` 固定依赖（fetcherVersion 4、pnpm_12）→ nixpkgs Node + pnpm 构建 → 删除 node_modules 后离线安装生产依赖 → 复制发行版到 store。
+- **运行时 Node**：保留官方 Node 24.21.0 二进制（x86_64/aarch64），wrapper 经 Nix glibc loader 启动；不能换成 nixpkgs Node（D145，native addon 兼容性）。
+- store 布局：
 
 ```
 $out/
-├─ bin/nokoribi-agent            # 启动器 wrapper
+├─ bin/nokoribi-agent            # shell wrapper: Nix loader + official Node
+├─ share/
+│  ├─ SOUL.md
+│  └─ templates/                 # module 默认 SOUL/AGENTS 路径
 └─ lib/nokoribi-agent/
-   ├─ node_modules/              # 生产依赖（pnpm 安装）
-   ├─ packages/                  # 自研包构建产物
-   ├─ profile/                   # profile manifest + bundle patch
-   ├─ share/SOUL.md
-   └─ share/templates/AGENTS.md
+   ├─ node_modules/              # 生产依赖
+   ├─ packages/                  # 自研包构建产物 + launcher/bundle
+   ├─ vendor/profile-boot/       # vendored profile-boot
+   ├─ templates/                 # launcher 开发 fallback
+   └─ SOUL.md                    # launcher 开发 fallback
 ```
 
 - 运行时不写 store；状态全部写入 `DSH_HOME`。
+- Nix profile manifest 由 launcher 在 `$DSH_HOME/run/profile/` 生成，不打包进 store。
 
 ### 配置流
 
-- **纯 Nix 只读配置**：NixOS module 根据选项生成 `overlay.cordis.patch.yml`（store 路径），启动器通过参数或环境变量读取并叠加在 bundle patch 之后。
+- **纯 Nix 只读配置**：NixOS module 根据选项生成完整 `cordis.patch.yml`（store 路径），启动器通过 `NOKORIBI_PATCH` 叠加在 bundle patch 之后。
 - `DEEPSEEK_API_KEY` 等秘密通过 systemd `EnvironmentFile`（agenix）注入，不写进 Nix store。
 - 测试通道 token 按决策 D119 直接作为 Nix option 明文写入 overlay（store 对本地用户可读，仅验收期启用）。
 - 没有运行时 override 文件；改任何参数都要 `nixos-rebuild`。
@@ -205,6 +211,7 @@ $out/
 ## 4.7 版本与依赖策略
 
 - 全部 `@deepseek-ai/*` 固定同一版本 `0.2.1-rc.3`；使用 `pnpm.overrides`/精确依赖 + 提交 `pnpm-lock.yaml` 保证一致。
+- 官方 Node 运行时固定 24.21.0（`nix/package.nix` 的 Node tarball hash）；升级 Node 需单独验证 DSH native addon（D145）。
 - 升级流程（手动、整批）：
   1. 更新所有 `@deepseek-ai/*` 到同一新版本；
   2. 更新 vendored reviewer 的上游源码与版本标识；

@@ -2,9 +2,9 @@
 
 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下文简称 DSH）的单用户、常驻、长程个人 Agent 的设计文档。
 
-> **状态（2026-10-25）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）与 M5（memory、schedule、提示词与 `/status full`）已实现；M6 仍按路线图推进。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒与 `/status full`；但 M5 的 memory 只支持主动检索（**不自动注入**），且还没有真实 IM、NixOS 部署闭环与生产级验收，**不可用作生产服务**。
+> **状态（2026-10-25）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词与 `/status full`）与 M6（NixOS 部署闭环）的代码已实现；M6 的 NixOS 目标机手工验收清单仍需在部署机执行并记录。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒、`/status full` 与 NixOS module；但 M5 的 memory 只支持主动检索（**不自动注入**），且还没有真实 IM 与生产级验收，**不可用作生产服务**。
 >
-> **目标 DSH 版本**：全部 `@deepseek-ai/*` 包固定 `0.2.1-rc.3`，手动整批升级。
+> **目标 DSH 版本**：全部 `@deepseek-ai/*` 包固定 `0.2.1-rc.3`，手动整批升级。Nix 包额外保留官方 Node 24.21.0 运行时（D145），以匹配 DSH 的 native addon。
 
 ## 一句话概述
 
@@ -55,7 +55,7 @@ pnpm test           # 单元 + 进程内集成
 pnpm test:process   # 构建后运行进程级恢复场景
 ```
 
-M2/M3/M4 本地运行（需要测试通道 token；真实模型调用需要 `DEEPSEEK_API_KEY`）：
+M1–M6 本地运行（需要测试通道 token；真实模型调用需要 `DEEPSEEK_API_KEY`）：
 
 ```sh
 cp .env.example .env   # 填写 DEEPSEEK_API_KEY / NOKORIBI_TEST_TOKEN
@@ -103,9 +103,65 @@ curl -s "http://127.0.0.1:8787/v1/status?full=1" \
   -H "Authorization: Bearer $NOKORIBI_TEST_TOKEN"
 ```
 
+## NixOS 部署
+
+M6 提供 `flake.nix`、`packages.<system>.default` 与 `nixosModules.default`。目标 NixOS 主机导入 module，密钥通过 agenix 的 `environmentFile` 注入；module 生成只读 Cordis overlay，不写运行时配置文件。
+
+```nix
+{
+  inputs.nokoribi-agent.url = "github:<you>/nokoribi-agent";
+
+  # NixOS 配置中：
+  services.nokoribi-agent = {
+    enable = true;
+    environmentFile = config.age.secrets.nokoribi-agent-env.path;
+
+    models.main = {
+      provider = "deepseek-official";
+      model = "deepseek-flash";
+    };
+
+    # 验收期开启；token 会以明文写入 Nix store（D119）。
+    channel.localTest = {
+      enable = true;
+      token = "replace-with-acceptance-token";
+    };
+
+    hosts.sandbox.packages = with pkgs; [ git jq ];
+    # sudo.enable = true;  # 高风险；默认 false（D120）
+  };
+}
+```
+
+agenix secret 内容至少包含：
+
+```text
+DEEPSEEK_API_KEY=sk-...
+```
+
+本地门禁（不需要 NixOS 主机）：
+
+```sh
+nix build .#default
+nix run .#default -- --version
+nix flake check
+```
+
+目标机部署：
+
+```sh
+sudo nixos-rebuild switch
+systemctl status nokoribi-agent
+journalctl -u nokoribi-agent -f
+```
+
+`/status full` 通过测试通道查看；systemd unit 使用 `Type=notify`、`WatchdogSec=120`，启动恢复完成前不会报告 ready。完整手工清单见 [12.12](.spec/12-nixos-deployment.md#1212-部署验收清单手工)。默认 `channel.localTest.enable = false`，此时服务没有用户消息入口；验收时请显式开启。
+
+M6 的包保留官方 Node 24.21.0 二进制，由 wrapper 经 Nix glibc loader 启动；原因见 [D145](.spec/03-decision-log.md)。构建本身仍使用 nixpkgs Node/pnpm。
+
 工具调用会先经过 reviewer。被拒绝时会收到 🔐 提示，回复"允许"或"拒绝"（也可用 1/2）；`ask_user_question` 会发 ❓ 提示。`/permission` 只报告 Auto 预设，v1 不支持切换。reviewer 默认复用主模型；可用 `NOKORIBI_REVIEW_FAST_MODEL` / `NOKORIBI_REVIEW_STRONG_MODEL` 分开配置。
 
-M2 范围见 [14.3](.spec/14-roadmap.md)，M3 实现与已知限制见 [14.4](.spec/14-roadmap.md) 与 [07.12](.spec/07-shell-hosts-and-sandbox.md)，M4 见 [14.5](.spec/14-roadmap.md) 与 [10.12](.spec/10-goals-and-schedule.md)，M5 见 [14.6](.spec/14-roadmap.md)、[10.13](.spec/10-goals-and-schedule.md) 与 [09.5](.spec/09-prompt-and-memory.md)。图片仍返回 501；`--dump-config` 继续后移。sandbox 是干净/可重置环境，**不是安全隔离边界**；sandbox 内不能 sudo，local 的 sudo 动作仍由 Auto review 审查。M5 的 memory 是主动检索，`/clear` 后不会自动注入旧记忆；定时提醒需要 daemon 常驻。
+M2 范围见 [14.3](.spec/14-roadmap.md)，M3 实现与已知限制见 [14.4](.spec/14-roadmap.md) 与 [07.12](.spec/07-shell-hosts-and-sandbox.md)，M4 见 [14.5](.spec/14-roadmap.md) 与 [10.12](.spec/10-goals-and-schedule.md)，M5 见 [14.6](.spec/14-roadmap.md)、[10.13](.spec/10-goals-and-schedule.md) 与 [09.5](.spec/09-prompt-and-memory.md)，M6 见 [14.7](.spec/14-roadmap.md) 与 [12](.spec/12-nixos-deployment.md)。图片仍返回 501；`--dump-config` 继续后移。sandbox 是干净/可重置环境，**不是安全隔离边界**；sandbox 内不能 sudo，local 的 sudo 动作仍由 Auto review 审查。M5 的 memory 是主动检索，`/clear` 后不会自动注入旧记忆；定时提醒需要 daemon 常驻。M6 的 NixOS 目标机验收尚未在当前环境执行，不能把本地 `nix flake check` 当作生产验收。
 
 ## 重要约定
 

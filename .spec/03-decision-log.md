@@ -139,6 +139,10 @@
 | D141 | goal 模型 allowlist（M5） | `NOKORIBI_GOAL_MODELS` 精确路由；默认路由始终允许；generic `subagent` 仍继承主模型 |
 | D142 | `/status full`（M5） | 文本 + `GET /v1/status?full=1`；含 goals/sandbox、schedule、memory、recent errors、reviewer、版本 |
 | D143 | memory 自动注入（M5 后移） | M5 只做主动检索；会话启动/每轮注入留后续版本 |
+| D144 | systemd 通知（M6） | 通过 `systemd-notify` 子进程发送 READY/WATCHDOG/STOPPING；`Type=notify` + `NotifyAccess=all`；Node 无 Unix datagram，不引入 native addon |
+| D145 | Nix 运行时（M6） | DSH 的 `node-addon-require-builtin` 只匹配官方 Node；包内保留官方 Node 24.21.0，wrapper 经 Nix glibc loader 启动；构建仍用 nixpkgs Node/pnpm |
+| D146 | NixOS 配置映射（M6） | 纯 Nix 生成完整 Cordis overlay；`goal.allowedModels`/显式 memory 路由；不提供 `models.subagents`、`memory.enable`、`schedule.enable`、SSH 开关 |
+| D147 | M6 验收边界（M6） | 本地 `nix build`/`nix flake check` + NixOS 12.12 手工；不伪造 DSH bump；watchdog 用手工 SIGSTOP 验证 |
 
 ---
 
@@ -316,6 +320,10 @@
 - **D141 goal 模型 allowlist（M5）** — 自定义：`NOKORIBI_GOAL_MODELS` 是逗号分隔的精确 `provider/model` 路由；`start_goal` 的 `model`/`reasoning_effort` 与 `/goal new --model/--effort` 必须命中 allowlist 或默认路由；state/archive/status 记录 route 与 effort。
 - **D142 `/status full`（M5）** — 自定义：新增详细状态文本与 `GET /v1/status?full=1`；包含 goal 与 sandbox、active schedule、memory 计数、recent warn/error 环形缓冲、reviewer 两档、DSH/app 版本与路径；不输出消息正文或密钥。
 - **D143 memory 自动注入后移（M5）** — 自定义：M5 保持“主动检索”而非自动注入；不做会话启动摘要、每轮 pre-step 检索或把 entries 塞进 system prompt。`/clear` 后不会自动带上旧记忆，模型必须调用 `memory search`。后续版本再评估。
+- **D144 systemd 通知（M6）** — 自定义：daemon 在恢复完成、写 ready 文件后，通过 `systemd-notify` 子进程发送 `READY=1`；按 `WATCHDOG_USEC` 的 1/3 周期发送 `WATCHDOG=1`；关闭时发送 `STOPPING=1`。unit 使用 `Type=notify` + `NotifyAccess=all`（helper 是子进程）。Node 24 `dgram` 没有 Unix datagram，故选 helper 而不引入 native addon；`NOTIFY_SOCKET` 缺失时 no-op。
+- **D145 Nix 运行时（M6）** — 自定义：`@deepseek-ai/dsh-app-boot` 依赖的 `node-addon-require-builtin` 会检查官方 Node 的代码布局；nixpkgs 构建的 Node 和 patchelf 改写后的官方 Node 都会失败。发行版包保留官方 Node 24.21.0 二进制（x86_64/aarch64），wrapper 用 Nix glibc loader + Nix libstdc++ 启动；构建阶段仍使用 nixpkgs Node/pnpm。这样 native addon、NixOS 运行时和 Nix store 都自洽。
+- **D146 NixOS 配置映射（M6）** — 自定义：module 生成完整 `cordis.patch.yml` overlay，不依赖运行时环境变量覆盖。选项按实现口径：`models.main`、`review.fast/strong`、`goal.{provider,model,allowedModels,maxRounds}`、`memory.{provider,model,curator}`、`hosts.*`、`channel.localTest.*`、`prompt.*`。不提供 `models.subagents`、`memory.enable`、`schedule.enable` 或可启用的 SSH host；memory/schedule 始终挂载，memory 只关闭提炼，SSH 留给 M7。
+- **D147 M6 验收边界（M6）** — 自定义：本地门禁为 `nix build`、`nix run --version`、`nix flake check`；NixOS 12.12 清单必须在目标机执行并记录。watchdog 手工用 `kill -STOP` 验证，不引入应用内测试钩子。当前 DSH 固定 0.2.1-rc.3，无新版本可 bump；真正的 DSH bump + reviewer vendor 更新留待后续升级提交，M6 只演练同版本重构建/重启恢复。
 
 ---
 

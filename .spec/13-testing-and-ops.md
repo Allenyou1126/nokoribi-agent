@@ -22,6 +22,8 @@ M4 落点：`packages/agent-app/test/` 覆盖 goal 命令解析、tracker（sess
 
 M5 落点：`packages/memory/test/` 覆盖 frontmatter、检索/排序、upsert/forget/supersedes、密钥拒绝与损坏条目；`packages/agent-app/test/` 覆盖 session bridge、curator prompt、full status 渲染、goal route 解析；`packages/prompt/test/` 覆盖 memory/schedule 段与顺序；`packages/shared/test/` 覆盖 recent log 缓冲与版本读取；`tests/process/m5.test.ts` 覆盖 memory 跨重启、提醒到期、SIGKILL 逾期、`/clear` 删除旧提醒、goal 模型 allowlist、curator 写入与 `/status full`/time-context。Schedule 使用 2 秒真实定时器（上游 Host 服务没有 fake clock seam）；M5 仍用 local host + scripted LLM。
 
+M6 落点：`packages/shared/test/systemd.test.ts` 覆盖 notifier no-op、READY/WATCHDOG/STOPPING 参数、`WATCHDOG_USEC` 间隔与失败路径；`packages/shared/test/log.test.ts`/`paths.test.ts` 覆盖 `NOKORIBI_LOG_LEVEL`、`homeDir`；`packages/agent-app` 与 bundle 覆盖 `goalDefaultMaxRounds`；`packages/channel-local-test`/`shell-host-*` 覆盖 `enabled`；`tests/process/m6.test.ts` 用临时 fake `systemd-notify` 脚本验证 READY/心跳/STOPPING，并验证默认 goal 轮次。Flake 侧：`package`、`package-smoke`、`unit`、`module-eval`；NixOS 12.12 仍为手工。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站，可脚本化注入消息与失败。
@@ -62,18 +64,18 @@ M5 落点：`packages/memory/test/` 覆盖 frontmatter、检索/排序、upsert/
 7. **Memory**：任务结束提炼子代理写入；跨会话 search 命中；forget 归档。
 8. **Schedule**：创建 1 分钟提醒（或 fake clock）→ 到期 follow-up → 主 agent 回复镜像到测试通道。
 
-## 13.5 flake checks（草案）
+## 13.5 flake checks
 
-- `checks.<system>.unit`：Vitest 单元测试。
-- `checks.<system>.integration`：进程内集成 harness 测试。
-- `checks.<system>.package`：构建发行版。
-- `checks.<system>.module-eval`：NixOS module 选项组合 eval（不启动 VM）。
-- 可选 `checks.<system>.lint`：tsc/oxlint。
-- 本地运行：`nix flake check`。
+- `checks.<system>.package`：构建发行版（official Node runtime + 生产依赖）。
+- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局。
+- `checks.<system>.unit`：`pnpm build` + `pnpm test`；在 Nix sandbox 内运行包单元/进程内集成测试。
+- `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`。
+- 本地运行：`nix flake check`（当前系统）。NixOS VM 测试不做（D130）；12.12 手工清单仍必须执行。
 
 ## 13.6 日志
 
 - 全部 stdout/stderr → journald。
+- 级别由 `NOKORIBI_LOG_LEVEL`（debug/info/warn/error，默认 info）过滤；NixOS module 设置 `log.level`。warn/error 同时进入进程内 recent 环形缓冲供 `/status full`。
 - 行格式（草案）：`<iso time> <level> <module> <message> key=value ...`；关键事件带结构化字段：
   - `turn.start` / `turn.end`（agent id、turn id、耗时、token 用量可选）
   - `goal.changed`（短 id、phase、rounds）
@@ -124,19 +126,23 @@ curl -s "http://127.0.0.1:8787/v1/outbound?after=0" \
 
 ### 升级
 
-1. 更新 flake input/版本（DSH 整批 bump + reviewer vendor 更新）。
-2. `nix flake check`（本地）。
-3. `nixos-rebuild switch`。
-4. `systemctl status` + journald 检查恢复。
-5. 手工验收清单（12.12）按需执行。
-6. 不做备份/快照；回滚需自行承担 session format 风险。
+1. 更新 flake input / 包版本；lockfile 变化时更新 `pnpmDeps.hash`。
+2. DSH 整批 bump 时同步 reviewer vendor；官方 Node 变更时更新 `nodeRuntime` 版本与 hash。
+3. `nix flake check`（本地）与 `pnpm check` / `pnpm test` / `pnpm test:process`。
+4. `nixos-rebuild switch`。
+5. `systemctl status` + journald 检查恢复；确认 notify ready。
+6. 手工验收清单（12.12）按需执行。
+7. 不做备份/快照；回滚需自行承担 session format 风险。
+8. 当前没有新 DSH 版本可 bump；M6 只做同版本重构建/重启恢复演练（D147）。
 
 ### 故障排查
 
 | 现象 | 检查 |
 |---|---|
-| 服务起不来 | journald；单实例锁；DSH_HOME 权限；profile/overlay patch 错误 |
-| 无回复 | `/v1/status`；agent 是否 running；outbox 是否积压；reviewer 是否卡在审批 |
+| 服务起不来 | journald；单实例锁；DSH_HOME 权限；profile/overlay patch 错误；`systemd-notify` 是否可执行 |
+| 启动一直 activating | 是否发送 READY；goal 恢复是否超 `TimeoutStartSec`；`NOKORIBI_READY_TIMEOUT_MS` |
+| 被 watchdog 重启 | 事件循环是否卡死；journald 中 `WATCHDOG`/systemd 超时；不要用 SIGSTOP 测试后忘记 CONT |
+| 无回复 | `/v1/status`；测试通道是否启用；agent 是否 running；outbox 是否积压；reviewer 是否卡在审批 |
 | 审批没提示 | broker 日志；driver 是否在线；待应答是否已超时 |
 | goal 不续跑 | goal 是否 active/armed；round 额度；child 是否 live；restart 后是否 re-arm |
 | sandbox 命令失败 | host 是否启用；sandbox 是否被回收；nix/buildEnv 是否可用；是否触发 no_new_privs |

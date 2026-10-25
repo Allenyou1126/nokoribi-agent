@@ -207,12 +207,22 @@
 - 12.12 手工清单全部通过。
 - 重启系统自启、会话/goal/outbox 恢复。
 - watchdog 能拉起卡死进程。
-- 升级流程演练一次（含 DSH 版本 bump + reviewer vendor 更新）。
+- 升级流程演练一次（同版本重构建/重启恢复；真实 DSH bump + reviewer vendor 更新留待后续版本）。
 
 ### 依赖/风险
 
 - 依赖 M1–M5 功能完整。
 - 风险：pnpm 固定输出构建；systemd 无硬化下的权限；agenix owner/mode；watchdog 实现（sd_notify）；Nix store 可写性禁止；NixOS 手工验收成本。
+
+### M6 实现记录（2026-10-25）
+
+- 已添加 `flake.nix`/`flake.lock` 与 `nix/`（source/deps/package/module/overlay/tests，以及 `check-module.py`）。
+- 发行版使用 `fetchPnpmDeps`（fetcherVersion 4、pnpm_12）与 nixpkgs Node 构建；安装阶段只保留生产依赖。运行时使用官方 Node 24.21.0（x86_64/aarch64），wrapper 经 Nix glibc loader 启动，解决 DSH `node-addon-require-builtin` 对 nixpkgs Node 不兼容的问题（D145）。
+- NixOS module 生成完整 Cordis overlay；提供专用用户/组、StateDirectory/自定义 tmpfiles、`Type=notify`、`NotifyAccess=all`、`WatchdogSec=120`、`TimeoutStartSec=300`、`TimeoutStopSec=45`、`KillMode=mixed`、agenix `EnvironmentFile`、可选 sudo、sandbox buildEnv、测试通道 token。
+- 运行时新增 `SystemdNotifier`（READY/WATCHDOG/STOPPING）、`NOKORIBI_LOG_LEVEL`、`homeDir`、`NOKORIBI_READY_TIMEOUT_MS`、host/channel `enabled` 开关、`goalDefaultMaxRounds`。
+- 验证：`pnpm check` 0 warnings/errors；`pnpm test` 42 文件/299 测试；`pnpm test:process` 6 文件/42 场景（M1 8 + M2 11 + M3 5 + M4 9 + M5 7 + M6 2）；`nix build .#default`、`nix run .#default -- --version`、`nix flake check` 通过；package runtime smoke 在本机通过。
+- 手工验收：当前开发机是 Arch Linux，未执行 NixOS `nixos-rebuild` 与 12.12 清单；该部分必须在目标 NixOS 主机执行并记录。M6 因此只能标记“代码实现完成、手工验收待执行”。
+- 偏差/边界：D144（systemd-notify helper）、D145（official Node）、D146（module 选项口径）、D147（验收边界）；DSH 仍固定 0.2.1-rc.3，本轮不执行真实版本 bump。
 
 ## 14.8 后置（v1 之外）
 
