@@ -35,6 +35,7 @@
         "@nokoribi/channel-local-test": "workspace:*",
         "@nokoribi/profile-boot": "workspace:*",
         "@nokoribi/prompt": "workspace:*",
+        "@nokoribi/reviewer": "workspace:*",
         "@nokoribi/shared": "workspace:*",
         "@nokoribi/shell-bash": "workspace:*",
         "@nokoribi/shell-host-local": "workspace:*"

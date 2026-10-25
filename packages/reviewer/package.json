@@ -1,0 +1,36 @@
+{
+    "name": "@nokoribi/reviewer",
+    "version": "0.1.0",
+    "private": true,
+    "files": [
+        "dist",
+        "LICENSE",
+        "PATCHES.md",
+        "VERSION.md"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsdown",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@deepseek-ai/cordis": "4.0.5",
+        "@deepseek-ai/dsh-agent": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-permission-presets": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-session": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-user-approval": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-util-values": "0.2.1-rc.3",
+        "@deepseek-ai/schemastery": "3.18.5",
+        "@nokoribi/shared": "workspace:*"
+    }
+}

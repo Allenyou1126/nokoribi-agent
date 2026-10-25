@@ -1,7 +1,14 @@
 import { defineConfig } from "oxfmt";
 
 const config: ReturnType<typeof defineConfig> = defineConfig({
-    ignorePatterns: [".spec", "*.md", "dist", "node_modules", "vendor"],
+    ignorePatterns: [
+        ".spec",
+        "*.md",
+        "dist",
+        "node_modules",
+        "vendor",
+        "packages/reviewer/vendor",
+    ],
     printWidth: 80,
     trailingComma: "es5",
     tabWidth: 4,
