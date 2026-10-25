@@ -83,7 +83,7 @@ nokoribi-agent/
 - `dsh-session` + `dsh-session-persistence-jsonl` + `dsh-session-projection` + `dsh-session-title` + `dsh-session-checkpoint-policy`。
   0.2.1-rc.3 没有 `dsh-session-projection-cache`；投影缓存由 checkpoint policy 承担。
 - `dsh-agent` + `dsh-agent-loop`。
-- `dsh-tools`、`dsh-system-prompt`、`dsh-agent-instructions`；`dsh-time-context` 留到 M5。
+- `dsh-tools`、`dsh-system-prompt`、`dsh-agent-instructions`；`dsh-time-context` 在 M5 挂载。
 - `dsh-fs-local`、`dsh-fs-observation-policy`、`dsh-tool-fs`、`dsh-tool-fs-search`。
 - `dsh-jobs-local`、`dsh-tool-jobs`。
 - `dsh-shell-env`（DSH_* 环境事实；我们的 bash 工具使用它，但 `ctx.shell` 由 router 提供）。
@@ -137,6 +137,7 @@ nokoribi-agent/
 - **M2 新增行**：`permission-presets`（仅 `danger-full-access` 预设）、`tool-ask-user`（blocking 模式）、`nokoribi-reviewer`（`@nokoribi/reviewer`，替代上游 auto-review 行）。`channel-core` 配置增加 approval/question 超时；`agent-app` 在创建/恢复主会话后设为 `auto`。
 - **M3 新增/调整行**：`nokoribi-shell-router`（default host 可配）、`nokoribi-shell-host-local`（extraPackages）、`nokoribi-shell-host-sandbox`、`nokoribi-tool-bash-hosted`（`@nokoribi/shell-bash/tool`）。`agent-app` 启动校验 default host；`/clear` 清理 sandbox。多入口包通过 `exports` 子路径加载，进程测试已验证。
 - **M4 新增/调整行**：`session-query`（sqlite，`openAt:"never"`）、`goal`、`subagent`、`subagent-spawn`、`tool-subagent`、`tool-subagent-control`、`tool-goal`、`goal-round-driver`；`agent-app` 新增 `start_goal` 工具、goal tracker/命令/恢复/归档，`/clear` 清理 goals。
+- **M5 新增/调整行**：`storage` + `storage-json`（root `$DSH_HOME/storage`）+ `storage-domain`（backend json）、`nokoribi-session-bridge`（`@nokoribi/agent-app/session-bridge`）、`schedule` + `tool-schedule`、`time-context`、`nokoribi-memory`。`agent-app` 新增 memory curator、schedule ready-gating、`/clear` 提醒清理与 `/status full`；`packages/memory` 提供 `memory` 服务/工具。
 
 ## 4.5 薄启动器
 

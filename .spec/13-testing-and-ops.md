@@ -20,6 +20,8 @@ M3 落点：`packages/shell-bash/test/` 覆盖 host 协议、router façade、ba
 
 M4 落点：`packages/agent-app/test/` 覆盖 goal 命令解析、tracker（sessionId/goalId 分离、短 id、轮次）、归档 JSONL、main 工具限制；`packages/prompt/test/` 覆盖 goal section 与 `tool:goal` 改写；`tests/process/m4.test.ts` 覆盖 `/goal new` 完成/归档、`start_goal`、main 隐藏、pause/resume、SIGKILL 冷恢复、`/clear`、多 goal、恢复失败与 `send_message` 汇报。M4 进程测试用 local host，不依赖 Nix。
 
+M5 落点：`packages/memory/test/` 覆盖 frontmatter、检索/排序、upsert/forget/supersedes、密钥拒绝与损坏条目；`packages/agent-app/test/` 覆盖 session bridge、curator prompt、full status 渲染、goal route 解析；`packages/prompt/test/` 覆盖 memory/schedule 段与顺序；`packages/shared/test/` 覆盖 recent log 缓冲与版本读取；`tests/process/m5.test.ts` 覆盖 memory 跨重启、提醒到期、SIGKILL 逾期、`/clear` 删除旧提醒、goal 模型 allowlist、curator 写入与 `/status full`/time-context。Schedule 使用 2 秒真实定时器（上游 Host 服务没有 fake clock seam）；M5 仍用 local host + scripted LLM。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站，可脚本化注入消息与失败。
@@ -39,8 +41,10 @@ M4 落点：`packages/agent-app/test/` 覆盖 goal 命令解析、tracker（sess
 | commands | `/steer`/`/queue` 模式、`/goal` 子命令解析 | 命令执行与结果回传 | `/clear` 后命令状态 |
 | daemon/state | 状态文件 schema/原子写、锁 | 启动/关闭顺序、缓冲入站 | kill -9 恢复、SIGTERM 干净退出 |
 | goal | tracking 状态机、短 id、归档索引 | 创建/汇报/归档/clear、主会话 goal 拦截 | 冷恢复 + re-arm、失败通知 |
-| memory | 文件格式、检索、upsert/forget、去重 | 工具调用、提炼子代理 | 跨重启检索 |
-| prompt | 模板渲染、SOUL 转义、section 顺序 | 组装快照（不含动态值） | 启动加载 |
+| memory | 文件格式、检索/排序、upsert/forget/supersedes、密钥拒绝 | 工具调用、curator prompt/触发 | 跨重启检索 |
+| schedule | bridge ready-gate、catalog/clear（上游工具由 DSH 覆盖） | 到期 follow-up、`/clear` 删除旧任务 | 逾期重启交付 |
+| status | full 渲染、recent log、sandbox 归一化 | `/v1/status?full=1`、`/status full` | 进程级字段完整性 |
+| prompt | 模板渲染、SOUL 字面量、section 顺序 | 六段组装快照（不含动态值） | 启动加载 |
 | shell hosts | host 路由、id 解析、能力校验、命令包装/TTL/meta | bash(host)、未知 host、background job、发现工具、fake sandbox base | local 执行、sandbox 隔离/sudo、`/clear` 清理 |
 | sandbox | command wrapper、sidecar、generation、TTL sweep、guard、setpriv/nix 缺失 | `sandbox`/`sandbox_packages`、reset 保护、fake subprocess | 手工 Nix buildEnv：cp/rsync、sudo 失败、TTL/reset |
 | reviewer patch | 两档路由、sudo 启发式、JSON 校验、超时 | 双阶段复审、fail closed、child 审批桥接 | 进程级 allow/deny/超时 |
@@ -85,14 +89,15 @@ M4 落点：`packages/agent-app/test/` 覆盖 goal 命令解析、tracker（sess
 
 - 摘要（默认）：version、uptime、agentStatus（running/idle）、mainSessionId、model、permission、活跃 goal 数、待应答数、outbox 长度。
 - `/status full`：
-  - 每个 goal：短 id、phase、rounds、child 运行状态、sandbox generation/TTL；
-  - 每个 sandbox：session、目录、创建/最近使用、已加包；
-  - 最近错误（最近 N 条系统通知级别）；
-  - last restart reason/时间；
-  - permission preset（auto）；reviewer 两档与超时；
-  - 依赖版本（DSH、发行版）。
-- 不展示 API key、完整消息内容、sandbox 包以外的敏感信息。
-- 同时提供给本地测试通道 `GET /v1/status`（JSON）。
+  - 每个 goal：短 id、phase、rounds、model、child 运行状态、sandbox generation/TTL/active；
+  - 每个 sandbox：session、目录、存在性、generation、activity、TTL、临时包、最近使用；
+  - active schedule：id/title/kind/scheduledAt/state；
+  - memory：active/archived/invalid/bytes；
+  - 最近 10 条 warn/error（进程内存环形缓冲，不持久化，不含字段值）；
+  - last restart reason/时间、lastVersion、workspace/state/lock/storage 路径；
+  - reviewer 两档与超时；DSH/app 版本。
+- 不展示 API key、完整消息内容、提醒 prompt、memory 正文或 sandbox 包以外的敏感信息。
+- `GET /v1/status?full=1` 返回摘要 + `details`；默认 `GET /v1/status` 仍只有摘要。
 
 ## 13.8 运维手册（草案）
 

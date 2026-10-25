@@ -94,12 +94,12 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 |---|---|
 | `/stop` | 取消主 agent 当前轮；中止待审批/提问；清空主 agent 排队注入。**不影响 goal 子代理** |
 | `/status` | 摘要：运行状态、主会话 id、模型、活跃 goal 数、待应答数、outbox 长度、uptime、版本 |
-| `/status full` | 每个 goal 的短 id/phase/rounds、sandbox 实例与 TTL、最近错误、last restart reason；不展示敏感信息 |
+| `/status full` | 每个 goal 的短 id/phase/rounds/model、sandbox 实例与 TTL、active schedule、memory 计数、最近错误、reviewer、last restart reason；不展示敏感信息 |
 | `/steer [文本]` | 带文本：强制 steer 这条文本；不带文本：下一条强制 steer |
 | `/queue [文本]` | 带文本：强制 followup；不带文本：下一条强制 followup |
-| `/clear` / `/new` | 新建主会话，旧会话归档；停止并归档 goal 子代理（见 05/10） |
+| `/clear` / `/new` | 新建主会话，旧会话归档；停止并归档 goal 子代理，删除旧主会话的 schedule 任务（见 05/10） |
 | `/compact` | 透传 DSH `/compact`（压缩主会话上下文） |
-| `/goal ...` | 桥接自有语义：`new <目标> [--rounds N]`（宿主创建 continuable child + goal）、`list`、`status <前缀>`、`pause <前缀>`、`resume <前缀>`、`clear <前缀>`（停止+自动归档）、`archive <前缀>`（归档已完成 goal） |
+| `/goal ...` | 桥接自有语义：`new <目标> [--rounds N] [--model provider/model] [--effort ID]`（宿主创建 continuable child + goal）、`list`、`status <前缀>`、`pause <前缀>`、`resume <前缀>`、`clear <前缀>`（停止+自动归档）、`archive <前缀>`（归档已完成 goal） |
 | `/permission` | 只报告当前 permission preset（Auto）；任何切换参数返回错误。v1 没有 DSH 沙箱回退，切走会绕过审查（见 08） |
 | 其他已注册 DSH 命令 | 透传 `ctx.commands.execute`；未知命令回错误，不进入模型 |
 

@@ -230,6 +230,8 @@ age.secrets.nokoribi-agent-env = {
 ├─ memory/
 │  ├─ entries/
 │  └─ archive/
+├─ storage/
+│  └─ schedule.json       # dsh-schedule 的 JSON backend
 ├─ archive/goals.jsonl
 ├─ sandboxes/<sessionId>/
 └─ run/agent.lock
@@ -264,11 +266,12 @@ age.secrets.nokoribi-agent-env = {
 6. sandbox：默认 host 生效；workspace 不挂载；`cp` 搬运可用；TTL/reset/status；sandbox 内 sudo 失败。
 7. local：系统工具可用；`sudo -n true` 成功（若开启）。
 8. goal：`/goal new` 与自然语言各创建一个；报告、重启恢复、归档。
-9. memory：`/remember` 类交互（自然语言）写入；跨会话 search。
-10. schedule：创建提醒，到期后收到主动消息。
-11. `systemctl restart nokoribi-agent`：恢复会话、inbox、goal、outbox。
-12. `kill -9` 进程：systemd 拉起，恢复并通知；待应答失效提示。
-13. watchdog：模拟卡死（实现期测试钩子）后被 systemd 重启。
-14. 重启系统：服务自启、状态恢复。
+9. memory：自然语言写入；跨会话 search；确认不会自动注入（D143）。
+10. schedule：创建提醒，到期后收到主动消息；SIGKILL 后逾期重启仍交付；`/clear` 删除旧会话任务。
+11. `/status full` 与 `GET /v1/status?full=1` 返回 goals/sandbox、schedule、memory、reviewer、recent errors。
+12. `systemctl restart nokoribi-agent`：恢复会话、inbox、goal、outbox。
+13. `kill -9` 进程：systemd 拉起，恢复并通知；待应答失效提示。
+14. watchdog：模拟卡死（实现期测试钩子）后被 systemd 重启。
+15. 重启系统：服务自启、状态恢复。
 
 > 没有 NixOS VM 测试（D130）；以上为手工验收。可在实现期加一个 `nix flake check` 的 module eval 检查作为静态门禁。

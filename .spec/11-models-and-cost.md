@@ -7,15 +7,16 @@
 | 角色 | 配置方式 | 默认/约束 |
 |---|---|---|
 | 主 agent | NixOS module `models.main`（provider/model/reasoningEffort） | **必须支持图像输入**（入站图片直接给模型）；由配置选择 |
-| 子代理（goal/任务） | M4：goal child 固定 `NOKORIBI_GOAL_MODEL`（D138）；M5 再接 `models.subagents` 白名单与主 agent 选择 | 默认 secondary/低成本档；主 agent 决定具体条目 |
-| 记忆提炼子代理 | 配置的 secondary/低成本档 | 一次性、任务结束触发 |
+| 子代理（goal/任务） | goal 默认 `NOKORIBI_GOAL_MODEL`；M5 用 `NOKORIBI_GOAL_MODELS` allowlist + `start_goal`/`/goal new` 选择（D138/D141）；generic `subagent` 仍继承主模型 | 默认 secondary/低成本档；主 agent 决定具体条目 |
+| 记忆提炼子代理 | `NOKORIBI_MEMORY_PROVIDER/MODEL/REASONING_EFFORT`，默认复用 goal 路由 | 一次性、goal 终态触发 |
 | reviewer fast | `review.fast` | 日常所有工具调用先过这一档 |
 | reviewer strong | `review.strong` | fast deny/不确定/sudo 动作时复审 |
 | reviewer 超时 | `review.timeoutMs` | 默认 30s；超时 fail closed |
 
 - 不再使用"主模型/便宜模型"的全局分层表述；**两个 tier 只属于 reviewer**（D85）。
 - 主模型与 reviewer 模型相互独立；reviewer 不跟主模型绑定（由 vendored auto-review 补丁实现）。
-- M4 的 goal child 通过宿主 `start_goal`/`/goal new` 启动，`agentOptions` 固定为 `NOKORIBI_GOAL_PROVIDER`/`NOKORIBI_GOAL_MODEL`；generic `subagent` 仍可继承主 agent 路由。per-goal 选择与 Nix allowlist 后移 M5（D138）。
+- M5 的 goal child 通过宿主 `start_goal`/`/goal new` 启动；默认路由 `NOKORIBI_GOAL_PROVIDER`/`NOKORIBI_GOAL_MODEL` 始终允许，`NOKORIBI_GOAL_MODELS` 提供额外精确 `provider/model` allowlist。`start_goal.model`/`reasoning_effort` 与 `/goal new --model/--effort` 必须命中；generic `subagent` 仍继承主 agent 路由。
+- DSH 的 `modelSelectionSettings: true` 在全局 bundle 行因缺少 scoped preset Context 而不可用；M5 不启用，记录为后续项（D141）。
 - 主 agent 的模型切换（DSH 的 session model selection）在 v1 不作为主要交互；IM 未暴露 `/model` 命令。
 
 ## 11.2 图像输入
@@ -46,10 +47,10 @@
   - 压缩本身消耗一次模型请求。
 - 可调参数（按模型/路由覆盖）：阈值、保留近期消息数等；在 M5/M6 用真实数据调。
 - `dsh-token-meter` 可用于估算上下文压力/展示用量；不改变模型可见内容。
-- v1 不做图像 offload、不做独立 session 搜索/记忆注入。
+- v1 不做图像 offload、不做独立 session 搜索，也不做 memory 自动注入（D143）；memory 只走 `memory` 工具主动检索，AGENTS.md 是唯一自动注入的长期指令。
 - 提示词稳定性：静态段保持稳定，动态值走 runtime context（时间），减少 KV cache 失效。
 - SOUL.md 控制在 ≤4KB；AGENTS.md 预算 64KB（但实际应保持小）。
-- `dsh-time-context` 用 `refreshIntervalMs` 控制注入频率（草案 30–60 秒；具体实现调）。
+- `dsh-time-context` 在 M5 以 `refreshIntervalMs` 默认 60000 挂载，可由 `NOKORIBI_TIME_CONTEXT_REFRESH_MS` 调整；每条注入都增加 user 消息 token。
 
 ## 11.5 预算与守卫
 
@@ -63,8 +64,8 @@
 
 ## 11.6 模型选择的实现注意
 
-- `dsh-tool-subagent` 的 `modelSelectionSettings: true` 会向模型暴露允许的子级模型；`agentOptions` 提供默认 provider/model/reasoningEffort。
-- 主 agent 在 spawn 时选择模型；goal child 的模型会记录在 subagent descriptor 中，冷恢复使用同一路由。
+- `dsh-tool-subagent` 的 `modelSelectionSettings: true` 会向模型暴露允许的子级模型，但它要求 scoped preset/composition Context；本项目把该工具作为全局 bundle 行挂载，因此 M5 不启用（D141）。
+- goal 的 per-goal 选择由 `start_goal`/`/goal new` 自己校验 `NOKORIBI_GOAL_MODELS`；默认路由始终允许。goal child 的模型会记录在 subagent descriptor 中，冷恢复使用同一路由。
 - reviewer 模型由我们的补丁直接解析配置，不依赖当前 agent 模型。
 - 若 API 模型目录变化/模型下线：启动时解析路由会失败；需要 `nixos-rebuild` 更新配置。
 - 不同模型 context window 不同：compaction 的按模型覆盖要随主模型配置。
@@ -76,6 +77,8 @@
 - 两档 reviewer 的价格/延迟取舍（需要实测）。
 - 主模型是否支持 1M 上下文（DSH 的 `defaultContextWindow` 配置在 sdk-minimal 里用环境变量设置；本项目的模型 context 需按适配器信息配置）。
 - compaction 阈值与长会话实际增长速率需要在 M5/M6 实测。
+- generic `subagent` 的 DSH model selection 需要 scoped preset/composition Context；若后续引入 agent preset，再评估（D141）。
+- memory curator 的实际写入质量/噪声需要用真实 goal 历史评估（M5 只做脚本化验收）。
 
 ## 11.8 成本相关已接受项
 

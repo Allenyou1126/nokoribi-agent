@@ -32,7 +32,7 @@
   4. round-driver 自动续跑；child 用 `get_goal`/`update_goal` 控制完成/阻塞。
 - `start_goal` 调用与子代理后续工具调用都过 Auto review。
 - 桥接通过 `goal/changed`、`subagent/start|end` 与 child session 事件跟踪（见 10.5）。
-- 模型选择：M4 固定 `NOKORIBI_GOAL_MODEL`（D138）；per-goal allowlist 后移 M5。
+- 模型选择：默认 `NOKORIBI_GOAL_PROVIDER`/`NOKORIBI_GOAL_MODEL`；M5 起 `NOKORIBI_GOAL_MODELS` 提供额外精确路由，`start_goal.model`/`reasoning_effort` 与 `/goal new --model/--effort` 可选择；generic `subagent` 仍继承主模型（D138/D141）。
 
 ## 10.4 创建路径 B：`/goal new`
 
@@ -85,9 +85,9 @@
 
 | 命令 | 行为 |
 |---|---|
-| `/goal new <目标> [--rounds N]` | 桥接创建 continuable child + 提示其创建 goal；返回短 id |
+| `/goal new <目标> [--rounds N] [--model provider/model] [--effort ID]` | 桥接创建 continuable child + 提示其创建 goal；返回短 id；model/effort 由 allowlist 校验 |
 | `/goal list` | 列出 tracked goals：短 id、phase、rounds、目标摘要、是否 running |
-| `/goal status <前缀>` | 详情：objective、phase、roundsStarted/max、blocker、child 状态、sandbox 状态 |
+| `/goal status <前缀>` | 详情：objective、model、phase、roundsStarted/max、blocker、child 状态、sandbox 状态 |
 | `/goal pause <前缀>` | 若 live：`ctx.goals.pause(child, ref)`；若 cold：返回错误，提示先 `/goal resume`（M4 实现） |
 | `/goal resume <前缀>` | live 且 active/paused → `ctx.goals.resume(child, ref)`；cold → 冷恢复后 arm；blocked/complete 需先 edit/clear（DSH 语义） |
 | `/goal clear <前缀>` | 停止当前轮（`interrupt`）→ live 时 `ctx.goals.clear` → 释放 Activation → 移出 tracked → 自动归档（D99） |
@@ -155,14 +155,16 @@
 
 ## 10.10 Schedule（主动提醒）
 
-- 挂载 `dsh-schedule` + `dsh-time-context`。
-- 主 agent 通过 `schedule_create` / `schedule_list` / `schedule_delete` 工具管理提醒（具体工具名以锁定版本为准）。
-- 到期作为普通 follow-up 消息进入主会话；主 agent 处理后的回复被镜像到 IM——这就是主动播报。
-- 需要主 agent live；daemon 常驻 + 启动恢复保证。
-- 重复提醒最小间隔 5 分钟（DSH 限制）；错过的重复只显示最新一次。
-- 逾期提醒在恢复 live 后交付（依赖启动顺序，见 05）。
+- 挂载 `dsh-schedule` + `dsh-tool-schedule` + `dsh-time-context`；rc.3 的 Schedule 是 Host-wide，任务存于 `$DSH_HOME/storage/schedule.json`（storage-domain/JSON）。
+- 主 agent 通过 `schedule_create` / `schedule_list` / `schedule_update` / `schedule_delete` 工具管理提醒；`title` 必填（≤120 字符），时间参数六选一；`every_seconds` 最小 60 秒。
+- 到期作为普通 follow-up user 消息进入原主会话（`[SCHEDULE REMINDER]` / 批次 `[SCHEDULE REMINDER BATCH]`）；主 agent 处理后的回复被镜像到 IM——这就是主动播报。
+- 需要主 agent live；daemon 常驻 + 启动恢复保证。`sessionController` 桥只解析当前主会话，并在 daemon ready 前阻塞交付，避免在 session listener 安装前开轮。
+- 错过的重复只显示最新一次；逾期提醒在恢复 live 后交付（依赖启动顺序，见 05）。
 - 主 agent 忙碌时提醒不会打断当前轮。
+- `/clear` 在 dispose 旧 main 前删除旧主会话的全部任务（active + inactive）；否则它们会一直重试。任务不跨主会话迁移。
+- 子代理不能使用 Schedule（工具层拒绝）；主会话独享。
 - **不做 heartbeat**（D62）；没有独立"周期性唤醒检查任务"的能力。主动行为只有 schedule 提醒和 goal 自动续跑。
+- 已知限制：Host 必须运行；enqueue 与任务写入非原子，崩溃可能重复交付；存储损坏会让 schedule 启动失败（fail loud）。
 
 ## 10.11 已知限制与风险
 
@@ -185,4 +187,13 @@
 - `/clear` 在 dispose 旧 main 前 `clearAll()`：interrupt → clear → drain → 归档 `cleared` → 删除 sandbox；session 保留。
 - 归档索引 `$DSH_HOME/archive/goals.jsonl`；`/goal archive` 只接受 complete。
 - 验证：`pnpm test` 208 tests、`pnpm test:process` 33 scenarios、`pnpm check`；新增 M4 进程场景覆盖 `/goal new` 完成/归档、`start_goal`、main 隐藏、pause/resume、SIGKILL 冷恢复、`/clear`、多 goal、恢复失败、`send_message` 汇报。
-- 偏差：D138（per-goal 模型选择后移 M5）；goal child persona 由 prompt 承担而非 agent preset；`/goal pause` 对 cold child 返回错误（先 resume）。
+- M4 偏差/边界：goal 模型当时固定为 `NOKORIBI_GOAL_MODEL`（D138，M5 已补 allowlist）；goal child persona 由 prompt 承担而非 agent preset；`/goal pause` 对 cold child 返回错误（先 resume）。
+
+## 10.13 M5 实现记录（2026-10-25）
+
+- Schedule：挂载 `dsh-storage`/`storage-json`/`storage-domain`/`dsh-schedule`/`dsh-tool-schedule`/`dsh-time-context`；新增 `@nokoribi/agent-app/session-bridge` 最小 `sessionController`，只解析当前 main 并在 ready 前等待。
+- `/clear`：创建新 main 前用 `ctx.schedule.catalog()` + `delete` 删除旧 main 的全部任务，返回删除数量；`sessionController` 重新 bind 新 main。
+- Goal 模型：`NOKORIBI_GOAL_MODELS` allowlist；`start_goal` 支持 `model`/`reasoning_effort`，`/goal new` 支持 `--model`/`--effort`；state/status/archive 记录 route；默认路由始终允许。
+- 记忆提炼：goal `complete`/`blocked` 触发一次性 `memory-*` child，输入 objective + 最后 report；`delivery:"caller"`，超时/失败静默。`/clear` 取消当前 curator。
+- 验证：`pnpm test` 285 tests、`pnpm test:process` 40 scenarios（M5 新增 7）、`pnpm check` 0 warnings/errors。
+- 偏差/边界：D139（Host-wide schedule 桥）、D141（generic subagent 模型选择后移）、D143（memory 自动注入后移）；`/clear` 期间到期交付有极小在途窗口。

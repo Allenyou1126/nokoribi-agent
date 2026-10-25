@@ -38,6 +38,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 - M2 已实现 `nokoribi:safety`（order 8000）与更新后的 `nokoribi:interaction`；`/permission` 只读，审批/提问由系统单独展示。
 - M3 已实现 `nokoribi:hosts`（order 3000，由 `@nokoribi/shell-bash/tool` 注册）：默认 host、sandbox/local 差异、`DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR`、cp/rsync、sandbox 禁 sudo、host 发现指引。
 - M4 已实现 `nokoribi:goal`（order 6000，由 `@nokoribi/prompt` 注册），并在 `system-prompt/assemble` 中移除主/普通 child 的 `tool:goal`、替换 goal child 的文案。
+- M5 已实现 `nokoribi:memory`（5000）与 `nokoribi:schedule`（7000）；`nokoribi:interaction` 增加 `/status full` 与 `[SCHEDULE REMINDER]` 的处理说明。
 - 上述段落内容保持稳定，避免每轮变化破坏 KV cache。
 
 ### 动态 runtime context
@@ -80,11 +81,12 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 ```
 $DSH_HOME/memory/
 ├─ entries/
-│  ├─ 2026-10-25-deploy-preference.md
-│  └─ 2026-10-24-nixos-agenix.md
-├─ archive/                         # forget 后移入
-└─ index.json                       # 可选：检索缓存/元数据索引（实现决定）
+│  ├─ mem-20261025-013000-a1b2.md
+│  └─ mem-20261024-221500-c3d4.md
+└─ archive/                         # forget/supersedes 后移入
 ```
+
+M5 不实现 `index.json`/向量检索；每次 search 扫描 `entries/*.md`。损坏条目会被跳过并在 `/status full` 的 invalid 计数中体现。
 
 单条 entry 文件（Markdown + YAML frontmatter）：
 
@@ -156,6 +158,15 @@ supersedes: null
 - 流程：先 search 已有条目 → 决定新增/更新/supersede → 用 memory 工具写入 → 返回写入 id 列表。
 - 不在每轮运行，避免 token 成本与噪声；主 agent 也可以直接写简单条目。
 - 失败不阻塞主流程；记录日志。
+
+### M5 实现记录（2026-10-25）
+
+- 新增 `packages/memory`：`MemoryService` 服务名 `memory`；`entries/` + `archive/`；frontmatter 使用 JSON 引号标量 + JSON flow array，保证可解析。自动 id `mem-YYYYMMDD-HHMMSS-<hex>`；写链串行、原子写、0600/0700；body ≤64KiB、title ≤200B、1–20 个 `namespace:value` tags。
+- 搜索：title 5/tags 3/body 1 的 OR token 评分，AND tag 过滤，updated desc tie，default 10 / max 50；不建 index、不做向量检索。损坏文件跳过并计入 invalid。
+- `write` 支持 upsert 与 `supersedes`；归档条目不允许复活；`read` 只读 active；`forget` 软归档。常见密钥模式在写入前拒绝。
+- 提炼子代理（D140）：goal `complete`/`blocked` 时由宿主触发，按 goal+phase 去重；`memory-*` child 使用 `delivery:"caller"`，输入 objective/rounds/last report，最多写 3 条；超时/失败只记日志，不通知用户。
+- **自动注入后移（D143）**：M5 不把 memory entries 注入 system prompt，也不在会话启动/每轮 pre-step 自动检索。`/clear` 后的新会话没有记忆预热，必须由模型调用 `memory search`。
+- `/status full` 提供 active/archived/invalid/bytes 计数；`memory` 工具和 curator 的 write/forget 仍经过 Auto review。
 
 ### 隐私
 

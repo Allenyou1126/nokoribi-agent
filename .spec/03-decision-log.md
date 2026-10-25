@@ -133,7 +133,12 @@
 | D135 | 前台命令超时 | 只返回超时结果，不自动转后台 job |
 | D136 | goal 创建路径（M4） | 专用 `start_goal` 工具 + `/goal new`；宿主 `ctx.goals.create`；取代 D97 |
 | D137 | goal 汇报机制（M4） | `send_message` + `subagent/end` 结算通知；rc.3 无独立 report 包 |
-| D138 | goal 模型选择（M4） | goal child 固定 `NOKORIBI_GOAL_MODEL`；per-goal allowlist 后移 M5 |
+| D138 | goal 模型选择（M4/M5） | M4 固定 `NOKORIBI_GOAL_MODEL`；M5 用 `NOKORIBI_GOAL_MODELS` allowlist + `start_goal`/`/goal new` 选择；generic `subagent` 选择后移 |
+| D139 | schedule 宿主桥（M5） | rc.3 `dsh-schedule` 是 Host-wide + storage-domain；新增最小 `sessionController` 桥、storage 行；`/clear` 删除旧主会话任务 |
+| D140 | 记忆提炼触发（M5） | goal `complete`/`blocked` 时一次性提炼；输入 objective + 最后 report；失败静默 |
+| D141 | goal 模型 allowlist（M5） | `NOKORIBI_GOAL_MODELS` 精确路由；默认路由始终允许；generic `subagent` 仍继承主模型 |
+| D142 | `/status full`（M5） | 文本 + `GET /v1/status?full=1`；含 goals/sandbox、schedule、memory、recent errors、reviewer、版本 |
+| D143 | memory 自动注入（M5 后移） | M5 只做主动检索；会话启动/每轮注入留后续版本 |
 
 ---
 
@@ -305,7 +310,12 @@
 - **D135 前台超时（M3）** — 选择：只有显式 `run_in_background: true` 才注册 `ctx.jobs`；前台命令超时按 `[timed out]` 返回并结束，不采用上游 `dsh-tool-bash` 的自动转后台。理由：减少 job 生命周期复杂度；需要后台时由模型显式选择。
 - **D136 goal 创建路径（M4）** — 自定义：rc.3 `dsh-tool-goal` 的 `create_goal` 要求根 agent 当前轮的直接人类输入；goal child 是 delegated child，无法自行创建。选择：新增专用 `start_goal` 工具（主 agent 可用）与 `/goal new` 命令，由宿主预留 `goal-*` child id、启动 continuable child 并调用 `ctx.goals.create()`；`subagent` 工具保留给普通委托。状态：取代 D97；D101 不变。
 - **D137 goal 汇报机制（M4）** — 自定义：rc.3 没有可用的独立 `dsh-tool-subagent-report` 包；选择 `send_message`（child → direct parent）+ `subagent/end` 自动结算消息，主 agent 负责转述。
-- **D138 goal 模型选择（M4）** — 自定义：M4 的 goal child 模型由 `NOKORIBI_GOAL_MODEL` 固定（默认跟随主模型）；D63 的“主 agent 从 allowlist 选择 per-goal 模型”后移 M5。
+- **D138 goal 模型选择（M4/M5）** — 自定义：M4 的 goal child 模型由 `NOKORIBI_GOAL_MODEL` 固定（默认跟随主模型）。M5 已实现 per-goal allowlist：`NOKORIBI_GOAL_MODELS` + `start_goal.model` / `/goal new --model`；默认路由始终允许。generic `subagent` 的 DSH `modelSelectionSettings` 因全局 bundle 行缺少 scoped preset Context 而暂不启用，继续继承主模型。
+- **D139 schedule 宿主桥（M5）** — 自定义：rc.3 `dsh-schedule` 是 Host-wide 服务，任务存于 storage-domain/JSON，交付依赖 `ctx.sessionController.resolveAgent()`。本项目不挂 Web 控制器，改在 `@nokoribi/agent-app/session-bridge` 提供最小 `sessionController`：只解析当前主会话，在 daemon ready 前等待，旧会话任务由 `/clear` 通过 catalog/delete 删除。新增 storage/storage-json/storage-domain 行。
+- **D140 记忆提炼触发（M5）** — 自定义：goal 进入 `complete`/`blocked` 时，按 `goalId:phase` 去重，启动一次性 `memory-*` continuable child（`delivery:"caller"`），输入 objective、阶段、轮次和最后一份 `[goal:…]` 报告；超时/失败只记日志，不阻塞主流程，不向用户发完成通知。
+- **D141 goal 模型 allowlist（M5）** — 自定义：`NOKORIBI_GOAL_MODELS` 是逗号分隔的精确 `provider/model` 路由；`start_goal` 的 `model`/`reasoning_effort` 与 `/goal new --model/--effort` 必须命中 allowlist 或默认路由；state/archive/status 记录 route 与 effort。
+- **D142 `/status full`（M5）** — 自定义：新增详细状态文本与 `GET /v1/status?full=1`；包含 goal 与 sandbox、active schedule、memory 计数、recent warn/error 环形缓冲、reviewer 两档、DSH/app 版本与路径；不输出消息正文或密钥。
+- **D143 memory 自动注入后移（M5）** — 自定义：M5 保持“主动检索”而非自动注入；不做会话启动摘要、每轮 pre-step 检索或把 entries 塞进 system prompt。`/clear` 后不会自动带上旧记忆，模型必须调用 `memory search`。后续版本再评估。
 
 ---
 
@@ -317,10 +327,10 @@
 2. **入站幂等**：持久去重 `channelId+messageId`；先记后注入（接受"崩溃丢失极小窗口"以换取不重复处理）。见 05/06。
 3. **出站投递**：每轮最后一条非空 assistant 文本；长文本按渠道上限分段、尽量不拆代码块；按 markdown 能力降级；⚠️ 系统通知只覆盖 error/aborted（非用户触发）/goal blocked/daemon 重启。见 06。
 4. **交互 broker**：提示前缀 🔐（审批）/ ❓（提问）/ ⚠️（通知）；回复解析编号/允许/拒绝/自定义文本；超时拒绝/报错；全局串行。见 06。
-5. **启动/恢复顺序**：单实例锁 → 加载 state → resume main → 挂 channel 并缓冲 → 恢复 goal 子代理 → 清空待应答并通知 → 重发 outbox → 放行缓冲 → schedule 逾期交付。见 05。
+5. **启动/恢复顺序**：单实例锁 → 加载 state → resume main → 挂 channel 并缓冲 → 恢复 goal 子代理 → 清空待应答并通知 → 重发 outbox → 放行缓冲 → `sessionController.markReady()` → schedule 逾期交付。见 05。
 6. **状态文件**：`agent-state.json` 保存 mainSessionId、goals[]、lastActiveChat、cleanShutdown、outbox 游标等；原子写。见 05。
 7. **提示词分段**：环境/hosts、IM 交互、memory、goal、schedule、safety 六段静态 section；动态值走 runtime context（time-context）。见 09。
-8. **memory 规范**：全局 `$DSH_HOME/memory/entries/<id>.md` + frontmatter；单工具四 action；只存持久事实；提炼子代理去重写入。见 09。
+8. **memory 规范**：全局 `$DSH_HOME/memory/entries/<id>.md` + frontmatter；单工具四 action；只存持久事实；提炼子代理去重写入；**按需检索，不自动注入**（D143）。见 09。
 9. **AGENTS.md**：首次启动 seed 全局与工作区模板，存在不覆盖；SOUL.md 不进 AGENTS。见 09。
 10. **NixOS module 选项表**（models/hosts/review/approval/channel/memory/goal/schedule/prompt/sudo/log 等）。见 12。
 11. **构建/装配**：bundle patch 行 id 稳定；Nix 生成 overlay；launcher 读打包 profile；store 目录布局。见 04。

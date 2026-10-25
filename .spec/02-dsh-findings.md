@@ -103,14 +103,14 @@ Inbox：
 
 ## 2.6 Schedule
 
-`@deepseek-ai/dsh-schedule` 提供会话本地持久提醒：
+`@deepseek-ai/dsh-schedule` 在 rc.3 是 **Host-wide** 持久提醒服务，不再是旧版本的 session-log 本地实现：
 
-- 工具：`schedule_create` / `schedule_list` / `schedule_delete`（本机安装的 0.1.5 版本另有 `schedule_delete`；0.2.1 版本以锁定版本为准）。
-- 到期提醒在会话空闲后作为普通 follow-up 消息进入同一会话；agent 不会被打断。
-- 需要 live 根 agent 才能交付；会话关闭/cold 时提醒保持逾期，直到未来的 live 根 agent 恢复会话；不会通过邮件/短信/推送发送。
-- 重复提醒只支持固定间隔，最小 5 分钟；错过的重复只展示最新一次。
-- 插件只给"插件加载后创建"的根 agent 安装工具；运行时子 agent 不获得 Schedule。
-- 状态由会话日志的 `schedule/change` 事件持久化；session projection 可选。
+- 工具由 `@deepseek-ai/dsh-tool-schedule` 提供：`schedule_create` / `schedule_list` / `schedule_update` / `schedule_delete`。
+- `schedule_create` 必须给非空 `prompt`、`title`（≤120 字符），并恰好给一个 `after_seconds`、`at`、`every_seconds`、`daily`、`weekly` 或 `cron`；`every_seconds` 最小 60 秒；支持显式 IANA 时区。
+- 任务存于 storage-domain（我们路由到 JSON backend，`$DSH_HOME/storage/schedule.json`）；交付通过 `ctx.sessionController.resolveAgent()` 恢复原 Session，再 `followup` 一条 user 消息；agent 不会被打断。
+- 需要 Host live 才能交付；daemon 启动时逾期任务会等待主会话 ready；重复提醒只交付最近一次错过的 occurrence。
+- 工具在执行时拒绝 delegated subagent；Schedule 只属于主会话。
+- 状态由 storage 任务行持久化；`schedule/changed` 用于客户端通知；不再依赖 session `schedule/change` 事件。
 
 ## 2.7 Commands
 
@@ -207,8 +207,8 @@ Inbox：
 ### `@deepseek-ai/dsh-time-context`
 
 - 可选时钟：每步注入持久、带来源的 user 角色读数（时间、时区策略、经过时长）。
-- 默认不启用；Schedule overlay 会挂载它；可用 `refreshIntervalMs` 抑制注入频率。
-- 每条注入都是历史中的额外 user 消息，有 token 成本。
+- 生产 bundle 在 M5 挂载；`refreshIntervalMs` 默认 60 秒（`NOKORIBI_TIME_CONTEXT_REFRESH_MS`），可用 `NOKORIBI_TIME_ZONE` 设 fallback zone。
+- 每条注入都是历史中的额外 user 消息，有 token 成本；它不是 memory 注入。
 
 ### `@deepseek-ai/dsh-skill*`
 

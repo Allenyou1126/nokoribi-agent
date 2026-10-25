@@ -63,14 +63,15 @@ M1–M4 实现顺序：
    - 创建/恢复后立即 `permissionPresets.set(session, "auto")`，校验 `current()==="auto"`；失败则 startup-error，不降级为无审查。注册只读 `/permission` scoped 命令。
    - 创建/恢复后立即 flush，随后写回 state。
 6. 安装 `session/event` 监听、注册命令、安装 status provider，再 `channels.attachRuntime()`。
-7. goal 恢复（M4）：先 `listChildren` 校验 tracked 子代理，再对 active goal 逐个 `sendMessage` 冷恢复、等待 live、`ctx.goals.resume` re-arm；失败保留 tracked 并通知。schedule 恢复留到 M5。
-8. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。
-9. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
-10. `channels.drainBuffered()` 放行启动期入站，然后写 `run/ready.json` 并开始正常收发。
+7. goal 恢复（M4）：先 `listChildren` 校验 tracked 子代理，再对 active goal 逐个 `sendMessage` 冷恢复、等待 live、`ctx.goals.resume` re-arm；失败保留 tracked 并通知。
+8. schedule 恢复（M5）：上游 `dsh-schedule` 从 `$DSH_HOME/storage/schedule.json` 读取任务；逾期任务通过 `sessionController.resolveAgent()` 等待主会话 ready 后交付。桥接在创建/恢复 main 后 bind，在 `drainBuffered()` 之后 markReady，避免在 session listener 安装前开轮。
+9. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。
+10. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
+11. `channels.drainBuffered()` 放行启动期入站；随后 `sessionController.markReady()`、写 `run/ready.json` 并开始正常收发。
 
 > V4 验证结果（M1）：resume 会恢复 `next-turn` inbox，但**不会自动开启新轮**；下一次用户消息或显式唤醒会带上排队消息。M1 不额外重放，后续里程碑可加系统提示唤醒。
 
-> 启动顺序中的 4–5 与 12 的时序需要在实现时验证：Schedule 只给"插件加载后创建"的 agent 安装工具；因此主 agent 必须在 Schedule 插件就绪后创建/恢复。`agent-app` 应作为 app-boot 的启动提供方在准备完成后执行主会话生命周期。
+> 启动时序需要在实现时验证：Schedule 只给"插件加载后创建"的根 agent 安装工具；因此主 agent 必须在 Schedule 插件就绪后创建/恢复，且 schedule 交付要等 `sessionController.markReady()`。`agent-app` 作为 app-boot 的启动提供方在准备完成后执行主会话生命周期；M5 进程测试已覆盖到期/逾期交付。
 
 ## 5.4 正常关闭（SIGTERM）
 
@@ -105,11 +106,13 @@ M1/M2 实际流程：
 流程：
 
 1. 若存在活跃 goal 子代理：`/clear` 在 dispose 旧 main 前调用 `GoalManager.clearAll()`；对 live child `interrupt` → `ctx.goals.clear` → drain → 归档 `outcome:"cleared"`，从 `goals[]` 移除；失败记录日志但继续新会话。
-2. 若存在待应答：`channels.abortInteractions("clear")` 全部中止并通知用户，同时抑制已排队但未发送的旧提示。
-3. dispose 主 agent handle；旧会话保持在 DSH 会话库中（不删除）。
-4. 生成新的 `mainSessionId`，`ctx.agents.create()` 新会话；写回 state；清空 outbox 中属于旧会话的未发送回复？——**待实现决策**：草案为保留 outbox（已生成的消息仍发给用户）但给旧会话 id 标记；新消息进入新会话。
-5. 删除旧会话对应的 sandbox 目录（per-session scope）。M3 实现：旧 agent `dispose()` 后调用 `ctx.shellHosts.disposeSession(previousId)`，删除目录与 sidecar；失败只记录日志，不阻断 `/clear`。
-6. 发送确认消息："已新建会话，旧会话已归档"。
+2. 取消正在运行的 memory curator（不阻塞 `/clear`；旧 child 随 context/main 生命周期释放）。
+3. 若存在待应答：`channels.abortInteractions("clear")` 全部中止并通知用户，同时抑制已排队但未发送的旧提示。
+4. 用 `ctx.schedule.catalog()` 找出绑定旧 `mainSessionId` 的全部任务（含 inactive），逐条 `delete`；失败记录日志但继续。确认消息附带删除数量。
+5. dispose 主 agent handle；旧会话保持在 DSH 会话库中（不删除）。
+6. 生成新的 `mainSessionId`，`ctx.agents.create()` 新会话；重新 bind `sessionController` 与 memory curator；写回 state；保留 outbox（已生成的消息仍发给用户），新消息进入新会话。
+7. 删除旧会话对应的 sandbox 目录（per-session scope）。M3 实现：旧 agent `dispose()` 后调用 `ctx.shellHosts.disposeSession(previousId)`，删除目录与 sidecar；失败只记录日志，不阻断 `/clear`。
+8. 发送确认消息："已新建会话，旧会话已归档"（如有提醒删除则追加数量）。
 
 - `/new` 与 `/clear` 等价（别名）。
 - 不做"继承摘要"：新会话不自动带旧会话上下文；需要总结由用户/主 agent 通过 memory 或手动完成（用户选择 D17 时未选摘要开场）。

@@ -40,7 +40,7 @@
 - 已验证：消息→回复、去重、`/status`、`/clear`（旧 session 文件保留）、`/stop`、`/steer`/`/queue` 一次性模式、SIGTERM 干净退出、kill -9 后主会话恢复 + outbox 重发 + 崩溃通知、单实例锁、state 损坏备份与通知。
 - 自动化：`pnpm test`（单元/进程内）与 `pnpm test:process`（8 个进程场景）通过；`pnpm check` 通过。
 - M1 偏差：默认 host 当时暂为 `local:workspace`（M3 已切到 `sandbox:default`）；`/steer`/`/queue` 直接完整实现；入站图片仍返回 501（**未分配，M2 不做**）；`--dump-config`、`/compact` 后移；`dsh-scope`/`dsh-atomic-write` 是库不是行。
-- 后续：sandbox host、模型侧 `bash(host)` 已在 M3 实现；goal 已在 M4 实现；memory/schedule（M5）；图片附件链路（未分配，建议 M5 或后置单独评估）。
+- 后续：sandbox host、模型侧 `bash(host)` 已在 M3 实现；goal 已在 M4 实现；memory/schedule 已在 M5 实现；图片附件链路仍未分配（后续版本单独评估）。
 
 ## 14.3 M2 安全闸与审批
 
@@ -153,9 +153,9 @@
 - rc.3 的 `create_goal` 只允许根 agent 直接人类输入，因此采用 D136：`start_goal` 工具 + `/goal new` 均由宿主启动 `goal-*` child 并 `ctx.goals.create()`；main 的 goal 工具隐藏；D137 用 `send_message` + `subagent/end` 汇报。
 - GoalManager 支持跟踪、短 id、`/goal list/status/pause/resume/clear/archive`、归档 JSONL、sandbox 删除、`/clear` 清理、SIGKILL 冷恢复；恢复失败保留 tracked 并通知。
 - 验证：`pnpm test` 208 tests、`pnpm test:process` 33 scenarios、`pnpm check` 通过。
-- M4 偏差：D138（per-goal 模型选择后移 M5）；goal child persona 由 prompt 承担；`/goal pause` 对 cold child 报错，先 resume。
+- M4 偏差/边界：goal 模型当时固定（D138，M5 已补 allowlist）；goal child persona 由 prompt 承担；`/goal pause` 对 cold child 报错，先 resume。
 
-## 14.6 M5 memory + schedule + 提示词收尾
+## 14.6 M5 memory + schedule + 提示词收尾（2026-10-25 已实现）
 
 ### 交付物
 
@@ -171,12 +171,23 @@
 - "记住…" 后可跨会话 search 到；提炼子代理写入去重；不存秘密。
 - 创建提醒，到期后主 agent 主动回复；重复/逾期行为符合 DSH。
 - SOUL.md 身份生效；AGENTS.md seed 不覆盖；提示词与实现一致。
-- 自动化：memory 单元/集成、prompt 快照、schedule（fake clock）、提炼子代理脚本化。
+- 自动化：memory 单元/集成、prompt 快照、schedule 到期/逾期进程场景、提炼子代理脚本化。
 
 ### 依赖/风险
 
 - 依赖 M1–M4。
 - 风险：提取子代理成本/噪声；全局 memory 跨项目可见；schedule 工具安装时序；SOUL 长度与模板转义。
+
+### M5 实现记录（2026-10-25）
+
+- `packages/memory` 实现全局文件 memory：`memory` 工具（search/read/write/forget）、frontmatter、secret guard、软归档、原子写；`/status full` 统计 active/archived/invalid/bytes。
+- memory 提炼：goal `complete`/`blocked` 触发一次性 `memory-*` child；`delivery:"caller"`；输入 objective + 最后 report；失败静默。M5 **不做 memory 自动注入**（D143）。
+- schedule：挂载 `dsh-storage`/`storage-json`/`storage-domain`/`dsh-schedule`/`dsh-tool-schedule`/`dsh-time-context`；新增最小 `sessionController` 桥；到期/逾期交付与 `/clear` 清理已验证。rc.3 `every_seconds` 最小 60 秒、`title` 必填、四工具（含 `schedule_update`）。
+- goal 模型：`NOKORIBI_GOAL_MODELS` allowlist；`start_goal`/`/goal new` 可选 model/effort；state/status/archive 记录路由；generic `subagent` 的 DSH model selection 因 rc.3 scoped 限制后移。
+- 提示词：`nokoribi:memory`（5000）、`nokoribi:schedule`（7000）；SOUL/AGENTS seed 与六段顺序对齐；AGENTS 模板更新。
+- `/status full` + `GET /v1/status?full=1`：goals/sandbox、active schedule、memory、recent warn/error、reviewer、版本；recent buffer 只在进程内。
+- 验证：`pnpm test` 285 tests、`pnpm test:process` 40 scenarios（M5 新增 7）、`pnpm check` 0 warnings/errors。
+- 偏差/边界：D139（schedule Host-wide bridge）、D141（generic subagent model selection 后移）、D143（memory 自动注入后移）；`/clear` 期间到期交付有极小在途窗口。
 
 ## 14.7 M6 NixOS 部署
 

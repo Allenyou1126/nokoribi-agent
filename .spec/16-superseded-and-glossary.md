@@ -76,7 +76,7 @@
 - 删除 goal 子代理会话（DSH 无删除 API；保留 session + 索引）。
 - 归档用 web-debug 查看（不做 web-debug；看文件）。
 - memory 按项目作用域/多作用域（只全局）。
-- memory 全量注入/自动注入（按需检索）。
+- memory 全量注入/每轮自动注入（M5 只做按需检索；自动注入按 D143 后移）。
 - 向量检索/嵌入（v1 不做）。
 - 用 session search 做记忆（未纳入 v1）。
 - 每条记忆一个文件改为单 MEMORY.md / JSONL（用户选每文件）。
