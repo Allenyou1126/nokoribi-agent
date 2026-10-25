@@ -23,6 +23,7 @@ import type {
 } from "./contract.js";
 import { IngressBufferFullError } from "./contract.js";
 import { SeenStore } from "./dedupe.js";
+import { chooseDelivery } from "./delivery.js";
 import { formatOutbound } from "./format.js";
 import { OutboxStore } from "./outbox.js";
 
@@ -419,13 +420,13 @@ export class ChannelService extends Service {
         explicit: DeliveryMode | undefined,
         agent: Agent
     ): DeliveryMode {
-        if (explicit !== undefined) return explicit;
-        if (this.oneShot !== null) {
-            const mode = this.oneShot;
-            this.oneShot = null;
-            return mode;
-        }
-        return agent.status === "running" ? "steer" : "followup";
+        const choice = chooseDelivery(
+            explicit,
+            this.oneShot,
+            agent.status === "running" ? "running" : "idle"
+        );
+        if (choice.consumedOneShot) this.oneShot = null;
+        return choice.mode;
     }
 
     private async deliverText(
