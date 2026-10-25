@@ -134,6 +134,7 @@ describe("M1 process scenarios", () => {
         const current = await status(restarted);
         expect(current.mainSessionId).toBe(sessionId);
         expect(current.lastRestartReason).toBe("clean");
+        expect(current.permission).toBe("auto");
         const lastSeq = first.items.at(-1)?.seq ?? 0;
         await expect(waitForOutbound(restarted, lastSeq, 1)).rejects.toThrow(
             /timed out/
@@ -160,6 +161,7 @@ describe("M1 process scenarios", () => {
         const current = await status(restarted);
         expect(current.mainSessionId).toBe(sessionId);
         expect(current.lastRestartReason).toBe("crash");
+        expect(current.permission).toBe("auto");
 
         const items = await waitForOutbound(
             restarted,

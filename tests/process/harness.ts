@@ -254,6 +254,41 @@ export async function appendPendingOutbox(
     await writeFile(path, `${JSON.stringify(document, null, 2)}\n`);
 }
 
+export async function appendPendingInteraction(
+    home: string,
+    text: string,
+    interactionId: string
+): Promise<void> {
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(home, "state"), { recursive: true });
+    const path = join(home, "state/outbox.json");
+    let document: {
+        version: 1;
+        nextSeq: number;
+        items: unknown[];
+    };
+    try {
+        document = JSON.parse(await readFile(path, "utf8")) as typeof document;
+    } catch {
+        document = { version: 1, nextSeq: 1, items: [] };
+    }
+    document.items.push({
+        seq: document.nextSeq,
+        channelId: "local-test",
+        chatId: "local",
+        kind: "interaction",
+        text,
+        interactionId,
+        state: "pending",
+        attempts: 0,
+        nextAttemptAt: null,
+        createdAt: new Date().toISOString(),
+        sentAt: null,
+    });
+    document.nextSeq += 1;
+    await writeFile(path, `${JSON.stringify(document, null, 2)}\n`);
+}
+
 export async function cleanupHome(home: string): Promise<void> {
     await rm(home, { recursive: true, force: true });
 }
