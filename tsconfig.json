@@ -13,7 +13,9 @@
         "esModuleInterop": true,
         "isolatedModules": true,
         "verbatimModuleSyntax": true,
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "isolatedDeclarations": true,
+        "declaration": true
     },
     "include": ["./*.config.ts"],
     "exclude": ["node_modules", "dist"]

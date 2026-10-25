@@ -1,0 +1,27 @@
+{
+    "name": "@nokoribi/channel-local-test",
+    "version": "0.1.0",
+    "private": true,
+    "files": [
+        "dist"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsdown",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@deepseek-ai/cordis": "4.0.5",
+        "@deepseek-ai/schemastery": "3.18.5",
+        "@nokoribi/channel-core": "workspace:*",
+        "@nokoribi/shared": "workspace:*"
+    }
+}

@@ -1,0 +1,26 @@
+{
+    "name": "@nokoribi/shared",
+    "version": "0.1.0",
+    "private": true,
+    "files": [
+        "dist"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsdown",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@deepseek-ai/dsh-atomic-write": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3",
+        "zod": "4.4.3"
+    }
+}

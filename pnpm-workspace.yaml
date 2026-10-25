@@ -1,0 +1,11 @@
+packages:
+    - packages/*
+    - vendor/*
+
+allowBuilds:
+    "@deepseek-ai/dsh-subprocess-local": true
+    koffi: true
+    node-pty: true
+
+overrides:
+    "@deepseek-ai/cordis": 4.0.5

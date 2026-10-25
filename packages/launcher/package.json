@@ -1,0 +1,42 @@
+{
+    "name": "@nokoribi/launcher",
+    "version": "0.1.0",
+    "private": true,
+    "bin": {
+        "nokoribi-agent": "./dist/index.js"
+    },
+    "files": [
+        "dist",
+        "profile"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsdown",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@deepseek-ai/cordis": "4.0.5",
+        "@deepseek-ai/dsh-app-boot": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-cmdline": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-http-proxy": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-launch-environment": "0.2.1-rc.3",
+        "@nokoribi/agent-app": "workspace:*",
+        "@nokoribi/bundle": "workspace:*",
+        "@nokoribi/channel-core": "workspace:*",
+        "@nokoribi/channel-local-test": "workspace:*",
+        "@nokoribi/profile-boot": "workspace:*",
+        "@nokoribi/prompt": "workspace:*",
+        "@nokoribi/shared": "workspace:*",
+        "@nokoribi/shell-bash": "workspace:*",
+        "@nokoribi/shell-host-local": "workspace:*"
+    }
+}

@@ -1,7 +1,7 @@
 import { defineConfig } from "oxfmt";
 
-export default defineConfig({
-    ignorePatterns: [".spec", "*.md", "dist", "node_modules"],
+const config: ReturnType<typeof defineConfig> = defineConfig({
+    ignorePatterns: [".spec", "*.md", "dist", "node_modules", "vendor"],
     printWidth: 80,
     trailingComma: "es5",
     tabWidth: 4,
@@ -11,3 +11,5 @@ export default defineConfig({
     importOrderSortSpecifiers: true,
     sortImports: true,
 });
+
+export default config;

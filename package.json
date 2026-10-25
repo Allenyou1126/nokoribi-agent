@@ -1,21 +1,30 @@
 {
     "name": "nokoribi-agent",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "private": true,
     "type": "module",
     "scripts": {
+        "build": "pnpm -r --filter './packages/*' build",
+        "test": "vitest run",
+        "test:process": "pnpm build && vitest run --config vitest.process.config.ts",
+        "typecheck": "pnpm build && tsc --noEmit && pnpm -r --filter './packages/*' typecheck",
         "format": "oxfmt .",
         "format:check": "oxfmt --check .",
         "lint": "oxlint .",
         "lint:fix": "oxlint . --fix",
-        "typecheck": "tsc --noEmit",
         "check": "pnpm typecheck && pnpm lint && pnpm format:check"
     },
     "devDependencies": {
+        "@deepseek-ai/dsh-llm-mock-server": "0.2.1-rc.3",
         "@types/node": "^24",
         "oxfmt": "^0.64.0",
         "oxlint": "^1.79.0",
-        "typescript": "^7.0.2"
+        "tsdown": "^0.23.2",
+        "typescript": "^7.0.2",
+        "vitest": "^5.0.5"
+    },
+    "engines": {
+        "node": ">=24"
     },
     "packageManager": "pnpm@12.4.1"
 }

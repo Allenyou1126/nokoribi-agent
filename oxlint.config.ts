@@ -1,10 +1,10 @@
 import { defineConfig } from "oxlint";
 
-export default defineConfig({
+const config: ReturnType<typeof defineConfig> = defineConfig({
     env: {
         node: true,
     },
-    ignorePatterns: [".spec", "dist", "node_modules"],
+    ignorePatterns: [".spec", "dist", "node_modules", "vendor"],
     categories: {
         correctness: "warn",
     },
@@ -12,3 +12,5 @@ export default defineConfig({
         "eslint/no-unused-vars": "error",
     },
 });
+
+export default config;
