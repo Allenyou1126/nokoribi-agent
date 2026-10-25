@@ -39,8 +39,8 @@
 - 本地测试通道三端点、长轮询、token、`run/test-channel.json`、`run/ready.json` / `run/startup-error.json` 已实现。
 - 已验证：消息→回复、去重、`/status`、`/clear`（旧 session 文件保留）、`/stop`、`/steer`/`/queue` 一次性模式、SIGTERM 干净退出、kill -9 后主会话恢复 + outbox 重发 + 崩溃通知、单实例锁、state 损坏备份与通知。
 - 自动化：`pnpm test`（单元/进程内）与 `pnpm test:process`（8 个进程场景）通过；`pnpm check` 通过。
-- M1 偏差：默认 host 暂为 `local:workspace`（M3 切 sandbox）；`/steer`/`/queue` 直接完整实现；入站图片返回 501（M2）；`--dump-config`、`tool-ask-user`、`/compact` 后移；`dsh-scope`/`dsh-atomic-write` 是库不是行。
-- 仍待 M2/M3：auto-review/审批 broker、permission-presets、sandbox host、模型侧 `bash(host)`、图片附件链路。
+- M1 偏差：默认 host 暂为 `local:workspace`（M3 切 sandbox）；`/steer`/`/queue` 直接完整实现；入站图片仍返回 501（**未分配，M2 不做**）；`--dump-config`、`/compact` 后移；`dsh-scope`/`dsh-atomic-write` 是库不是行。
+- 仍待后续：sandbox host、模型侧 `bash(host)`（M3）；goal（M4）；memory/schedule（M5）；图片附件链路（未分配，建议 M5 或后置单独评估）。
 
 ## 14.3 M2 安全闸与审批
 
@@ -58,14 +58,24 @@
 - 允许后执行、拒绝后失败；reviewer 技术失败 fail closed。
 - approval 60s/question 300s 超时行为。
 - 多个待应答串行；`/steer` 不打断待应答。
-- child 审批（fake goal child）也能到 IM（若补丁可行）。
+- child 审批（fake goal child）也能到 IM；M2 已验证。
 - 自动化：reviewer 路由/JSON 校验/两阶段、broker 状态机、集成场景。
 
 ### 依赖/风险
 
 - 依赖 M1 的 channel/agent 骨架。
-- 最大不确定性：auto-review 在 IM-only profile 的可用性、child approval seam；若不可行需回退方案（child 汇报 → 主 agent 询问）。
+- 最大不确定性已消除（M2 验证）：auto-review 在 IM-only profile 可用、child approval seam 可行；回退方案仍保留（child 汇报 → 主 agent 询问）。
 - 需要 fake reviewer 模型用于测试，避免真实 API。
+
+### M2 实现记录（2026-10-25）
+
+- 已 vendor rc.3 `experimental-auto-review` 到 `packages/reviewer`，实现 fast/strong 两阶段、sudo/root 启发式、reviewer 超时、fail closed 与 child deny→`ask` 桥接；补丁见 `PATCHES.md`。
+- 已挂载 `permission-presets`（仅 `danger-full-access` 预设）、`tool-ask-user` 与 `@nokoribi/reviewer`；主会话创建/恢复后程序化设为 `auto`；agent 作用域 `/permission` 只报告、拒绝切换。
+- 已实现 `channel-core` 的 `InteractionBroker`：approval + question 串行、60s/300s 超时、提示格式、编号/允许/拒绝/自定义解析、`/steer` 旁路、`/stop`/`/clear`/shutdown 中止、残留 interaction 清理与 outbox terminal 跳过。
+- 已增加 `nokoribi:safety` 提示词、更新 interaction 文案，并通过 `system-prompt/assemble` 修正 child delegation 的旧审批说明。
+- 验证：`pnpm test`（18 文件/144 测试）、`pnpm test:process`（19 场景：M1 8 + M2 11）、`pnpm check` 全部通过。V1/V2 已验证。
+- M2 偏差/边界：图片仍 501（未分配，不在 M2）；`--dump-config` 后移；child question 不桥接（DSH 禁止 child 调 `ask_user_question`，只有 approval 桥接）；child delegation 文案覆盖已有单测，真实 subagent mount 在 M4 再接；reviewer 的 Nix 选项在 M6 接线。
+- 仍待 M3/M4：sandbox host、`bash(host)`；goal 子代理与真实子代理审批全链路。
 
 ## 14.4 M3 shell hosts
 

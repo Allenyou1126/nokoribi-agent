@@ -60,6 +60,7 @@ services.nokoribi-agent = {
   review = {
     fast   = { provider; model; reasoningEffort; };
     strong = { provider; model; reasoningEffort; };
+    timeoutMs = 30000;
   };
 
   approval = {

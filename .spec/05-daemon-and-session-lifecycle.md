@@ -50,7 +50,7 @@
 
 ## 5.3 启动顺序
 
-M1 实现顺序：
+M1/M2 实现顺序：
 
 1. `agent-app` 在插件树就绪后取得单实例锁（O_EXCL + holder pid；stale 锁只接管一次；无法读取的锁 fail closed）。
 2. 读取/校验 `agent-state.json`；损坏则备份并按首次启动处理，记录 `state-corrupt`。
@@ -60,9 +60,10 @@ M1 实现顺序：
    - 有 `mainSessionId` 且持久化会话可打开 → `ctx.agents.resume({ resumeSessionId })`；
    - 找不到持久化会话 → 创建新会话并通知；其它 resume 错误 fail loud；
    - 否则 `ctx.agents.create({ sessionId: "main-"+uuid, meta.cwd=workspace })`。
+   - 创建/恢复后立即 `permissionPresets.set(session, "auto")`，校验 `current()==="auto"`；失败则 startup-error，不降级为无审查。注册只读 `/permission` scoped 命令。
    - 创建/恢复后立即 flush，随后写回 state。
 6. 安装 `session/event` 监听、注册命令、安装 status provider，再 `channels.attachRuntime()`。
-7. `channels.resumeOutbox()` 重发 pending（at-least-once）。
+7. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。
 8. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
 9. `channels.drainBuffered()` 放行启动期入站，然后写 `run/ready.json` 并开始正常收发。
 10. goal/schedule 恢复留到 M4/M5。
@@ -73,11 +74,11 @@ M1 实现顺序：
 
 ## 5.4 正常关闭（SIGTERM）
 
-M1 实际流程：
+M1/M2 实际流程：
 
 1. `channels.pause()` 停止接受新入站。
-2. 等待当前轮完成至 `shutdownGraceMs`（默认 20s，可配）；超时用 `cancel({ kind:'disposed' })`。
-3. M1 无 broker；M2 在此中止待审批/提问。
+2. 调用 `channels.abortInteractions("shutdown")`，中止待审批/提问并写入失效提示；outbox 持久化，下次启动继续投递。
+3. 等待当前轮完成至 `shutdownGraceMs`（默认 20s，可配）；超时用 `cancel({ kind:'disposed' })`。
 4. goal 子代理留到 M4。
 5. `ctx.sessions.flush()`，写 state 并置 `cleanShutdown=true`。
 6. 进程由 vendored profile-boot 的 bounded shutdown 退出；vendored 上限由 `NOKORIBI_SHUTDOWN_TIMEOUT_MS` 控制，默认 30s。M6 的 systemd `TimeoutStopSec` 必须大于它。
@@ -91,7 +92,7 @@ M1 实际流程：
 - 主会话：resume；DSH 补写 interrupted turn closers；模型下一次请求会看到中止的工具调用与结果。
 - 队列消息：inbox 通过 `agent/inbox/spliced` 持久化，resume 后应恢复。
   - **待验证**：resume 后 driver 是否会自动处理已有 inbox；若不会，桥接会用自己记录的 ingress 待处理队列重放（同一 messageId 去重）或注入一条系统提示唤醒，二选一在实现时决定。
-- 待审批/提问：进程内 promise 已消失；重启后无法恢复。启动时清空 broker 状态，并给用户发提示。
+- 待审批/提问：进程内 promise 已消失；重启后无法恢复。启动时 `channels.initialize()` 把 outbox 中残留的 pending interaction 标记为失败，`resumeOutbox()` 后发一次“待应答已失效”提示；broker 内存状态为空。
 - goal 子代理：按 state 恢复（见 10.6）；可能多跑一轮（冷恢复需要发送一条"继续"消息）。
 - outbox：未发送消息重发；若崩溃前已发送但未标记，可能重复（at-least-once）。
 - sandbox：每个 session 的 sandbox 目录落盘；TTL 计时按 lastUsed 恢复；重启后首次使用若仍在 TTL 内可复用，过期则回收重建。
@@ -104,7 +105,7 @@ M1 实际流程：
 流程：
 
 1. 若存在活跃 goal 子代理：`interrupt` 当前轮 →（live 时）`ctx.goals.clear(child)` → `drainContinuableChildren(main, childIds)` 释放；从 `goals[]` 移除并写入归档索引（作为"被 clear 归档"）。
-2. 若存在待应答：全部中止并通知用户。
+2. 若存在待应答：`channels.abortInteractions("clear")` 全部中止并通知用户，同时抑制已排队但未发送的旧提示。
 3. dispose 主 agent handle；旧会话保持在 DSH 会话库中（不删除）。
 4. 生成新的 `mainSessionId`，`ctx.agents.create()` 新会话；写回 state；清空 outbox 中属于旧会话的未发送回复？——**待实现决策**：草案为保留 outbox（已生成的消息仍发给用户）但给旧会话 id 标记；新消息进入新会话。
 5. 删除旧会话对应的 sandbox 目录（per-session scope）。
@@ -125,8 +126,9 @@ M1 实际流程：
 - 只在主 agent 或（补丁后的）子代理的当前轮内存在；与具体 `approval/request` 或 `userQuestions.ask` 的 promise 绑定。
 - 串行 FIFO：同一时刻只有一个提示在等；一个解决后再展示下一个（D56）。
 - 超时：approval 60 秒 → 拒绝；question 300 秒 → 工具报错（D57，均可配）。
-- 进程重启/`/clear`/`/stop`：全部中止；发提示说明失效。
+- 进程重启/`/clear`/`/stop`/shutdown：全部中止；`/stop`、`/clear`、shutdown 发失效提示，重启时由 startup 清理发一次提示。
 - 提示文本带前缀与目标标识（审批 🔐、提问 ❓；子代理审批带 goal 短 id），用户回复按编号/允许/拒绝/自定义文本解析。
+- 实现：`channel-core` 的 `InteractionBroker` 串行处理；提示以 `kind:"interaction"` 进 outbox；已终止的 interaction 提示由 outbox 跳过/标记失败。
 - 详见 [06 渠道与交互](06-channel-and-interaction.md)。
 
 ## 5.9 系统通知

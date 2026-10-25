@@ -65,7 +65,7 @@ nokoribi-agent/
 | `memory` | memory 工具（search/read/write/forget）、Markdown 文件存储、检索。 | shared、cordis |
 | `prompt` | SOUL.md 加载、系统提示词 section 注册、AGENTS.md seed 模板。 | shared、cordis、`ctx.systemPrompt` |
 | `agent-app` | daemon 启动、主 agent create/resume、单实例锁、状态文件、goal 跟踪/恢复、`/goal`/`/clear` 等命令、系统通知、提示词/记忆/定时装配。 | shared、prompt、channel-core（契约）、`ctx.*` |
-| `reviewer` | vendor 的 auto-review：双 tier、两阶段复审、child 审批桥接。 | 上游 auto-review 依赖 + shared |
+| `reviewer` | vendor 的 auto-review：双 tier、两阶段复审、sudo 升级、超时、child 审批桥接。 | 上游 auto-review 依赖 + shared |
 | `bundle` | 完整插件树 patch；不包含运行时代码。 | 以上所有 + 选定 `@deepseek-ai/*` |
 
 依赖方向：`shared` 最低；host/channel/memory/prompt 互不直接依赖（通过 Cordis 服务/事件协作）；`agent-app` 编排；`bundle` 只负责装配；`launcher` 独立于运行时插件。
@@ -135,6 +135,7 @@ nokoribi-agent/
 - Wave A（消息闭环必需）：timer、llm/llm-deepseek-api-key/llm-retry、session/persistence-jsonl/projection、agent/agent-loop/tools/system-prompt/agent-instructions/working-directory/commands、fs-local/fs-observation-policy、subprocess-local、shell-env、自研 6 行。
 - Wave B（M1 完整）：session-title、session-checkpoint-policy、token-meter、compaction-basic/tool-result-pruner、tool-fs/tool-fs-search、tool-todo、jobs-local/tool-jobs、user-approval/user-questions、tool-call-timeout-policy、spill-local/spill-policy、repeat-tool-reminder、attachment-local。
 - 每行有稳定 id；Nix overlay 按 id 覆盖。行数/名称以实际 boot 与测试为准。
+- **M2 新增行**：`permission-presets`（仅 `danger-full-access` 预设）、`tool-ask-user`（blocking 模式）、`nokoribi-reviewer`（`@nokoribi/reviewer`，替代上游 auto-review 行）。`channel-core` 配置增加 approval/question 超时；`agent-app` 在创建/恢复主会话后设为 `auto`。
 
 ## 4.5 薄启动器
 
@@ -151,7 +152,7 @@ nokoribi-agent/
   - `@deepseek-ai/dsh-launch-environment`
   - `@deepseek-ai/cordis` 及其 loader/include/timer 等启动所需基础包
   - Node 内置模块
-- 参数：M1 实现 `--profile <name>`（只接受 `nokoribi-agent`）、`--patch <file>`（可重复）、`--version`、`--help`；`--dump-config` 留到 M2。
+- 参数：M1 实现 `--profile <name>`（只接受 `nokoribi-agent`）、`--patch <file>`（可重复）、`--version`、`--help`；`--dump-config` 仍未实现，后移到部署/诊断需要时。
 - profile 由打包产物提供，但运行 profile 目录是 `$DSH_HOME/run/profile/`：启动器每次启动原子重写 `package.json` 与空 `cordis.patch.yml`，再用 `loadProfileDirectory()` + `runProfile({ resolvedProfile })` 启动。这样 `profile-boot` 写 `cordis.yml` 时不会碰只读打包目录。
 - overlay 顺序：bundle → runtime profile 用户层 → `$DSH_HOME/cordis.patch.yml` → `NOKORIBI_PATCH` → `--patch`。
 - 启动器写 `run/ready.json` / `run/startup-error.json` 与自身 pid；启动完成后等待 ready 文件，失败则退出非 0。单实例锁、目录与状态文件仍由 `agent-app` 负责。
@@ -210,6 +211,7 @@ $out/
   5. 记录升级提交（conventional commit）。
 - 不跟随 semver 范围、不自动升级。
 - vendored 代码保留上游 LICENSE 与来源/版本注释；补丁尽量小并单独记录。
+- M2 vendor：`packages/reviewer/vendor/auto-review.js`（上游 rc.3 `lib/index.js`），补丁见 `packages/reviewer/PATCHES.md`，版本/SHA 见 `VERSION.md`。
 
 ## 4.8 代码规范
 

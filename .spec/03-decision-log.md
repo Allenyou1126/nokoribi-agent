@@ -293,7 +293,7 @@
 - **D128 测试框架** — 选择：**Vitest**。
 - **D129 CI** — 选择：**只 flake checks**。
 - **D130 NixOS VM 测试** — 选择：**不做**。
-- **D131 子代理审批** — 选择：**也桥接到 IM 问用户**（需要 patch auto-review 的 child `never` 行为；全局串行提示，标明 goal 短 id）。
+- **D131 子代理审批** — 选择：**也桥接到 IM 问用户**（需要 patch auto-review 的 child `never` 行为；全局串行提示，标明 goal 短 id）。M2 已验证：child deny 先转 `ask`，prompt 带 goal 短 id。
 - **D132 outbox 语义** — 选择：**at-least-once**（重启重发，极端可能重复）。
 - **D133 测试通道协议** — 选择：**长轮询**（`GET /v1/outbound?after=seq`）。
 

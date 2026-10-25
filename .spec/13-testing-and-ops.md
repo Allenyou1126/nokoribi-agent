@@ -14,6 +14,8 @@
 
 M1 落点：单元测试在各包 `test/`；进程级场景在 `tests/process/`，用 `dsh-llm-mock-server` + 临时 DSH_HOME + launcher 子进程；命令为 `pnpm test` 与 `pnpm test:process`。flake checks 留到 M6。
 
+M2 落点：`tests/process/m2.test.ts` 用脚本化 LLM（按 model/system 路由）覆盖 reviewer allow/deny/批准/拒绝/超时/提问/steer/stop/clear/残留交互；`tests/integration/m2-child-approval.test.ts` 用 `dsh-agent-loop-testkit` + fake shell + fake channel 覆盖 child → broker → IM。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站，可脚本化注入消息与失败。
@@ -36,13 +38,14 @@ M1 落点：单元测试在各包 `test/`；进程级场景在 `tests/process/`�
 | memory | 文件格式、检索、upsert/forget、去重 | 工具调用、提炼子代理 | 跨重启检索 |
 | prompt | 模板渲染、SOUL 转义、section 顺序 | 组装快照（不含动态值） | 启动加载 |
 | shell hosts | host 路由、id 解析、能力校验 | bash(host)、未知 host、background、发现工具 | TTL/reset、sandbox 提权失败 |
-| reviewer patch | 两档路由、sudo 启发式、JSON 校验 | 双阶段复审、fail closed、child 审批桥接 | — |
+| reviewer patch | 两档路由、sudo 启发式、JSON 校验、超时 | 双阶段复审、fail closed、child 审批桥接 | 进程级 allow/deny/超时 |
+| interaction broker | 提示格式、解析、超时、串行、abort | approval/question 端到端、steer 旁路、stop/clear | 重启残留清理 |
 | NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12） |
 
 ## 13.4 关键场景
 
 1. **注入语义**：主 agent 正在执行一个长工具（fake shell host 阻塞）；入站消息不取消工具；轮次继续后模型在下一步看到消息。
-2. **审批**：Auto review（fake reviewer）返回 deny → broker 发提示 → 用户回复允许 → 工具执行一次；拒绝则失败；reviewer 技术失败 → 调用失败。
+2. **审批**：Auto review（fake reviewer）返回 deny → strong 复审 → broker 发提示 → 用户回复允许 → 工具执行一次；拒绝/超时则失败；reviewer 技术失败 → 调用失败且不询问。
 3. **Crash**：进程发消息 → 工具执行中 kill -9 → 重启 → 会话恢复、inbox 恢复（或重放）、outbox 重发、待应答通知失效。
 4. **Goal 重启**：goal child 活跃 → kill daemon → 重启 → 冷恢复消息 → re-arm → 下一轮继续 → 报告主 agent。
 5. **归档**：goal complete → 主 agent 询问 → 用户 `/goal archive` → state 移除、archive JSONL 追加、sandbox 删除、session 保留。
@@ -75,13 +78,13 @@ M1 落点：单元测试在各包 `test/`；进程级场景在 `tests/process/`�
 
 ## 13.7 `/status`
 
-- 摘要（默认）：version、uptime、agentStatus（running/idle）、mainSessionId、model、活跃 goal 数、待应答数、outbox 长度。
+- 摘要（默认）：version、uptime、agentStatus（running/idle）、mainSessionId、model、permission、活跃 goal 数、待应答数、outbox 长度。
 - `/status full`：
   - 每个 goal：短 id、phase、rounds、child 运行状态、sandbox generation/TTL；
   - 每个 sandbox：session、目录、创建/最近使用、已加包；
   - 最近错误（最近 N 条系统通知级别）；
   - last restart reason/时间；
-  - permission preset（auto）；
+  - permission preset（auto）；reviewer 两档与超时；
   - 依赖版本（DSH、发行版）。
 - 不展示 API key、完整消息内容、sandbox 包以外的敏感信息。
 - 同时提供给本地测试通道 `GET /v1/status`（JSON）。

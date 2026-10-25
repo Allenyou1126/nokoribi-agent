@@ -4,7 +4,8 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 
 ## 当前状态
 
-- M1（骨架与消息闭环）已实现；M2–M6 按 [.spec/14-roadmap.md](.spec/14-roadmap.md) 推进。代码在 `packages/`，入口是 `packages/launcher`。
+- M1（骨架与消息闭环）与 M2（安全闸与审批）已实现；M3–M6 按 [.spec/14-roadmap.md](.spec/14-roadmap.md) 推进。代码在 `packages/`，入口是 `packages/launcher`。
+- M2 的 reviewer 是 `packages/reviewer` 中 vendored 的 rc.3 auto-review；修改 vendor 时同步更新 `PATCHES.md`/`VERSION.md`。
 - `pnpm check` 会先构建 workspace 包（类型检查依赖各包 `dist/*.d.ts`），然后运行 tsc/oxlint/oxfmt。
 - 决策以 [.spec/03-decision-log.md](.spec/03-decision-log.md) 为准；被取代/撤销的决定登记在 [.spec/16-superseded-and-glossary.md](.spec/16-superseded-and-glossary.md)。
 - 实现偏离规格时必须同步更新规格与决策记录，不能只改代码。

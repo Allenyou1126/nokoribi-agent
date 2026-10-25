@@ -38,6 +38,7 @@
 - 配置了 `permission-presets` 与 `working-directory`、`agent-instructions` 等依赖。
 - 我们的 shell router 需要报告 `sandboxMode`，满足 permission-presets 的挂载前置条件；Auto 预设会设置 danger-full-access 与 approval=ask。
 - `/permission` 只建议用于查看当前预设；v1 没有 DSH 权限沙箱可回退，切走 Auto 会让调用不经审查且仍然 full access，**不支持**作为安全模式（提示词与文档中说明）。
+- M2 已验证：IM-only bundle 能挂载 permission-presets，主会话创建/恢复后程序化设为 auto；agent 作用域 `/permission` 遮蔽上游命令，只报告、不允许切换。
 
 ## 8.4 Reviewer 双档设计（D64/D83/D85/D87）
 
@@ -47,6 +48,7 @@
 services.nokoribi-agent.review = {
   fast   = { provider; model; reasoningEffort; };  # 日常工具审阅
   strong = { provider; model; reasoningEffort; };  # deny/不确定/sudo 复审
+  timeoutMs = 30000;                                # 单次 reviewer 调用上限
 };
 ```
 
@@ -57,11 +59,11 @@ services.nokoribi-agent.review = {
 - reviewer 模型必须能稳定输出严格 JSON；非法输出 = 调用失败（fail closed）。
 - 两档模型是否与主 agent 相同由配置决定；主 agent 模型另有配置。
 
-### sudo/root 动作识别（草案）
+### sudo/root 动作识别（M2 实现）
 
-- 依据工具名 + 参数（主要是 `bash` 的 command、`host`）做启发式识别：包含 `sudo`、`nixos-rebuild`、修改 `/etc`/sudoers/systemd 等模式。
-- 识别只是决定"升级到 strong 复审"，不是拒绝/放行；最终决定仍由 strong reviewer。
-- 启发式可被绕开（脚本内间接提权），这是已接受的残余风险；真正的兜底是 strong reviewer 对动作整体效果的判断。
+- 依据工具名 + 参数（主要是 `bash` 的 command、host，以及写文件的 path/content）做启发式识别：shell 边界的 `sudo`/`doas`/`pkexec`/`su -`、`nixos-rebuild`、修改 systemd/sudoers/passwd/ssh 等、`chmod` setuid、`dd`/`mkfs`/分区、强制删除系统目录等。
+- 所有调用先过 fast；识别为 sudo/root 时即使 fast allow 也继续 strong 复审。识别不是拒绝/放行；最终决定仍由 strong reviewer。
+- 启发式可被绕开（脚本内间接提权），这是已接受的残余风险；真正的兜底是 strong reviewer 对动作整体效果的判断。实现中误报只增加一次 strong 调用。
 
 ### fail closed
 
@@ -69,25 +71,25 @@ services.nokoribi-agent.review = {
 - 没有"reviewer 不可用就放行"的降级路径。
 - 如果用户要关闭审查，只能改配置/版本（v1 不支持运行时关闭）。
 
-## 8.5 子代理审批桥接（D131）
+## 8.5 子代理审批桥接（D131，M2 实现）
 
-现状：上游 auto-review 对进程内 child 固定 `never`，child 被拒的动作不会问用户。
+上游 auto-review 对进程内 child 固定 `never`，child 被拒的动作不会问用户。M2 的 vendored 补丁：
 
-本项目要求"子代理审批也问用户"，因此 vendored 补丁需要：
-
-1. 在 child 的 reviewer deny 之后，不直接终局，而是发起 approval 请求。
+1. child 的 reviewer deny 且当前策略为 `never` 时，先 `setApprovalPolicy(child.session, "ask")`，再让 tools pipeline 解析 `ask`；主会话仍保持上游终局 deny。
 2. 该请求由 `channel-core` 的 interaction broker 统一处理（串行、带 goal 短 id、走 IM 文本）。
 3. 用户批准 → 单次执行；拒绝/超时 → 失败，child 通过 report 告知主 agent。
 4. 多个 child 同时请求时全局串行，避免文本歧义。
+5. child 的 `subagent:delegation` 文案由 prompt 的 `system-prompt/assemble` 监听替换，避免继续声称“审批一律自动拒绝”。
 
-实现前需要验证：
+验证结果：
 
-- child 的 approval 策略是否由 agent/session 设置；补丁点是在 auto-review 还是 child 创建处。
-- 若无法在 approval seam 上完成，回退方案：child 保持 `never`，失败后 report 给主 agent，由主 agent 询问用户并转发指令；此回退需更新本文件。
+- DSH rc.3 的 subagent 会为 child 种子 `permission/preset: auto` + `approval/policy: never`，因此 auto-review 对 child 仍生效；补丁点在 auto-review 的 deny 分支可行。
+- 进程内集成测试（testkit + fake channel）覆盖 goal child → broker → IM 允许 → 工具执行；child policy 最终为 `ask`。
+- 回退方案仍保留：若未来 DSH 改变 child 种子或补丁不可行，child 保持 `never`，失败后 report 给主 agent。
 
 ## 8.6 vendor 与维护
 
-- `packages/reviewer/` 内保存上游 0.2.1-rc.3 的源码（MIT LICENSE + 版本/来源标识）。
+- `packages/reviewer/` 内保存上游 0.2.1-rc.3 的 vendor 文件（MIT LICENSE + 版本/来源标识/SHA）。
 - 补丁点集中：
   1. reviewer 路由从"当前 agent 模型"改为配置的 fast/strong；
   2. 双阶段复审逻辑；
@@ -144,6 +146,7 @@ services.nokoribi-agent.review = {
 
 - `sudo.enable`：默认 false；开启写 `NOPASSWD: ALL`。
 - `review.fast` / `review.strong`：reviewer 两档模型。
+- `review.timeoutMs`：单次 reviewer 调用超时（默认 30s）。
 - `approval.approvalTimeoutSeconds` / `questionTimeoutSeconds`。
 - `hosts.sandbox.enable`、`hosts.local.enable`、`hosts.default`。
 - `channel.localTest.enable` / token。

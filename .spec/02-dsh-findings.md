@@ -261,3 +261,12 @@ Inbox：
 5. DSH 会话不提供删除 API → goal 归档只能是"释放 + 隐藏 + 索引 + 保留 session 文件"。
 6. 官方 CLI 依赖很重 → 安装体积精简必须自建薄启动器。
 7. DSH 在 rc 阶段、包/API 会变 → 锁版本 + 只依赖稳定 seam + vendor 实验代码并记录上游版本。
+
+## 2.18 M2 实现期验证更新
+
+- `permission-presets` 在无 Web 的 IM bundle 中可挂载；`permissionPresets.set(session,"auto")` 与 `registerAuto()` 正常工作，`ctx.shell.sandboxMode` 是挂载前置条件。
+- auto-review 的公开包只含 bundled `lib/index.js`，评审函数不导出；M2 已 vendor 到 `packages/reviewer`，补丁与版本记录见该目录。
+- rc.3 subagent 在委派时给 child 写入 `permission/preset: auto` 与 `approval/policy: never`；auto-review 因此对 child 仍生效。`setApprovalPolicy()` 可把 child 转为 `ask`，不需要模型可见消息。
+- approval 与 question 的应答面分别是 `approval/request` 与 `user-questions/request` waterfall；`ask_user_question` 拒绝 child 调用（`DELEGATED_CALLER`）。
+- `dsh-tool-ask-user` 的 blocking 模式适合 IM 文本回答；M2 已挂载。
+- `system-prompt/assemble` 是可用的 waterfall，可替换 child 的 `subagent:delegation` 运行时上下文；M2 用于修正“审批一律自动拒绝”的旧文案。

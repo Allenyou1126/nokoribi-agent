@@ -11,6 +11,7 @@
 | 记忆提炼子代理 | 配置的 secondary/低成本档 | 一次性、任务结束触发 |
 | reviewer fast | `review.fast` | 日常所有工具调用先过这一档 |
 | reviewer strong | `review.strong` | fast deny/不确定/sudo 动作时复审 |
+| reviewer 超时 | `review.timeoutMs` | 默认 30s；超时 fail closed |
 
 - 不再使用"主模型/便宜模型"的全局分层表述；**两个 tier 只属于 reviewer**（D85）。
 - 主模型与 reviewer 模型相互独立；reviewer 不跟主模型绑定（由 vendored auto-review 补丁实现）。
@@ -19,7 +20,7 @@
 
 ## 11.2 图像输入
 
-- 主模型必须支持图像输入（D16）。
+- 主模型必须支持图像输入（D16）。**M2 尚未实现图片附件链路，入站图片仍返回 501；能力位暂为关闭。**
 - 实现前用用户的 API key 查 `dsh-llm-deepseek` 的模型目录，确认可用多模态模型；Nix 配置 `models.main` 指向该模型。
 - 若没有可用多模态模型：**入站图片直接告知用户"当前模型不支持图片"**（D69），不落盘、不 OCR、不外接视觉模型。渠道能力 `inboundImages` 可先声明为 false。
 - 子代理模型是否支持图像由主 agent 选择；goal child 一般不需要图片。
@@ -32,7 +33,7 @@
   - 只有 fast 返回 deny/不确定或动作含 sudo/root 时，才追加 strong 请求；
   - strong allow 则执行，strong deny 则走 IM 单次授权。
 - 最坏情况（大量 sudo/复杂动作）会同时消耗 fast + strong；这是安全换成本的显式取舍。
-- reviewer 请求不缓存、不重试、不压缩；超窗会失败（fail closed）。
+- reviewer 请求不缓存、不重试、不压缩；超时/超窗会失败（fail closed）。
 - 成本/延迟直接与工具调用数相关：系统提示词要求模型合并命令、减少无意义工具调用。
 
 ## 11.4 上下文与压缩

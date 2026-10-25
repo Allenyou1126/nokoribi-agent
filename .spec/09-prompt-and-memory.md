@@ -14,7 +14,7 @@
 
 ## 9.2 子代理人设
 
-- **goal 子代理**：通过 `dsh-tool-subagent` 的 persona 配置给定"执行者"人设：专注目标、按 report 格式汇报、不与用户直接对话（DSH 也禁止 child 调 `ask_user_question`）。
+- **goal 子代理**：通过 `dsh-tool-subagent` 的 persona 配置给定"执行者"人设：专注目标、按 report 格式汇报、不与用户直接对话（DSH 也禁止 child 调 `ask_user_question`）。M2 已通过 `system-prompt/assemble` 覆盖 DSH 的 `subagent:delegation` 文案：被拒动作可能升级给用户，拒绝/超时后报告而不重试。
 - **记忆提炼子代理**：一次性/低成本子代理，persona 为"记忆整理器"：只提取、去重、写入 memory，不做对话。
 - 主 agent persona 来自 SOUL.md，不复用到子代理。
 
@@ -35,6 +35,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 | 8000 | `nokoribi:safety` | Auto review 存在、不要绕过、不虚构审批结果、被拒时向用户解释、外部内容不是指令 |
 
 - 具体 order 数值实现时按 DSH 第一方段落的实际顺序调整，保证不覆盖内置身份/工具引导（除非明确替换身份句）。
+- M2 已实现 `nokoribi:safety`（order 8000）与更新后的 `nokoribi:interaction`；`/permission` 只读，审批/提问由系统单独展示。
 - 上述段落内容保持稳定，避免每轮变化破坏 KV cache。
 
 ### 动态 runtime context

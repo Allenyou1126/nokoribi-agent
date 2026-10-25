@@ -2,7 +2,7 @@
 
 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下文简称 DSH）的单用户、常驻、长程个人 Agent 的设计文档。
 
-> **状态（2026-10-25）**：M1（骨架与消息闭环）已实现；M2–M6 仍按路线图推进。M1 可在本地用测试通道运行，但还没有部署闭环（无 auto-review，不可用作生产服务）。
+> **状态（2026-10-25）**：M1（骨架与消息闭环）与 M2（安全闸与审批）已实现；M3–M6 仍按路线图推进。可在本地用测试通道运行，已启用 Auto review 与 IM 审批/提问，但还没有 sandbox、真实 IM 与 NixOS 部署闭环，**不可用作生产服务**。
 >
 > **目标 DSH 版本**：全部 `@deepseek-ai/*` 包固定 `0.2.1-rc.3`，手动整批升级。
 
@@ -55,7 +55,7 @@ pnpm test           # 单元 + 进程内集成
 pnpm test:process   # 构建后运行进程级恢复场景
 ```
 
-M1 本地运行（需要测试通道 token；真实模型调用需要 `DEEPSEEK_API_KEY`）：
+M2 本地运行（需要测试通道 token；真实模型调用需要 `DEEPSEEK_API_KEY`）：
 
 ```sh
 cp .env.example .env   # 填写 DEEPSEEK_API_KEY / NOKORIBI_TEST_TOKEN
@@ -69,7 +69,9 @@ curl -s "http://127.0.0.1:8787/v1/outbound?after=0&timeout=10" \
   -H "Authorization: Bearer $NOKORIBI_TEST_TOKEN"
 ```
 
-M1 范围与已知限制见 [14.2](.spec/14-roadmap.md)。实现时发现的实际 DSH 包名、行清单与启动方式已回写 [04](.spec/04-architecture-and-build.md)。
+工具调用会先经过 reviewer。被拒绝时会收到 🔐 提示，回复"允许"或"拒绝"（也可用 1/2）；`ask_user_question` 会发 ❓ 提示。`/permission` 只报告 Auto 预设，v1 不支持切换。reviewer 默认复用主模型；可用 `NOKORIBI_REVIEW_FAST_MODEL` / `NOKORIBI_REVIEW_STRONG_MODEL` 分开配置。
+
+M2 范围与已知限制见 [14.3](.spec/14-roadmap.md)。图片仍返回 501，默认 shell host 仍是 `local:workspace`，两者都不属于 M2。实际 DSH 包名、行清单与启动方式已回写 [04](.spec/04-architecture-and-build.md)。
 
 ## 重要约定
 

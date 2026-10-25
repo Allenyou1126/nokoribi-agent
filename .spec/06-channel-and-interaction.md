@@ -100,7 +100,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 | `/clear` / `/new` | 新建主会话，旧会话归档；停止并归档 goal 子代理（见 05/10） |
 | `/compact` | 透传 DSH `/compact`（压缩主会话上下文） |
 | `/goal ...` | 桥接自有语义：`new <目标> [--rounds N]`、`list`、`status <前缀>`、`pause <前缀>`、`resume <前缀>`、`clear <前缀>`（停止+自动归档）、`archive <前缀>`（归档已完成 goal） |
-| `/permission` | 报告当前 permission preset（Auto）；不建议切走（v1 没有 DSH 沙箱回退，见 08 的说明） |
+| `/permission` | 只报告当前 permission preset（Auto）；任何切换参数返回错误。v1 没有 DSH 沙箱回退，切走会绕过审查（见 08） |
 | 其他已注册 DSH 命令 | 透传 `ctx.commands.execute`；未知命令回错误，不进入模型 |
 
 命令输出会按渠道上限分段；命令不进入模型历史（DSH commands 自带记录到会话日志）。
@@ -110,28 +110,31 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 ### 来源
 
 - approval：`dsh-user-approval` 的 `approval/request` waterfall；Auto review 拒绝后的 ask、以及未来其他敏感操作。
-- question：`ctx.userQuestions.ask` 的回答者 waterfall（`ask_user_question` 工具）。
-- 子代理审批：**需要 patched auto-review** 把进程内 child 的 `never` 策略改为也发起审批请求（D131）；broker 统一处理。
+- question：`ctx.userQuestions.ask` 背后的 `user-questions/request` waterfall（M2 挂载 `tool-ask-user`）。
+- 子代理审批：vendored auto-review 在 child 的 `never` 下先用 `setApprovalPolicy(...,"ask")`，再走 approval seam；broker 统一处理（D131）。
+- broker 实现：`channel-core/src/broker.ts`；approval 与 question 共用一个 FIFO，`pendingInteractions` 计数包含排队项。
 
 ### 提示与应答
 
 - 审批提示（🔐）：说明是谁（主 agent / goal 短 id）、工具、原因、命令摘要；回复 `允许` / `拒绝` 或 `1` / `2`。
 - 提问提示（❓）：按问题列出标题、detail、编号选项、是否多选；多问题批次逐题提问；支持编号、多选编号（`1,3`）、自定义文本。
-- 提示带 `interactionId`；用户回复先交给当前待应答（串行，只有一个）。
-- 不合法的回复不进入模型，重新提示帮助文本；不消耗应答超时重新计时（实现时可设总超时）。
-- `approval` 超时 → 拒绝；`question` 超时 → 工具报错（`ASK_ABORTED` 类错误）；可配（默认 60s/300s）。
+- 提示带 `interactionId`（outbox 字段；正文不展示）；用户回复先交给当前待应答（串行，只有一个）。
+- 不合法的回复不进入模型，重新提示帮助文本；不消耗应答超时重新计时（实现使用总超时）。
+- `approval` 超时 → 拒绝；`question` 超时 → 工具报错（`ASK_ABORTED`）；可配（默认 60s/300s）。超时发 ⚠️ 通知并展示下一项。
 - 待应答期间 `/steer` 不打断待应答：只把文本投递为 steer，审批/提问继续等；真正注入要等轮次恢复（D59）。
-- `/stop` 取消轮次时，所有待应答中止并通知。
+- `/stop`、`/clear`、shutdown 取消轮次时，所有待应答中止并通知；`/clear` 同时尽量抑制未发送的旧提示。
+- 实现补充：非法回复重发帮助文本，但不重置总超时；审批发送失败返回 `unavailable`，提问发送失败返回 `NO_PROVIDER`，都 fail closed。
 
 ### 子代理审批
 
 - patched auto-review 在 hold child 审批时使用同一 broker；提示带 goal 短 id。
 - 全局串行：多个 goal 同时请求审批时排队展示，避免文本回复歧义。
-- 若补丁不可行，回退方案：child 保持 `never`，拒绝后通过 `report` 告知主 agent，由主 agent 询问用户并转发新指令（需在实现时确认并更新文档）。
+- 实现结果（M2）：child deny 时写 `approval/policy: ask`，随后 approval 走 broker；prompt 带 goal 短 id（child sessionId 前 8 位）。进程内集成测试覆盖 child → fake channel。
+- prompt 同时修正 DSH 的 `subagent:delegation` 文案，避免继续声称“审批一律自动拒绝”。
 
 ### 提示去重与并发
 
-- 每个待应答只展示一次；outbox 重发可能导致重复展示（at-least-once），broker 记录已展示的 interactionId，重发时跳过已解决的项。
+- 每个待应答只展示一次；outbox 是 at-least-once，仍可能重复。broker 记录已终止的 interactionId，outbox pump 对同 id 的未发送项直接丢弃/标记失败；已发送后的重复展示接受。
 
 ## 6.7 出站投递
 
@@ -165,7 +168,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 - 持久化条目：`{seq, channelId, chatId, kind, text, interactionId?, state, attempts, nextAttemptAt, createdAt, sentAt}`，落盘在 `$DSH_HOME/state/outbox.json`（M1）；`nextSeq` 单调，历史保留最近 `outboxHistoryLimit` 条终态记录，pending 不裁剪。
 - 按 seq 全局有序投递；失败指数退避重试；超过最大尝试次数记录错误并丢弃（同时 journald 告警）。
 - **at-least-once**（D132）：发送成功后落盘标记；崩溃可能造成重复发送，接受。
-- 重启后从持久 outbox 继续；已解决交互的提示跳过。
+- 重启后从持久 outbox 继续；已解决/中止交互的提示跳过：pump 检查 broker terminal 集合，未发送项标记失败；启动时残留 pending interaction 统一标记失败并通知。
 - 多 chat：回复回原 chat；主动通知（系统通知、schedule 回复）发 `lastActiveChat`。
 
 ## 6.8 本地测试通道 HTTP
@@ -217,6 +220,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
   "goals": [{ "shortId": "a1b2c3d4", "phase": "active", "rounds": 3 }],
   "pendingInteractions": 0,
   "outboxLength": 0,
+  "permission": "auto",
   "lastRestartReason": "clean",
   "ready": true
 }
