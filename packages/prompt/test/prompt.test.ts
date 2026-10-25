@@ -16,6 +16,12 @@ import * as promptPlugin from "../src/index.js";
 import { Config } from "../src/index.js";
 import {
     CHILD_DELEGATION_PROMPT,
+    GOAL_CHILD_PROMPT,
+    GOAL_CHILD_TOOL_PROMPT,
+    GOAL_MAIN_PROMPT,
+    GOAL_SECTION_NAME,
+    GOAL_SECTION_ORDER,
+    GOAL_TOOL_SECTION_NAME,
     INTERACTION_PROMPT,
     INTERACTION_SECTION_NAME,
     INTERACTION_SECTION_ORDER,
@@ -74,10 +80,14 @@ describe("prompt plugin", () => {
         expect(names).toContain(SOUL_SECTION_NAME);
         expect(names).toContain(INTERACTION_SECTION_NAME);
         expect(names).toContain(SAFETY_SECTION_NAME);
+        expect(names).toContain(GOAL_SECTION_NAME);
         expect(names.indexOf(SOUL_SECTION_NAME)).toBeLessThan(
             names.indexOf(INTERACTION_SECTION_NAME)
         );
         expect(names.indexOf(INTERACTION_SECTION_NAME)).toBeLessThan(
+            names.indexOf(GOAL_SECTION_NAME)
+        );
+        expect(names.indexOf(GOAL_SECTION_NAME)).toBeLessThan(
             names.indexOf(SAFETY_SECTION_NAME)
         );
 
@@ -91,6 +101,11 @@ describe("prompt plugin", () => {
         );
         expect(interaction?.text).toBe(INTERACTION_PROMPT);
         expect(interaction?.interpolate).toBe(false);
+        const goal = assembly.sections.find(
+            (section) => section.name === GOAL_SECTION_NAME
+        );
+        expect(goal?.text).toBe(GOAL_MAIN_PROMPT);
+        expect(goal?.interpolate).toBe(false);
         const safety = assembly.sections.find(
             (section) => section.name === SAFETY_SECTION_NAME
         );
@@ -98,6 +113,7 @@ describe("prompt plugin", () => {
         expect(safety?.interpolate).toBe(false);
         expect(SOUL_SECTION_ORDER).toBe(0);
         expect(INTERACTION_SECTION_ORDER).toBe(4000);
+        expect(GOAL_SECTION_ORDER).toBe(6000);
         expect(SAFETY_SECTION_ORDER).toBe(8000);
     });
 
@@ -174,6 +190,59 @@ describe("prompt plugin", () => {
             assembly
         );
         expect(promptPlugin.overrideChildDelegation(assembly, undefined)).toBe(
+            assembly
+        );
+    });
+
+    it("selects goal guidance by agent kind and rewrites tool:goal", () => {
+        const root = {
+            id: "main-1",
+            session: { header: {} },
+        } as unknown as Agent;
+        const goalChild = {
+            id: "goal-a1b2c3d4-child",
+            session: {
+                header: { origin: "subagent", parentSession: "parent" },
+            },
+        } as unknown as Agent;
+        const otherChild = {
+            id: "sub-a1b2c3d4",
+            session: {
+                header: { origin: "subagent", parentSession: "parent" },
+            },
+        } as unknown as Agent;
+        expect(promptPlugin.goalPromptForAgent(root)).toBe(GOAL_MAIN_PROMPT);
+        expect(promptPlugin.goalPromptForAgent(goalChild)).toBe(
+            GOAL_CHILD_PROMPT
+        );
+        expect(promptPlugin.goalPromptForAgent(otherChild)).toBe("");
+        expect(promptPlugin.goalPromptForAgent(undefined)).toBe(
+            GOAL_MAIN_PROMPT
+        );
+
+        const assembly = {
+            sections: [
+                { name: GOAL_TOOL_SECTION_NAME, text: "original goal tool" },
+                { name: "safety", text: "keep" },
+            ],
+            contexts: [],
+            tools: [],
+            variables: {},
+        } as unknown as PromptAssembly;
+        const rootAdjusted = promptPlugin.adjustGoalPrompt(assembly, root);
+        expect(
+            rootAdjusted.sections.map((section) => section.name)
+        ).not.toContain(GOAL_TOOL_SECTION_NAME);
+        const childAdjusted = promptPlugin.adjustGoalPrompt(
+            assembly,
+            goalChild
+        );
+        expect(
+            childAdjusted.sections.find(
+                (section) => section.name === GOAL_TOOL_SECTION_NAME
+            )?.text
+        ).toBe(GOAL_CHILD_TOOL_PROMPT);
+        expect(promptPlugin.adjustGoalPrompt(assembly, undefined)).toBe(
             assembly
         );
     });

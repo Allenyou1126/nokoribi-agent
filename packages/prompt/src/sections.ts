@@ -42,3 +42,32 @@ export const SAFETY_PROMPT: string = `## 安全与审查
 
 /** Corrected child delegation context when child approval bridging is enabled. */
 export const CHILD_DELEGATION_PROMPT: string = `You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session. Operations that require approval may be escalated to the user by Auto review; if the user rejects, the approval is unavailable, or the request times out, do not retry the denied operation. State the limitation in your reply so the delegating agent can handle it.`;
+
+/** Section name of the goal / subagent contract. */
+export const GOAL_SECTION_NAME: string = "nokoribi:goal";
+
+/** Goal guidance sits after memory and before schedule (09.3). */
+export const GOAL_SECTION_ORDER: number = 6000;
+
+/** DSH's model-facing goal-tool guidance section name. */
+export const GOAL_TOOL_SECTION_NAME: string = "tool:goal";
+
+/** Main-agent goal contract: use start_goal, never the same-session goal tools. */
+export const GOAL_MAIN_PROMPT: string = `## Goal 子代理
+
+- 长时间、多轮的目标用 \`start_goal\` 创建；普通短任务用 \`subagent\`。主会话不持有 goal，不要调用 \`create_goal\` / \`get_goal\` / \`update_goal\`（已被隐藏）。
+- \`start_goal\` 返回短 id；子代理会通过 \`send_message\` 汇报，报告通常带 \`[goal:<短id>]\`。把 report 转成简短、可读的 IM 摘要，不要原样转发。
+- 子代理报告 done 时，询问用户是否归档；用户确认后提示执行 \`/goal archive <短id>\`。不要自行创建归档工具。
+- \`/goal list\`、\`/goal status\`、\`/goal pause/resume/clear/archive\` 由宿主执行，不产生模型消息。多个 goal 可并行，避免重复创建同一目标。`;
+
+/** Goal-child contract: host-created goal, reports, completion. */
+export const GOAL_CHILD_PROMPT: string = `## Goal 子代理
+
+- 本会话的持久 goal 已由宿主创建；不要调用 \`create_goal\`。按 \`<goal_round>\` 轮次推进，每轮先检查当前文件、工具结果和 goal 状态，不重复已完成工作。
+- 用 \`get_goal\` 读取当前 id/revision；完成时用 \`update_goal\` action=complete，持续阻塞且已尝试后 action=blocked，并给出具体 blocker。
+- 在里程碑、阻塞、完成时用 \`send_message\` 发给启动消息中给出的直接父会话；格式：\`[goal:<短id>] progress|blocked|done\` + objective/done/evidence/next/blockers。不要直接联系用户。
+- 被 Auto review 拒绝或审批不可用时，报告限制，不重试被拒绝的动作。
+- 若收到“进程已重启”，继续当前 goal，不要重做已完成工作；不要 pause/resume/edit/clear 自己的 goal。`;
+
+/** Replacement for DSH's tool:goal guidance on a goal child. */
+export const GOAL_CHILD_TOOL_PROMPT: string = `You are a delegated goal child. The host created this session's persistent goal; create_goal is unavailable. Use get_goal for the id/revision and update_goal action=complete or blocked during a goal round. Do not pause, resume, edit, or clear the goal.`;
