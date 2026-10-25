@@ -1,18 +1,63 @@
 import type { Context } from "@deepseek-ai/cordis";
-import type {} from "@deepseek-ai/dsh-system-prompt";
+import type { Agent } from "@deepseek-ai/dsh-agent";
+import type {
+    AssembleContext,
+    PromptAssembly,
+} from "@deepseek-ai/dsh-system-prompt";
 import Schema from "@deepseek-ai/schemastery";
 import { createLogger, resolveHomePaths } from "@nokoribi/shared";
 
 import { WORKSPACE_ENV, seedAgentInstructions } from "./agents.js";
 import { configuredValue } from "./env.js";
 import {
+    CHILD_DELEGATION_PROMPT,
     INTERACTION_PROMPT,
     INTERACTION_SECTION_NAME,
     INTERACTION_SECTION_ORDER,
+    SAFETY_PROMPT,
+    SAFETY_SECTION_NAME,
+    SAFETY_SECTION_ORDER,
     SOUL_SECTION_NAME,
     SOUL_SECTION_ORDER,
 } from "./sections.js";
 import { DEFAULT_SOUL_WARN_BYTES, loadSoul } from "./soul.js";
+
+export {
+    CHILD_DELEGATION_PROMPT,
+    INTERACTION_PROMPT,
+    SAFETY_PROMPT,
+} from "./sections.js";
+
+/**
+ * Replace DSH's child delegation context once child approval bridging is on.
+ * The original text says every approval-requiring action is rejected, which is
+ * no longer true once auto-review escalates child denials to the user.
+ * @param assembly - assembled prompt sections and runtime contexts.
+ * @param agent - agent whose scope is being assembled, when present.
+ * @returns the original assembly or a copy with the corrected context.
+ */
+export function overrideChildDelegation(
+    assembly: PromptAssembly,
+    agent: Agent | undefined
+): PromptAssembly {
+    if (agent === undefined) return assembly;
+    const header = agent.session.header;
+    if (header.origin !== "subagent" && header.parentSession === undefined) {
+        return assembly;
+    }
+    let changed = false;
+    const contexts = assembly.contexts.map((context) => {
+        if (
+            context.name !== "subagent:delegation" ||
+            context.text === CHILD_DELEGATION_PROMPT
+        ) {
+            return context;
+        }
+        changed = true;
+        return { ...context, text: CHILD_DELEGATION_PROMPT };
+    });
+    return changed ? { ...assembly, contexts } : assembly;
+}
 
 /** Plugin name used by Cordis diagnostics. */
 export const name: string = "prompt";
@@ -117,6 +162,23 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         text: INTERACTION_PROMPT,
         interpolate: false,
     });
+    ctx.systemPrompt.section({
+        name: SAFETY_SECTION_NAME,
+        order: SAFETY_SECTION_ORDER,
+        text: SAFETY_PROMPT,
+        interpolate: false,
+    });
+    ctx.effect(() =>
+        ctx.on(
+            "system-prompt/assemble",
+            async (
+                assembly: PromptAssembly,
+                context: AssembleContext,
+                next: () => Promise<PromptAssembly>
+            ): Promise<PromptAssembly> =>
+                overrideChildDelegation(await next(), context.agent)
+        )
+    );
     logger.info("prompt sections registered", {
         soulFile: soul.path,
         soulBytes: soul.bytes,

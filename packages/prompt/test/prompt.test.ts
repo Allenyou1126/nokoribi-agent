@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Context } from "@deepseek-ai/cordis";
+import type { Agent } from "@deepseek-ai/dsh-agent";
 import SystemPrompt, { renderPrompt } from "@deepseek-ai/dsh-system-prompt";
+import type { PromptAssembly } from "@deepseek-ai/dsh-system-prompt";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,9 +15,13 @@ import {
 import * as promptPlugin from "../src/index.js";
 import { Config } from "../src/index.js";
 import {
+    CHILD_DELEGATION_PROMPT,
     INTERACTION_PROMPT,
     INTERACTION_SECTION_NAME,
     INTERACTION_SECTION_ORDER,
+    SAFETY_PROMPT,
+    SAFETY_SECTION_NAME,
+    SAFETY_SECTION_ORDER,
     SOUL_SECTION_NAME,
     SOUL_SECTION_ORDER,
 } from "../src/sections.js";
@@ -67,8 +73,12 @@ describe("prompt plugin", () => {
         const names = assembly.sections.map((section) => section.name);
         expect(names).toContain(SOUL_SECTION_NAME);
         expect(names).toContain(INTERACTION_SECTION_NAME);
+        expect(names).toContain(SAFETY_SECTION_NAME);
         expect(names.indexOf(SOUL_SECTION_NAME)).toBeLessThan(
             names.indexOf(INTERACTION_SECTION_NAME)
+        );
+        expect(names.indexOf(INTERACTION_SECTION_NAME)).toBeLessThan(
+            names.indexOf(SAFETY_SECTION_NAME)
         );
 
         const soul = assembly.sections.find(
@@ -81,8 +91,14 @@ describe("prompt plugin", () => {
         );
         expect(interaction?.text).toBe(INTERACTION_PROMPT);
         expect(interaction?.interpolate).toBe(false);
+        const safety = assembly.sections.find(
+            (section) => section.name === SAFETY_SECTION_NAME
+        );
+        expect(safety?.text).toBe(SAFETY_PROMPT);
+        expect(safety?.interpolate).toBe(false);
         expect(SOUL_SECTION_ORDER).toBe(0);
         expect(INTERACTION_SECTION_ORDER).toBe(4000);
+        expect(SAFETY_SECTION_ORDER).toBe(8000);
     });
 
     it("keeps template braces in the SOUL text literal", async () => {
@@ -128,6 +144,38 @@ describe("prompt plugin", () => {
         );
         expect(names).not.toContain(SOUL_SECTION_NAME);
         expect(names).not.toContain(INTERACTION_SECTION_NAME);
+        expect(names).not.toContain(SAFETY_SECTION_NAME);
+    });
+
+    it("replaces the child delegation context only for children", () => {
+        const assembly = {
+            sections: [],
+            contexts: [
+                { name: "subagent:delegation", text: "old text" },
+                { name: "other", text: "keep" },
+            ],
+            tools: [],
+            variables: {},
+        } as unknown as PromptAssembly;
+        const child = {
+            id: "goal-a1b2c3d4-child",
+            session: {
+                header: { origin: "subagent", parentSession: "parent" },
+            },
+        } as unknown as Agent;
+        const root = {
+            id: "main-1",
+            session: { header: {} },
+        } as unknown as Agent;
+        const replaced = promptPlugin.overrideChildDelegation(assembly, child);
+        expect(replaced.contexts[0]?.text).toBe(CHILD_DELEGATION_PROMPT);
+        expect(replaced.contexts[1]?.text).toBe("keep");
+        expect(promptPlugin.overrideChildDelegation(assembly, root)).toBe(
+            assembly
+        );
+        expect(promptPlugin.overrideChildDelegation(assembly, undefined)).toBe(
+            assembly
+        );
     });
 
     it("seeds global and workspace AGENTS.md through DSH_HOME", async () => {
