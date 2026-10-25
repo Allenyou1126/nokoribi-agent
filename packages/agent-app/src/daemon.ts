@@ -7,6 +7,7 @@ import type {
     CommandInvocation,
     CommandResult,
 } from "@deepseek-ai/dsh-commands";
+import type {} from "@deepseek-ai/dsh-goal";
 import type { AssistantMessage } from "@deepseek-ai/dsh-llm";
 import type {} from "@deepseek-ai/dsh-permission-presets";
 import {
@@ -16,6 +17,7 @@ import {
     type TurnEndReason,
 } from "@deepseek-ai/dsh-session";
 import { SessionPersistenceNotFoundError } from "@deepseek-ai/dsh-session-persistence";
+import type {} from "@deepseek-ai/dsh-subagent";
 import "@nokoribi/channel-core";
 import {
     createLogger,
@@ -31,7 +33,12 @@ import {
     type Logger,
     type RestartReason,
 } from "@nokoribi/shared";
+import type {} from "@nokoribi/shell-bash";
 
+import { parseGoalCommand } from "./goals/commands.js";
+import { installMainToolPolicy } from "./goals/main-policy.js";
+import { GoalManager } from "./goals/manager.js";
+import { createStartGoalTool } from "./goals/tool.js";
 import { assistantText, planTurnEnd } from "./replies.js";
 
 /** Resolved agent-app configuration. */
@@ -43,6 +50,14 @@ export interface AgentAppConfig {
     readonly workspace?: string;
     readonly shutdownGraceMs: number;
     readonly version: string;
+    /** Goal-child provider; defaults to the main provider. */
+    readonly goalProvider?: string;
+    /** Goal-child model; defaults to the main model. */
+    readonly goalModel?: string;
+    /** Goal-child reasoning effort; defaults to the main effort. */
+    readonly goalReasoningEffort?: string;
+    /** Bound for one cold goal recovery. */
+    readonly goalRecoveryTimeoutMs?: number;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -66,6 +81,7 @@ export class Daemon {
     private readonly config: AgentAppConfig;
     private readonly paths: HomePaths;
     private readonly logger: Logger;
+    private readonly goals: GoalManager;
     private readonly turnText = new Map<number, string>();
     private lock: SingleInstanceLock | undefined;
     private state: AgentState | undefined;
@@ -83,6 +99,24 @@ export class Daemon {
         this.config = config;
         this.paths = resolveHomePaths(config.workspace);
         this.logger = createLogger("agent-app");
+        const goalEffortRaw =
+            config.goalReasoningEffort ?? config.reasoningEffort;
+        const goalEffort =
+            goalEffortRaw === undefined || goalEffortRaw.trim() === ""
+                ? undefined
+                : goalEffortRaw;
+        this.goals = new GoalManager(ctx, {
+            provider: config.goalProvider ?? config.provider,
+            model: config.goalModel ?? config.model,
+            ...(goalEffort === undefined
+                ? {}
+                : { reasoningEffort: goalEffort }),
+            recoveryTimeoutMs: config.goalRecoveryTimeoutMs ?? 30000,
+            archivePath: this.paths.goalsArchivePath,
+            notify: (text) => this.ctx.channels.notify(text),
+            persist: () => this.persistSoon(),
+            logger: this.logger,
+        });
     }
 
     /** Start the daemon; throws on lock, state, or session failures. */
@@ -95,6 +129,10 @@ export class Daemon {
                 this.config.version
             );
             this.ctx.shellHosts.requireDefaultHost();
+            this.goals.install();
+            this.ctx.effect(() =>
+                this.ctx.tools.register(createStartGoalTool(this.goals))
+            );
             await this.ctx.channels.initialize();
             await this.recover();
         } catch (error) {
@@ -174,11 +212,11 @@ export class Daemon {
             this.state = {
                 ...this.state,
                 mainSessionId: null,
-                goals: [],
                 archivedGoals: [],
                 lastActiveChat: null,
             };
         }
+        this.goals.load(loaded.state?.goals ?? []);
         await this.writeState(false);
 
         if (previousId !== null) {
@@ -197,6 +235,7 @@ export class Daemon {
         }
         this.mainSessionId = this.handle.agent.id;
         await this.ctx.sessions.flush(this.handle.agent.session);
+        await this.goals.bindMain(this.handle.agent);
         this.state = {
             ...this.state,
             mainSessionId: this.mainSessionId,
@@ -208,6 +247,7 @@ export class Daemon {
         this.registerCommands();
         this.installStatusProvider();
         await this.attachRuntime();
+        await this.goals.recover();
         await this.ctx.channels.resumeOutbox();
         await this.emitStartupNotice();
         await this.ctx.channels.drainBuffered();
@@ -230,6 +270,7 @@ export class Daemon {
             sessionId: SessionId(id),
             meta: { cwd: this.paths.workspaceDir },
             agentOptions: this.agentOptions(),
+            setup: (agentCtx) => installMainToolPolicy(agentCtx),
         });
         this.installMainPermissions(handle.agent);
         return handle;
@@ -239,6 +280,7 @@ export class Daemon {
         const handle = await this.ctx.agents.resume({
             resumeSessionId: SessionId(sessionId),
             agentOptions: this.agentOptions(),
+            setup: (agentCtx) => installMainToolPolicy(agentCtx),
         });
         this.installMainPermissions(handle.agent);
         return handle;
@@ -327,7 +369,7 @@ export class Daemon {
                         ? "running"
                         : "idle"
                     : "starting",
-            goals: [],
+            goals: this.goals.statusSummaries(),
             permission:
                 this.handle === undefined
                     ? null
@@ -412,6 +454,19 @@ export class Daemon {
             handler: (invocation) => this.statusCommand(invocation.rawInput),
         });
         register({
+            name: "goal",
+            description:
+                "Create and control goal subagents: new/list/status/pause/resume/clear/archive",
+            input: {
+                hint: "new <objective> [--rounds N] | list | status <id>",
+            },
+            handler: (invocation) =>
+                this.goals.runCommand(
+                    parseGoalCommand(invocation.rawInput),
+                    invocation.signal
+                ),
+        });
+        register({
             name: "clear",
             description:
                 "Create a new main session and keep the old one archived",
@@ -485,11 +540,13 @@ export class Daemon {
         await this.ctx.channels.abortInteractions("clear");
         old.agent.cancel({ kind: "user" });
         await this.ctx.sessions.flush(old.agent.session);
+        await this.goals.clearAll();
         const previousId = this.mainSessionId;
         const next = await this.createAgent();
         this.handle = next;
         this.mainSessionId = next.agent.id;
         await this.ctx.sessions.flush(next.agent.session);
+        await this.goals.bindMain(next.agent);
         this.state = {
             ...(this.state ?? defaultAgentState(this.config.version)),
             mainSessionId: this.mainSessionId,
@@ -548,7 +605,7 @@ export class Daemon {
         return {
             version: 1,
             mainSessionId: this.mainSessionId,
-            goals: base?.goals ?? [],
+            goals: this.goals.snapshot(),
             archivedGoals: base?.archivedGoals ?? [],
             lastActiveChat: base?.lastActiveChat ?? null,
             cleanShutdown,

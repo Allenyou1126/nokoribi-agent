@@ -1,5 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-goal";
 import type {} from "@deepseek-ai/dsh-permission-presets";
+import type {} from "@deepseek-ai/dsh-subagent";
 import "@nokoribi/shell-bash";
 import z from "@deepseek-ai/schemastery";
 
@@ -23,6 +25,9 @@ export const inject: string[] = [
     "channels",
     "permissionPresets",
     "shellHosts",
+    "goals",
+    "subagents",
+    "tools",
 ];
 
 /** Runtime configuration schema (validated by the Loader). */
@@ -34,6 +39,10 @@ export const Config: unknown = z.object({
     workspace: z.string(),
     shutdownGraceMs: z.natural().min(1).default(20000),
     version: z.string().default("0.0.0-dev"),
+    goalProvider: z.string(),
+    goalModel: z.string(),
+    goalReasoningEffort: z.string(),
+    goalRecoveryTimeoutMs: z.natural().min(1).default(30000),
 });
 
 /** Start the daemon lifecycle. */

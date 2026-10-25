@@ -3,6 +3,25 @@ import { z } from "zod";
 
 import { backupFile, readJsonFile, writeJsonAtomic } from "./atomic.js";
 
+/** Reserved session-id prefix for bridge-created goal children (M4). */
+export const GOAL_SESSION_PREFIX: string = "goal-";
+
+/** Whether a session id belongs to a bridge-created goal child. */
+export function isGoalChildSession(sessionId: string): boolean {
+    return sessionId.startsWith(GOAL_SESSION_PREFIX);
+}
+
+/** Short goal id used by `/goal` commands: the session-id prefix. */
+export function shortGoalId(sessionId: string): string {
+    return sessionId.slice(0, 8);
+}
+
+/** Model route persisted with a goal child for archiving. */
+export interface GoalModelRef {
+    readonly provider: string;
+    readonly model: string;
+}
+
 /** One tracked goal child. M1 never creates entries; the shape stays forward-compatible. */
 export interface GoalState {
     readonly sessionId: string;
@@ -13,6 +32,11 @@ export interface GoalState {
     readonly createdAt: string;
     readonly updatedAt: string;
     readonly source: "subagent-tool" | "goal-command";
+    /** Detached creation details added in M4; absent on pre-M4 state. */
+    readonly objective?: string;
+    readonly maxGoalRounds?: number;
+    readonly label?: string;
+    readonly model?: GoalModelRef;
 }
 
 /** Chat identity used for proactive notifications. */
@@ -48,6 +72,16 @@ const goalSchema = z
         createdAt: z.string(),
         updatedAt: z.string(),
         source: z.enum(["subagent-tool", "goal-command"]),
+        objective: z.string().optional(),
+        maxGoalRounds: z.number().int().positive().optional(),
+        label: z.string().optional(),
+        model: z
+            .object({
+                provider: z.string().min(1),
+                model: z.string().min(1),
+            })
+            .passthrough()
+            .optional(),
     })
     .passthrough();
 

@@ -16,6 +16,7 @@ export interface HomePaths {
     readonly agentStatePath: string;
     readonly outboxPath: string;
     readonly seenPath: string;
+    readonly goalsArchivePath: string;
     readonly lockPath: string;
     readonly testChannelPath: string;
     readonly readyPath: string;
@@ -44,6 +45,7 @@ export function resolveHomePaths(
         agentStatePath: join(stateDir, "agent-state.json"),
         outboxPath: join(stateDir, "outbox.json"),
         seenPath: join(stateDir, "ingress-seen.json"),
+        goalsArchivePath: join(home, "archive", "goals.jsonl"),
         lockPath: join(runDir, "agent.lock"),
         testChannelPath: join(runDir, "test-channel.json"),
         readyPath: join(runDir, "ready.json"),
