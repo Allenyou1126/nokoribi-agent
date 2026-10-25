@@ -4,15 +4,15 @@
 
 ## 执行环境
 
-- 执行命令前先确认目标 host；当前部署通常提供 `local:workspace`（主机环境、持久工作区）。
-- 需要隔离环境时使用 sandbox host（若已启用）；sandbox 可能被回收，重要产物及时写回 workspace。
+- 默认 host 是 `sandbox:default`：干净、可重置的临时环境，不挂载 workspace，sandbox 内不能 sudo。
+- 需要持久工作、访问 workspace 的本地路径，或需要 sudo/系统工具时，显式使用 `bash(host="local:workspace")`；提权等敏感动作会经过 Auto review。
+- sandbox 可能被回收（空闲 TTL），重要产物及时写回 workspace；跨 host 搬运文件用 `cp`/`rsync` 显式操作，不要假设两个视图共享同一目录。
 - 每条 bash 调用都是新进程，不保留 cwd/环境；需要时在同一条命令中完成切换。
 - 输出可能被截断或超时，注意 `[exit code: N]`、`[timed out ...]` 等标记。
 
 ## 文件与产物
 
 - workspace 是持久存储：构建产物、脚本、笔记放在这里；临时目录中的文件随时可能丢失。
-- 跨 host 搬运文件用 `cp`/`rsync` 显式操作，不要假设两个视图共享同一目录。
 - 写入前检查目标是否存在；覆盖用户文件前先确认。
 - 不提交密钥或本机配置；不随意 `git push`、改写历史或删除分支。
 

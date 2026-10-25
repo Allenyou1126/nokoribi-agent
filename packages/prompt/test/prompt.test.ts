@@ -25,9 +25,15 @@ import {
     INTERACTION_PROMPT,
     INTERACTION_SECTION_NAME,
     INTERACTION_SECTION_ORDER,
+    MEMORY_PROMPT,
+    MEMORY_SECTION_NAME,
+    MEMORY_SECTION_ORDER,
     SAFETY_PROMPT,
     SAFETY_SECTION_NAME,
     SAFETY_SECTION_ORDER,
+    SCHEDULE_PROMPT,
+    SCHEDULE_SECTION_NAME,
+    SCHEDULE_SECTION_ORDER,
     SOUL_SECTION_NAME,
     SOUL_SECTION_ORDER,
 } from "../src/sections.js";
@@ -69,7 +75,7 @@ describe("prompt plugin", () => {
         expect(typeof promptPlugin.apply).toBe("function");
     });
 
-    it("registers the SOUL and interaction sections", async () => {
+    it("registers the static prompt sections in order", async () => {
         const directory = await makeTempDir();
         const soulFile = await writeSoul(directory);
         const ctx = await mountPromptHost();
@@ -79,15 +85,23 @@ describe("prompt plugin", () => {
         const names = assembly.sections.map((section) => section.name);
         expect(names).toContain(SOUL_SECTION_NAME);
         expect(names).toContain(INTERACTION_SECTION_NAME);
+        expect(names).toContain(MEMORY_SECTION_NAME);
         expect(names).toContain(SAFETY_SECTION_NAME);
         expect(names).toContain(GOAL_SECTION_NAME);
+        expect(names).toContain(SCHEDULE_SECTION_NAME);
         expect(names.indexOf(SOUL_SECTION_NAME)).toBeLessThan(
             names.indexOf(INTERACTION_SECTION_NAME)
         );
         expect(names.indexOf(INTERACTION_SECTION_NAME)).toBeLessThan(
+            names.indexOf(MEMORY_SECTION_NAME)
+        );
+        expect(names.indexOf(MEMORY_SECTION_NAME)).toBeLessThan(
             names.indexOf(GOAL_SECTION_NAME)
         );
         expect(names.indexOf(GOAL_SECTION_NAME)).toBeLessThan(
+            names.indexOf(SCHEDULE_SECTION_NAME)
+        );
+        expect(names.indexOf(SCHEDULE_SECTION_NAME)).toBeLessThan(
             names.indexOf(SAFETY_SECTION_NAME)
         );
 
@@ -101,11 +115,21 @@ describe("prompt plugin", () => {
         );
         expect(interaction?.text).toBe(INTERACTION_PROMPT);
         expect(interaction?.interpolate).toBe(false);
+        const memory = assembly.sections.find(
+            (section) => section.name === MEMORY_SECTION_NAME
+        );
+        expect(memory?.text).toBe(MEMORY_PROMPT);
+        expect(memory?.interpolate).toBe(false);
         const goal = assembly.sections.find(
             (section) => section.name === GOAL_SECTION_NAME
         );
         expect(goal?.text).toBe(GOAL_MAIN_PROMPT);
         expect(goal?.interpolate).toBe(false);
+        const schedule = assembly.sections.find(
+            (section) => section.name === SCHEDULE_SECTION_NAME
+        );
+        expect(schedule?.text).toBe(SCHEDULE_PROMPT);
+        expect(schedule?.interpolate).toBe(false);
         const safety = assembly.sections.find(
             (section) => section.name === SAFETY_SECTION_NAME
         );
@@ -113,8 +137,53 @@ describe("prompt plugin", () => {
         expect(safety?.interpolate).toBe(false);
         expect(SOUL_SECTION_ORDER).toBe(0);
         expect(INTERACTION_SECTION_ORDER).toBe(4000);
+        expect(MEMORY_SECTION_ORDER).toBe(5000);
         expect(GOAL_SECTION_ORDER).toBe(6000);
+        expect(SCHEDULE_SECTION_ORDER).toBe(7000);
         expect(SAFETY_SECTION_ORDER).toBe(8000);
+    });
+
+    it("documents the memory, schedule, interaction and goal contracts", () => {
+        expect(MEMORY_SECTION_NAME).toBe("nokoribi:memory");
+        expect(SCHEDULE_SECTION_NAME).toBe("nokoribi:schedule");
+        expect(MEMORY_PROMPT).toContain("search");
+        expect(MEMORY_PROMPT).toContain("read");
+        expect(MEMORY_PROMPT).toContain("write");
+        expect(MEMORY_PROMPT).toContain("forget");
+        expect(MEMORY_PROMPT).toContain("软归档");
+        expect(MEMORY_PROMPT).toContain("不会自动注入");
+        expect(MEMORY_PROMPT).toContain("tags");
+        expect(MEMORY_PROMPT).toContain("source");
+        expect(MEMORY_PROMPT).toContain("密钥");
+        expect(SCHEDULE_PROMPT).toContain("schedule_create");
+        expect(SCHEDULE_PROMPT).toContain("schedule_list");
+        expect(SCHEDULE_PROMPT).toContain("schedule_update");
+        expect(SCHEDULE_PROMPT).toContain("schedule_delete");
+        expect(SCHEDULE_PROMPT).toContain("title");
+        for (const parameter of [
+            "after_seconds",
+            "at",
+            "every_seconds",
+            "daily",
+            "weekly",
+            "cron",
+        ]) {
+            expect(SCHEDULE_PROMPT).toContain(parameter);
+        }
+        expect(SCHEDULE_PROMPT).toContain("最小 60 秒");
+        expect(SCHEDULE_PROMPT).toContain("IANA");
+        expect(SCHEDULE_PROMPT).toContain("[SCHEDULE REMINDER]");
+        expect(SCHEDULE_PROMPT).toContain("[SCHEDULE REMINDER BATCH]");
+        expect(SCHEDULE_PROMPT).toContain("user 角色消息");
+        expect(SCHEDULE_PROMPT).toContain("heartbeat");
+        expect(INTERACTION_PROMPT).toContain("/status full");
+        expect(INTERACTION_PROMPT).toContain("[SCHEDULE REMINDER]");
+        expect(INTERACTION_PROMPT).toContain("[SCHEDULE REMINDER BATCH]");
+        expect(INTERACTION_PROMPT).toContain("不进入对话历史");
+        expect(GOAL_MAIN_PROMPT).toContain("reasoning_effort");
+        expect(GOAL_MAIN_PROMPT).toContain("--model");
+        expect(GOAL_MAIN_PROMPT).toContain("--effort");
+        expect(GOAL_CHILD_PROMPT).toContain("已由宿主创建");
     });
 
     it("keeps template braces in the SOUL text literal", async () => {
@@ -160,6 +229,8 @@ describe("prompt plugin", () => {
         );
         expect(names).not.toContain(SOUL_SECTION_NAME);
         expect(names).not.toContain(INTERACTION_SECTION_NAME);
+        expect(names).not.toContain(MEMORY_SECTION_NAME);
+        expect(names).not.toContain(SCHEDULE_SECTION_NAME);
         expect(names).not.toContain(SAFETY_SECTION_NAME);
     });
 

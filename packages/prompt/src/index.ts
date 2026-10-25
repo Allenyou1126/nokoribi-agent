@@ -24,9 +24,15 @@ import {
     INTERACTION_PROMPT,
     INTERACTION_SECTION_NAME,
     INTERACTION_SECTION_ORDER,
+    MEMORY_PROMPT,
+    MEMORY_SECTION_NAME,
+    MEMORY_SECTION_ORDER,
     SAFETY_PROMPT,
     SAFETY_SECTION_NAME,
     SAFETY_SECTION_ORDER,
+    SCHEDULE_PROMPT,
+    SCHEDULE_SECTION_NAME,
+    SCHEDULE_SECTION_ORDER,
     SOUL_SECTION_NAME,
     SOUL_SECTION_ORDER,
 } from "./sections.js";
@@ -41,7 +47,13 @@ export {
     GOAL_SECTION_ORDER,
     GOAL_TOOL_SECTION_NAME,
     INTERACTION_PROMPT,
+    MEMORY_PROMPT,
+    MEMORY_SECTION_NAME,
+    MEMORY_SECTION_ORDER,
     SAFETY_PROMPT,
+    SCHEDULE_PROMPT,
+    SCHEDULE_SECTION_NAME,
+    SCHEDULE_SECTION_ORDER,
 } from "./sections.js";
 
 /**
@@ -190,7 +202,7 @@ function resolveWorkspace(
 }
 
 /**
- * Read SOUL.md once, contribute the two M1 prompt sections, and seed the
+ * Read SOUL.md once, contribute the static prompt sections, and seed the
  * layered AGENTS.md files when they do not exist yet.
  * @param ctx - Cordis context owning the prompt registrations.
  * @param config - validated prompt configuration.
@@ -219,6 +231,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         interpolate: false,
     });
     ctx.systemPrompt.section({
+        name: MEMORY_SECTION_NAME,
+        order: MEMORY_SECTION_ORDER,
+        text: MEMORY_PROMPT,
+        interpolate: false,
+    });
+    ctx.systemPrompt.section({
         name: SAFETY_SECTION_NAME,
         order: SAFETY_SECTION_ORDER,
         text: SAFETY_PROMPT,
@@ -228,6 +246,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         name: GOAL_SECTION_NAME,
         order: GOAL_SECTION_ORDER,
         text: (context: AssembleContext) => goalPromptForAgent(context.agent),
+        interpolate: false,
+    });
+    ctx.systemPrompt.section({
+        name: SCHEDULE_SECTION_NAME,
+        order: SCHEDULE_SECTION_ORDER,
+        text: SCHEDULE_PROMPT,
         interpolate: false,
     });
     ctx.effect(() =>
