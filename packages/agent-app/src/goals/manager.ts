@@ -24,8 +24,10 @@ import {
 } from "@nokoribi/shared";
 import type {} from "@nokoribi/shell-bash";
 
+import { contentText } from "../replies.js";
 import { GoalArchive, type GoalArchiveRecord } from "./archive.js";
 import { GOAL_HELP, type GoalCommand } from "./commands.js";
+import { formatModelRoute } from "./model.js";
 import { goalBootstrapPrompt } from "./prompt.js";
 import {
     GoalTracker,
@@ -39,6 +41,8 @@ export interface GoalManagerOptions {
     readonly provider: string;
     readonly model: string;
     readonly reasoningEffort?: string;
+    /** Exact non-default routes accepted by `start_goal` and `/goal new`. */
+    readonly allowedModels: readonly GoalModelRef[];
     readonly recoveryTimeoutMs: number;
     readonly archivePath: string;
     readonly notify: (text: string) => Promise<void>;
@@ -51,6 +55,10 @@ export interface StartGoalOptions {
     readonly objective: string;
     readonly label: string;
     readonly maxRounds?: number;
+    /** Optional exact route; defaults to the configured goal route. */
+    readonly model?: GoalModelRef;
+    /** Optional effort override; only used with the default or a selected route. */
+    readonly reasoningEffort?: string;
     readonly source: GoalSource;
     readonly signal?: AbortSignal;
 }
@@ -82,6 +90,7 @@ export class GoalManager {
     private readonly pending = new Map<string, GoalCreationDetails>();
     private readonly blockedNotified = new Map<string, number>();
     private readonly endedNotified = new Set<string>();
+    private readonly reports = new Map<string, string>();
     private main: Agent | undefined;
     private mainId: string | null = null;
 
@@ -104,6 +113,23 @@ export class GoalManager {
     /** Summaries for `/status`. */
     statusSummaries(): GoalStatusSummary[] {
         return this.tracker.summaries();
+    }
+
+    /** Routes the model may select, with the default always first. */
+    modelChoices(): string[] {
+        const defaultRoute = this.defaultRoute();
+        const key = `${defaultRoute.provider}\0${defaultRoute.model}`;
+        return [
+            `${defaultRoute.provider}/${defaultRoute.model}`,
+            ...this.config.allowedModels
+                .filter((route) => `${route.provider}\0${route.model}` !== key)
+                .map((route) => `${route.provider}/${route.model}`),
+        ];
+    }
+
+    /** Latest `send_message` report captured for one tracked goal. */
+    lastReport(sessionId: string): string | undefined {
+        return this.reports.get(sessionId);
     }
 
     /** Session id of the main agent; `null` before recovery binds it. */
@@ -164,12 +190,13 @@ export class GoalManager {
         }
         const label =
             options.label.trim() === "" ? "goal" : options.label.trim();
+        const route = this.resolveRoute(options.model, options.reasoningEffort);
         const childId = `${GOAL_SESSION_PREFIX}${randomUUID()}`;
         const shortId = shortGoalId(childId);
         const details: GoalCreationDetails = {
             source: options.source,
             label,
-            model: this.modelRef(),
+            model: route,
         };
         this.pending.set(childId, details);
         const prompt = goalBootstrapPrompt({
@@ -187,7 +214,7 @@ export class GoalManager {
                 request: {
                     parent: main,
                     prompt: [{ type: "text", text: prompt }],
-                    agentOptions: this.agentOptions(),
+                    agentOptions: this.agentOptions(route),
                 },
                 signal: options.signal ?? new AbortController().signal,
                 delivery: "parent",
@@ -301,6 +328,14 @@ export class GoalManager {
                         objective: command.objective,
                         label: `goal: ${command.objective.slice(0, 60)}`,
                         maxRounds: command.maxRounds,
+                        ...(command.model === undefined
+                            ? {}
+                            : { model: command.model }),
+                        ...(command.reasoningEffort === undefined
+                            ? {}
+                            : {
+                                  reasoningEffort: command.reasoningEffort,
+                              }),
                         source: "goal-command",
                         ...(signal === undefined ? {} : { signal }),
                     });
@@ -373,6 +408,19 @@ export class GoalManager {
     private onSessionEvent(session: Session, event: SessionEvent): void {
         if (event.type !== "user/message") return;
         const source = event.data.source;
+        if (
+            source.kind === "agent-message" &&
+            this.mainId !== null &&
+            String(session.id) === this.mainId
+        ) {
+            const childId = String(source.senderSessionId);
+            if (this.tracker.get(childId) === undefined) return;
+            const text = contentText(event.data.content).trim();
+            if (text !== "") {
+                this.reports.set(childId, text.slice(0, 8192));
+            }
+            return;
+        }
         if (source.kind !== "goal") return;
         const updated = this.tracker.updateRounds(session.id, source.round);
         if (updated !== undefined) this.persist();
@@ -542,6 +590,11 @@ export class GoalManager {
             `goal ${shortGoalId(tracked.sessionId)}`,
             `session: ${tracked.sessionId}`,
             `objective: ${current.objective ?? "(unknown)"}`,
+            `model: ${
+                current.model === undefined
+                    ? "(default)"
+                    : formatModelRoute(current.model)
+            }`,
             `phase: ${current.phase}`,
             `rounds: ${String(current.lastKnownRounds)}/${String(current.maxGoalRounds ?? 0)}`,
             `activation: ${view?.activation ?? "unknown"}`,
@@ -901,6 +954,7 @@ export class GoalManager {
         this.pending.delete(sessionId);
         this.blockedNotified.delete(sessionId);
         this.endedNotified.delete(sessionId);
+        this.reports.delete(sessionId);
         this.persist();
     }
 
@@ -943,15 +997,76 @@ export class GoalManager {
         return this.main;
     }
 
-    private modelRef(): GoalModelRef {
-        return { provider: this.config.provider, model: this.config.model };
-    }
-
-    private agentOptions(): AgentOptions {
+    private defaultRoute(): GoalModelRef {
         const effort = this.config.reasoningEffort?.trim();
         return {
             provider: this.config.provider,
             model: this.config.model,
+            ...(effort === undefined || effort === ""
+                ? {}
+                : { reasoningEffort: effort }),
+        };
+    }
+
+    private resolveRoute(
+        requested: GoalModelRef | undefined,
+        effortOverride: string | undefined
+    ): GoalModelRef {
+        const fallback = this.defaultRoute();
+        if (requested === undefined) {
+            const override = effortOverride?.trim();
+            const effort =
+                override === undefined || override === ""
+                    ? fallback.reasoningEffort
+                    : override;
+            return {
+                provider: fallback.provider,
+                model: fallback.model,
+                ...(effort === undefined ? {} : { reasoningEffort: effort }),
+            };
+        }
+        const provider = requested.provider.trim();
+        const model = requested.model.trim();
+        if (provider === "" || model === "") {
+            throw new Error("goal model route requires provider and model");
+        }
+        const key = `${provider}\0${model}`;
+        const defaultKey = `${fallback.provider}\0${fallback.model}`;
+        const allowed = this.config.allowedModels.some(
+            (route) => `${route.provider}\0${route.model}` === key
+        );
+        if (key !== defaultKey && !allowed) {
+            throw new Error(
+                `goal model route ${provider}/${model} is not allowed; ` +
+                    `choices: ${this.modelChoices().join(", ")}`
+            );
+        }
+        const override = effortOverride?.trim();
+        const requestedEffort = requested.reasoningEffort?.trim();
+        const effort =
+            override === undefined || override === ""
+                ? requestedEffort
+                : override;
+        const inherited =
+            key === defaultKey && (effort === undefined || effort === "")
+                ? fallback.reasoningEffort
+                : undefined;
+        const resolvedEffort =
+            effort === undefined || effort === "" ? inherited : effort;
+        return {
+            provider,
+            model,
+            ...(resolvedEffort === undefined
+                ? {}
+                : { reasoningEffort: resolvedEffort }),
+        };
+    }
+
+    private agentOptions(route: GoalModelRef): AgentOptions {
+        const effort = route.reasoningEffort?.trim();
+        return {
+            provider: route.provider,
+            model: route.model,
             ...(effort === undefined || effort === ""
                 ? {}
                 : {

@@ -13,6 +13,7 @@ import {
     resolveHomePaths,
     type Logger,
     type OutboxItem,
+    type RecentLogEntry,
     type RestartReason,
 } from "@nokoribi/shared";
 
@@ -57,6 +58,91 @@ export type StatusProvider = () => Omit<
 > & {
     readonly pendingInteractions?: number;
 };
+
+/** One reviewer route shown in full status. */
+export interface ReviewerRouteStatus {
+    readonly provider: string;
+    readonly model: string;
+    readonly reasoningEffort?: string;
+}
+
+/** Reviewer configuration shown in full status. */
+export interface ReviewerStatus {
+    readonly fast: ReviewerRouteStatus;
+    readonly strong: ReviewerRouteStatus;
+    readonly timeoutMs: number;
+}
+
+/** One goal in full status. */
+export interface FullGoalStatus {
+    readonly shortId: string;
+    readonly sessionId: string;
+    readonly goalId: string;
+    readonly objective: string;
+    readonly phase: string;
+    readonly roundsStarted: number;
+    readonly maxGoalRounds: number;
+    readonly model: string | null;
+    readonly childStatus: "running" | "idle" | "cold";
+    readonly sandbox: FullSandboxStatus | null;
+}
+
+/** One per-session sandbox in full status. */
+export interface FullSandboxStatus {
+    readonly host: string;
+    readonly sessionId: string;
+    readonly dir: string;
+    readonly exists: boolean;
+    readonly generation: number;
+    readonly packages: readonly string[];
+    readonly createdAt: string | null;
+    readonly lastUsedAt: string | null;
+    readonly idleTtlMs: number;
+    readonly activeCommands: number;
+    readonly backgroundCommands: number;
+    readonly error?: string;
+}
+
+/** One active reminder in full status. */
+export interface FullScheduleStatus {
+    readonly id: string;
+    readonly title: string;
+    readonly kind: string;
+    readonly scheduledAt: string;
+    readonly state: string;
+}
+
+/** Memory-store counts in full status. */
+export interface FullMemoryStatus {
+    readonly activeEntries: number;
+    readonly archivedEntries: number;
+    readonly invalidEntries: number;
+    readonly bytes: number;
+}
+
+/** Detailed status returned by `/status full` and `GET /v1/status?full=1`. */
+export interface FullStatusDetails {
+    readonly workspace: string;
+    readonly state: string;
+    readonly lock: string;
+    readonly storage: string;
+    readonly nextOutboxSeq: number;
+    readonly dshVersion: string;
+    readonly appVersion: string;
+    readonly model: ReviewerRouteStatus;
+    readonly reviewer: ReviewerStatus | null;
+    readonly goals: readonly FullGoalStatus[];
+    readonly schedules: readonly FullScheduleStatus[];
+    readonly sandboxes: readonly FullSandboxStatus[];
+    readonly memory: FullMemoryStatus;
+    readonly recentErrors: readonly RecentLogEntry[];
+    readonly lastVersion: string;
+    readonly lastStartedAt: string | null;
+    readonly restartReason: RestartReason | null;
+}
+
+/** Full-status source installed by agent-app. */
+export type FullStatusProvider = () => Promise<FullStatusDetails>;
 
 /** Channel core configuration. */
 export interface ChannelCoreConfig {
@@ -118,6 +204,7 @@ export class ChannelService extends Service {
     private readonly timers = new Set<NodeJS.Timeout>();
     private runtime: ChannelRuntime | undefined;
     private statusProvider: StatusProvider | undefined;
+    private fullStatusProvider: FullStatusProvider | undefined;
     private active = false;
     private disposed = false;
     private oneShot: DeliveryMode | null = null;
@@ -202,6 +289,45 @@ export class ChannelService extends Service {
     /** Install the status source used by `/v1/status` and `/status`. */
     setStatusProvider(provider: StatusProvider | undefined): void {
         this.statusProvider = provider;
+    }
+
+    /** Install the detailed status source used by `/status full`. */
+    setFullStatusProvider(provider: FullStatusProvider | undefined): void {
+        this.fullStatusProvider = provider;
+    }
+
+    /**
+     * Read detailed status for `/status full` and `/v1/status?full=1`.
+     * @returns the installed details, or a minimal empty document.
+     */
+    async fullStatus(): Promise<FullStatusDetails> {
+        if (this.fullStatusProvider !== undefined) {
+            return await this.fullStatusProvider();
+        }
+        return {
+            workspace: "",
+            state: "",
+            lock: "",
+            storage: "",
+            nextOutboxSeq: this.outbox.nextSeq,
+            dshVersion: "unknown",
+            appVersion: "unknown",
+            model: { provider: "unknown", model: "unknown" },
+            reviewer: null,
+            goals: [],
+            schedules: [],
+            sandboxes: [],
+            memory: {
+                activeEntries: 0,
+                archivedEntries: 0,
+                invalidEntries: 0,
+                bytes: 0,
+            },
+            recentErrors: [],
+            lastVersion: "unknown",
+            lastStartedAt: null,
+            restartReason: null,
+        };
     }
 
     /** Register and start one driver. Returns a disposer that stops it. */

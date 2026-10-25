@@ -369,6 +369,15 @@ export class ShellHostRegistry extends Service {
     }
 
     /**
+     * Whether one host exposes per-session status.
+     * @param hostId - target host id.
+     * @returns true when `status()` is available.
+     */
+    hasStatus(hostId: string): boolean {
+        return this.hosts.get(hostId)?.status !== undefined;
+    }
+
+    /**
      * Reset one per-session host instance.
      * @param hostId - target host.
      * @param sessionId - owning session.

@@ -10,6 +10,7 @@ export interface HomePaths {
     readonly sessionsDir: string;
     readonly archiveDir: string;
     readonly memoryDir: string;
+    readonly storageDir: string;
     readonly sandboxesDir: string;
     readonly workspaceDir: string;
     readonly profileDir: string;
@@ -39,6 +40,7 @@ export function resolveHomePaths(
         sessionsDir: join(home, "sessions"),
         archiveDir: join(home, "archive"),
         memoryDir: join(home, "memory"),
+        storageDir: join(home, "storage"),
         sandboxesDir: join(home, "sandboxes"),
         workspaceDir,
         profileDir: join(runDir, "profile"),
@@ -61,6 +63,7 @@ export async function ensureHomeDirs(paths: HomePaths): Promise<void> {
         paths.runDir,
         paths.archiveDir,
         paths.memoryDir,
+        paths.storageDir,
         paths.sandboxesDir,
         paths.workspaceDir,
     ]) {

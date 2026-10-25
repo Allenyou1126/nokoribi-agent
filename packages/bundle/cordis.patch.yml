@@ -1,4 +1,4 @@
-# Nokoribi Agent M1/M2 bundle.
+# Nokoribi Agent M1-M5 bundle.
 #
 # This is a complete Cordis tree, not a layer over dsh-base. Rows are loaded in
 # order; `inject` declarations decide activation. Keep row ids stable: the NixOS
@@ -76,6 +76,12 @@
         config:
             maxBytes: 65536
 
+      - id: time-context
+        name: "@deepseek-ai/dsh-time-context"
+        config:
+            timeZone: !!js process.env.NOKORIBI_TIME_ZONE ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+            refreshIntervalMs: !!js Number(process.env.NOKORIBI_TIME_CONTEXT_REFRESH_MS ?? 60000)
+
       - id: working-directory
         name: "@deepseek-ai/dsh-working-directory"
 
@@ -151,7 +157,32 @@
         config:
             agents: []
 
-      # --- Goal and subagent rows (M4) -------------------------------------
+      # --- Storage, schedule and goal rows (M4/M5) -------------------------
+
+      - id: storage
+        name: "@deepseek-ai/dsh-storage"
+
+      - id: storage-json
+        name: "@deepseek-ai/dsh-storage-json"
+        config:
+            root: !!js dshHomePath('storage')
+
+      - id: storage-domain
+        name: "@deepseek-ai/dsh-storage-domain"
+        config:
+            backend: json
+
+      - id: nokoribi-session-bridge
+        name: "@nokoribi/agent-app/session-bridge"
+
+      - id: schedule
+        name: "@deepseek-ai/dsh-schedule"
+        config:
+            deliveryHistoryDays: 30
+            deliveryHistoryRecords: 200
+
+      - id: tool-schedule
+        name: "@deepseek-ai/dsh-tool-schedule"
 
       - id: goal
         name: "@deepseek-ai/dsh-goal"
@@ -183,6 +214,11 @@
         name: "@deepseek-ai/dsh-goal-round-driver"
 
       # --- Nokoribi rows ---------------------------------------------------
+
+      - id: nokoribi-memory
+        name: "@nokoribi/memory"
+        config:
+            root: !!js dshHomePath('memory')
 
       - id: nokoribi-prompt
         name: "@nokoribi/prompt"
@@ -276,4 +312,17 @@
             goalProvider: !!js process.env.NOKORIBI_GOAL_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
             goalModel: !!js process.env.NOKORIBI_GOAL_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
             goalReasoningEffort: !!js process.env.NOKORIBI_GOAL_REASONING_EFFORT ?? ''
+            goalModels: !!js (process.env.NOKORIBI_GOAL_MODELS ?? '').split(',').map((value) => value.trim()).filter(Boolean)
             goalRecoveryTimeoutMs: !!js Number(process.env.NOKORIBI_GOAL_RECOVERY_TIMEOUT_MS ?? 30000)
+            memoryProvider: !!js process.env.NOKORIBI_MEMORY_PROVIDER ?? process.env.NOKORIBI_GOAL_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
+            memoryModel: !!js process.env.NOKORIBI_MEMORY_MODEL ?? process.env.NOKORIBI_GOAL_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
+            memoryReasoningEffort: !!js process.env.NOKORIBI_MEMORY_REASONING_EFFORT ?? ''
+            memoryCurator: !!js (process.env.NOKORIBI_MEMORY_CURATOR ?? 'true') !== 'false'
+            memoryCuratorTimeoutMs: !!js Number(process.env.NOKORIBI_MEMORY_CURATOR_TIMEOUT_MS ?? 60000)
+            reviewFastProvider: !!js process.env.NOKORIBI_REVIEW_FAST_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
+            reviewFastModel: !!js process.env.NOKORIBI_REVIEW_FAST_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
+            reviewFastReasoningEffort: !!js process.env.NOKORIBI_REVIEW_FAST_REASONING_EFFORT ?? ''
+            reviewStrongProvider: !!js process.env.NOKORIBI_REVIEW_STRONG_PROVIDER ?? process.env.NOKORIBI_REVIEW_FAST_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
+            reviewStrongModel: !!js process.env.NOKORIBI_REVIEW_STRONG_MODEL ?? process.env.NOKORIBI_REVIEW_FAST_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
+            reviewStrongReasoningEffort: !!js process.env.NOKORIBI_REVIEW_STRONG_REASONING_EFFORT ?? ''
+            reviewTimeoutMs: !!js Number(process.env.NOKORIBI_REVIEW_TIMEOUT_MS ?? 30000)

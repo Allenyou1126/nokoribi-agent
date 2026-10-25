@@ -20,6 +20,7 @@ export function shortGoalId(sessionId: string): string {
 export interface GoalModelRef {
     readonly provider: string;
     readonly model: string;
+    readonly reasoningEffort?: string;
 }
 
 /** One tracked goal child. M1 never creates entries; the shape stays forward-compatible. */
@@ -79,6 +80,7 @@ const goalSchema = z
             .object({
                 provider: z.string().min(1),
                 model: z.string().min(1),
+                reasoningEffort: z.string().optional(),
             })
             .passthrough()
             .optional(),

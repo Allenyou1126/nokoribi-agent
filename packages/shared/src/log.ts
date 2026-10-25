@@ -1,3 +1,5 @@
+import { recordRecentLog } from "./recent.js";
+
 /** Log severity. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -67,6 +69,14 @@ export class Logger {
     log(level: LogLevel, message: string, fields?: LogFields): void {
         if (LEVEL_WEIGHT[level] < this.threshold) return;
         const timestamp = new Date().toISOString();
+        if (level === "warn" || level === "error") {
+            recordRecentLog({
+                at: timestamp,
+                level,
+                module: this.moduleName,
+                message,
+            });
+        }
         this.sink(
             `${timestamp} ${level} ${this.moduleName} ${message}${formatFields(fields)}\n`
         );

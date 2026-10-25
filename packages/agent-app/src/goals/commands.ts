@@ -1,9 +1,15 @@
+import type { GoalModelRef } from "@nokoribi/shared";
+
+import { parseModelRoute } from "./model.js";
+
 /** Parsed `/goal` subcommand. */
 export type GoalCommand =
     | {
           readonly kind: "new";
           readonly objective: string;
           readonly maxRounds?: number;
+          readonly model?: GoalModelRef;
+          readonly reasoningEffort?: string;
       }
     | { readonly kind: "list" }
     | { readonly kind: "status"; readonly prefix: string }
@@ -17,7 +23,7 @@ export type GoalCommand =
 /** Short help shown for `/goal` with no arguments or invalid input. */
 export const GOAL_HELP: string = [
     "用法：",
-    "/goal new <目标> [--rounds N] — 创建 goal 子代理",
+    "/goal new <目标> [--rounds N] [--model provider/model] [--effort ID] — 创建 goal 子代理",
     "/goal list — 列出 tracked goals",
     "/goal status <前缀> — 查看详情",
     "/goal pause <前缀> / resume <前缀> — 暂停/恢复自动续跑",
@@ -54,36 +60,62 @@ export function parseGoalCommand(rawInput: string): GoalCommand {
     const rest = input.slice(action.length).trim();
     switch (action.toLowerCase()) {
         case "new": {
-            const rounds = /\s+--rounds(?:\s+(\S+))?\s*$/.exec(input);
             let objective = rest;
             let maxRounds: number | undefined;
-            if (rounds !== null) {
-                const value = rounds[1];
+            let model: GoalModelRef | undefined;
+            let reasoningEffort: string | undefined;
+            for (;;) {
+                const match =
+                    /(?:^|\s)--(rounds|model|effort)(?:\s+(\S+))?\s*$/.exec(
+                        objective
+                    );
+                if (match === null) break;
+                const flag = match[1] ?? "";
+                const value = match[2];
                 if (value === undefined) {
                     return {
                         kind: "error",
-                        message: "--rounds 需要一个正整数。",
+                        message:
+                            flag === "rounds"
+                                ? "--rounds 需要一个正整数。"
+                                : `--${flag} 需要一个值。`,
                     };
                 }
-                maxRounds = positiveInteger(value);
-                if (maxRounds === undefined) {
-                    return {
-                        kind: "error",
-                        message: "--rounds 必须是正整数。",
-                    };
+                if (flag === "rounds") {
+                    maxRounds = positiveInteger(value);
+                    if (maxRounds === undefined) {
+                        return {
+                            kind: "error",
+                            message: "--rounds 必须是正整数。",
+                        };
+                    }
+                } else if (flag === "model") {
+                    model = parseModelRoute(value);
+                    if (model === undefined) {
+                        return {
+                            kind: "error",
+                            message:
+                                "--model 需要 provider/model 形式的精确路由。",
+                        };
+                    }
+                } else {
+                    reasoningEffort = value;
                 }
-                objective = input.slice(3, rounds.index).trim();
+                objective = objective.slice(0, match.index).trim();
             }
             if (objective === "") {
                 return {
                     kind: "error",
-                    message: "用法：/goal new <目标> [--rounds N]",
+                    message:
+                        "用法：/goal new <目标> [--rounds N] [--model provider/model] [--effort ID]",
                 };
             }
             return {
                 kind: "new",
                 objective,
                 ...(maxRounds === undefined ? {} : { maxRounds }),
+                ...(model === undefined ? {} : { model }),
+                ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
             };
         }
         case "list":

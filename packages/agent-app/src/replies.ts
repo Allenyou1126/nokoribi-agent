@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@deepseek-ai/dsh-llm";
+import type { AssistantMessage, ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { TurnEndReason } from "@deepseek-ai/dsh-session";
 
 /** What the bridge should emit after one turn closes. */
@@ -7,15 +7,20 @@ export interface TurnReplyPlan {
     readonly notice?: string;
 }
 
-/** Extract the model-visible text of one assistant message. */
-export function assistantText(message: AssistantMessage): string {
+/** Extract the text blocks of one model-visible message. */
+export function contentText(content: readonly ContentBlock[]): string {
     const parts: string[] = [];
-    for (const block of message.content) {
+    for (const block of content) {
         if (block.type === "text" && block.text.trim() !== "") {
             parts.push(block.text);
         }
     }
     return parts.join("");
+}
+
+/** Extract the model-visible text of one assistant message. */
+export function assistantText(message: AssistantMessage): string {
+    return contentText(message.content);
 }
 
 /** Decide whether a closed turn produces a user-visible reply and/or a notice. */

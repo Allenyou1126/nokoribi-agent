@@ -1,9 +1,11 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type {} from "@deepseek-ai/dsh-goal";
 import type {} from "@deepseek-ai/dsh-permission-presets";
+import type {} from "@deepseek-ai/dsh-schedule";
 import type {} from "@deepseek-ai/dsh-subagent";
-import "@nokoribi/shell-bash";
 import z from "@deepseek-ai/schemastery";
+import "@nokoribi/shell-bash";
+import type {} from "@nokoribi/memory";
 
 import { Daemon, type AgentAppConfig } from "./daemon.js";
 
@@ -27,6 +29,9 @@ export const inject: string[] = [
     "shellHosts",
     "goals",
     "subagents",
+    "schedule",
+    "sessionController",
+    "memory",
     "tools",
 ];
 
@@ -42,7 +47,20 @@ export const Config: unknown = z.object({
     goalProvider: z.string(),
     goalModel: z.string(),
     goalReasoningEffort: z.string(),
+    goalModels: z.array(z.string()).default([]),
     goalRecoveryTimeoutMs: z.natural().min(1).default(30000),
+    memoryProvider: z.string(),
+    memoryModel: z.string(),
+    memoryReasoningEffort: z.string(),
+    memoryCurator: z.boolean().default(true),
+    memoryCuratorTimeoutMs: z.natural().min(1).default(60000),
+    reviewFastProvider: z.string(),
+    reviewFastModel: z.string(),
+    reviewFastReasoningEffort: z.string(),
+    reviewStrongProvider: z.string(),
+    reviewStrongModel: z.string(),
+    reviewStrongReasoningEffort: z.string(),
+    reviewTimeoutMs: z.natural().min(1),
 });
 
 /** Start the daemon lifecycle. */

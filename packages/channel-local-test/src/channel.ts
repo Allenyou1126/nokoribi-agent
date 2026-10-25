@@ -234,6 +234,13 @@ export class LocalTestChannel implements ChannelDriver {
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v1/status") {
+                if (url.searchParams.get("full") === "1") {
+                    sendJson(response, 200, {
+                        ...this.channels.status(),
+                        details: await this.channels.fullStatus(),
+                    });
+                    return;
+                }
                 sendJson(response, 200, this.channels.status());
                 return;
             }

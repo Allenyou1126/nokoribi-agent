@@ -10,6 +10,7 @@ import type {
 import type {} from "@deepseek-ai/dsh-goal";
 import type { AssistantMessage } from "@deepseek-ai/dsh-llm";
 import type {} from "@deepseek-ai/dsh-permission-presets";
+import type {} from "@deepseek-ai/dsh-schedule";
 import {
     SessionId,
     type Session,
@@ -18,13 +19,22 @@ import {
 } from "@deepseek-ai/dsh-session";
 import { SessionPersistenceNotFoundError } from "@deepseek-ai/dsh-session-persistence";
 import type {} from "@deepseek-ai/dsh-subagent";
+import type {
+    FullGoalStatus,
+    FullSandboxStatus,
+    FullScheduleStatus,
+    FullStatusDetails,
+} from "@nokoribi/channel-core";
 import "@nokoribi/channel-core";
+import type {} from "@nokoribi/memory";
 import {
     createLogger,
     defaultAgentState,
     ensureHomeDirs,
     loadAgentState,
+    recentLogs,
     resolveHomePaths,
+    resolvePackageVersion,
     saveAgentState,
     SingleInstanceLock,
     writeJsonAtomic,
@@ -38,8 +48,12 @@ import type {} from "@nokoribi/shell-bash";
 import { parseGoalCommand } from "./goals/commands.js";
 import { installMainToolPolicy } from "./goals/main-policy.js";
 import { GoalManager } from "./goals/manager.js";
+import { formatModelRoute, parseAllowedModels } from "./goals/model.js";
 import { createStartGoalTool } from "./goals/tool.js";
+import { MemoryCurator } from "./memory/curator.js";
 import { assistantText, planTurnEnd } from "./replies.js";
+import type {} from "./session-bridge.js";
+import { formatFullStatus, normalizeSandboxStatus } from "./status.js";
 
 /** Resolved agent-app configuration. */
 export interface AgentAppConfig {
@@ -56,8 +70,26 @@ export interface AgentAppConfig {
     readonly goalModel?: string;
     /** Goal-child reasoning effort; defaults to the main effort. */
     readonly goalReasoningEffort?: string;
+    /** Exact provider/model routes accepted for goal children. */
+    readonly goalModels?: readonly string[];
     /** Bound for one cold goal recovery. */
     readonly goalRecoveryTimeoutMs?: number;
+    /** One-shot memory-curator route; defaults to the goal route. */
+    readonly memoryProvider?: string;
+    readonly memoryModel?: string;
+    readonly memoryReasoningEffort?: string;
+    /** Whether terminal goals trigger best-effort extraction (default true). */
+    readonly memoryCurator?: boolean;
+    readonly memoryCuratorTimeoutMs?: number;
+    /** Fast reviewer route, shown by `/status full`. */
+    readonly reviewFastProvider?: string;
+    readonly reviewFastModel?: string;
+    readonly reviewFastReasoningEffort?: string;
+    /** Strong reviewer route, shown by `/status full`. */
+    readonly reviewStrongProvider?: string;
+    readonly reviewStrongModel?: string;
+    readonly reviewStrongReasoningEffort?: string;
+    readonly reviewTimeoutMs?: number;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -82,6 +114,8 @@ export class Daemon {
     private readonly paths: HomePaths;
     private readonly logger: Logger;
     private readonly goals: GoalManager;
+    private readonly curator: MemoryCurator;
+    private readonly goalConfigError: Error | undefined;
     private readonly turnText = new Map<number, string>();
     private lock: SingleInstanceLock | undefined;
     private state: AgentState | undefined;
@@ -105,18 +139,50 @@ export class Daemon {
             goalEffortRaw === undefined || goalEffortRaw.trim() === ""
                 ? undefined
                 : goalEffortRaw;
+        const memoryEffortRaw = config.memoryReasoningEffort ?? goalEffortRaw;
+        const memoryEffort =
+            memoryEffortRaw === undefined || memoryEffortRaw.trim() === ""
+                ? undefined
+                : memoryEffortRaw;
+        let allowedModels: ReturnType<typeof parseAllowedModels> = [];
+        let goalConfigError: Error | undefined;
+        try {
+            allowedModels = parseAllowedModels(config.goalModels ?? []);
+        } catch (error) {
+            goalConfigError =
+                error instanceof Error ? error : new Error(String(error));
+        }
+        this.goalConfigError = goalConfigError;
         this.goals = new GoalManager(ctx, {
             provider: config.goalProvider ?? config.provider,
             model: config.goalModel ?? config.model,
             ...(goalEffort === undefined
                 ? {}
                 : { reasoningEffort: goalEffort }),
+            allowedModels,
             recoveryTimeoutMs: config.goalRecoveryTimeoutMs ?? 30000,
             archivePath: this.paths.goalsArchivePath,
             notify: (text) => this.ctx.channels.notify(text),
             persist: () => this.persistSoon(),
             logger: this.logger,
         });
+        this.curator = new MemoryCurator(
+            ctx,
+            this.goals,
+            {
+                enabled: config.memoryCurator ?? true,
+                provider:
+                    config.memoryProvider ??
+                    config.goalProvider ??
+                    config.provider,
+                model: config.memoryModel ?? config.goalModel ?? config.model,
+                ...(memoryEffort === undefined
+                    ? {}
+                    : { reasoningEffort: memoryEffort }),
+                timeoutMs: config.memoryCuratorTimeoutMs ?? 60000,
+            },
+            this.logger
+        );
     }
 
     /** Start the daemon; throws on lock, state, or session failures. */
@@ -124,12 +190,16 @@ export class Daemon {
         await ensureHomeDirs(this.paths);
         this.ctx.effect(() => () => this.shutdown());
         try {
+            if (this.goalConfigError !== undefined) {
+                throw this.goalConfigError;
+            }
             this.lock = SingleInstanceLock.acquire(
                 this.paths.lockPath,
                 this.config.version
             );
             this.ctx.shellHosts.requireDefaultHost();
             this.goals.install();
+            this.curator.install();
             this.ctx.effect(() =>
                 this.ctx.tools.register(createStartGoalTool(this.goals))
             );
@@ -234,8 +304,10 @@ export class Daemon {
             this.handle = await this.createAgent();
         }
         this.mainSessionId = this.handle.agent.id;
+        this.ctx.sessionController.bind(this.handle.agent, Promise.resolve());
         await this.ctx.sessions.flush(this.handle.agent.session);
         await this.goals.bindMain(this.handle.agent);
+        this.curator.bindMain(this.handle.agent);
         this.state = {
             ...this.state,
             mainSessionId: this.mainSessionId,
@@ -252,6 +324,7 @@ export class Daemon {
         await this.emitStartupNotice();
         await this.ctx.channels.drainBuffered();
         this.ready = true;
+        this.ctx.sessionController.markReady();
         await this.writeState(false);
         await writeJsonAtomic(this.paths.readyPath, {
             pid: process.pid,
@@ -379,6 +452,7 @@ export class Daemon {
             lastRestartReason: this.restartReason,
             ready: this.ready,
         }));
+        this.ctx.channels.setFullStatusProvider(() => this.fullStatus());
     }
 
     private installSessionListener(): void {
@@ -490,7 +564,7 @@ export class Daemon {
         return { kind: "success", text: "已停止" };
     }
 
-    private statusCommand(rawInput: string): CommandResult {
+    private async statusCommand(rawInput: string): Promise<CommandResult> {
         const status = this.ctx.channels.status();
         const lines = [
             `version: ${status.version}`,
@@ -505,14 +579,182 @@ export class Daemon {
             `lastRestart: ${status.lastRestartReason ?? "-"}`,
         ];
         if (rawInput.trim() === "full") {
-            lines.push(
-                `workspace: ${this.paths.workspaceDir}`,
-                `state: ${this.paths.agentStatePath}`,
-                `lock: ${this.paths.lockPath}`,
-                `nextOutboxSeq: ${this.ctx.channels.nextOutboxSeq}`
-            );
+            try {
+                lines.push(formatFullStatus(await this.fullStatus()));
+            } catch (error) {
+                lines.push(`fullStatusError: ${errorMessage(error)}`);
+            }
         }
         return { kind: "success", text: lines.join("\n") };
+    }
+
+    private async fullStatus(): Promise<FullStatusDetails> {
+        const tracked = this.goals.snapshot();
+        const sessionIds = new Set<string>();
+        if (this.mainSessionId !== null) {
+            sessionIds.add(this.mainSessionId);
+        }
+        for (const goal of tracked) sessionIds.add(goal.sessionId);
+
+        const sandboxes: FullSandboxStatus[] = [];
+        for (const host of this.ctx.shellHosts.list()) {
+            if (!this.ctx.shellHosts.hasStatus(host.id)) continue;
+            for (const sessionId of sessionIds) {
+                try {
+                    sandboxes.push(
+                        normalizeSandboxStatus(
+                            host.id,
+                            sessionId,
+                            await this.ctx.shellHosts.status(host.id, sessionId)
+                        )
+                    );
+                } catch (error) {
+                    sandboxes.push({
+                        host: host.id,
+                        sessionId,
+                        dir: "",
+                        exists: false,
+                        generation: 0,
+                        packages: [],
+                        createdAt: null,
+                        lastUsedAt: null,
+                        idleTtlMs: 0,
+                        activeCommands: 0,
+                        backgroundCommands: 0,
+                        error: errorMessage(error),
+                    });
+                }
+            }
+        }
+        const sandboxBySession = new Map<string, FullSandboxStatus>();
+        for (const sandbox of sandboxes) {
+            if (sandbox.error === undefined) {
+                sandboxBySession.set(sandbox.sessionId, sandbox);
+            }
+        }
+
+        const goals: FullGoalStatus[] = tracked.map((goal) => {
+            const child = this.ctx.agents.get(SessionId(goal.sessionId));
+            const childStatus =
+                child === undefined
+                    ? "cold"
+                    : child.status === "running"
+                      ? "running"
+                      : "idle";
+            return {
+                shortId: goal.sessionId.slice(0, 8),
+                sessionId: goal.sessionId,
+                goalId: goal.goalId,
+                objective: goal.objective ?? "(unknown)",
+                phase: goal.phase,
+                roundsStarted: goal.lastKnownRounds,
+                maxGoalRounds: goal.maxGoalRounds ?? 0,
+                model:
+                    goal.model === undefined
+                        ? null
+                        : formatModelRoute(goal.model),
+                childStatus,
+                sandbox: sandboxBySession.get(goal.sessionId) ?? null,
+            };
+        });
+
+        let schedules: FullScheduleStatus[] = [];
+        if (this.handle !== undefined) {
+            try {
+                schedules = (
+                    await this.ctx.schedule.list({
+                        sessionId: this.handle.agent.id,
+                    })
+                ).map((record) => ({
+                    id: record.id,
+                    title: record.title,
+                    kind: record.kind,
+                    scheduledAt: record.scheduledAt,
+                    state:
+                        Date.parse(record.scheduledAt) <= Date.now()
+                            ? "overdue"
+                            : "scheduled",
+                }));
+            } catch (error) {
+                this.logger.warn("failed to read schedules for status", {
+                    error: errorMessage(error),
+                });
+            }
+        }
+
+        let memory = {
+            activeEntries: 0,
+            archivedEntries: 0,
+            invalidEntries: 0,
+            bytes: 0,
+        };
+        try {
+            const stats = await this.ctx.memory.stats();
+            memory = {
+                activeEntries: stats.active,
+                archivedEntries: stats.archived,
+                invalidEntries: stats.invalid,
+                bytes: stats.bytes,
+            };
+        } catch (error) {
+            this.logger.warn("failed to read memory stats", {
+                error: errorMessage(error),
+            });
+        }
+
+        const fastEffort = this.config.reviewFastReasoningEffort?.trim();
+        const strongEffort = this.config.reviewStrongReasoningEffort?.trim();
+        const reviewer = {
+            fast: {
+                provider:
+                    this.config.reviewFastProvider ?? this.config.provider,
+                model: this.config.reviewFastModel ?? this.config.model,
+                ...(fastEffort === undefined || fastEffort === ""
+                    ? {}
+                    : { reasoningEffort: fastEffort }),
+            },
+            strong: {
+                provider:
+                    this.config.reviewStrongProvider ??
+                    this.config.reviewFastProvider ??
+                    this.config.provider,
+                model:
+                    this.config.reviewStrongModel ??
+                    this.config.reviewFastModel ??
+                    this.config.model,
+                ...(strongEffort === undefined || strongEffort === ""
+                    ? {}
+                    : { reasoningEffort: strongEffort }),
+            },
+            timeoutMs: this.config.reviewTimeoutMs ?? 30000,
+        };
+        const mainEffort = this.config.reasoningEffort?.trim();
+
+        return {
+            workspace: this.paths.workspaceDir,
+            state: this.paths.agentStatePath,
+            lock: this.paths.lockPath,
+            storage: this.paths.storageDir,
+            nextOutboxSeq: this.ctx.channels.nextOutboxSeq,
+            dshVersion: resolvePackageVersion("@deepseek-ai/dsh-agent"),
+            appVersion: this.config.version,
+            model: {
+                provider: this.config.provider,
+                model: this.config.model,
+                ...(mainEffort === undefined || mainEffort === ""
+                    ? {}
+                    : { reasoningEffort: mainEffort }),
+            },
+            reviewer,
+            goals,
+            schedules,
+            sandboxes,
+            memory,
+            recentErrors: recentLogs(10),
+            lastVersion: this.state?.lastVersion ?? this.config.version,
+            lastStartedAt: this.state?.lastStartedAt ?? null,
+            restartReason: this.restartReason,
+        };
     }
 
     private async clearCommand(): Promise<CommandResult> {
@@ -521,8 +763,15 @@ export class Daemon {
         }
         this.clearing = true;
         try {
-            await this.clearSession();
-            return { kind: "success", text: "已新建会话，旧会话已归档" };
+            const removedSchedules = await this.clearSession();
+            const suffix =
+                removedSchedules > 0
+                    ? `；已删除旧会话的 ${String(removedSchedules)} 条提醒`
+                    : "";
+            return {
+                kind: "success",
+                text: `已新建会话，旧会话已归档${suffix}`,
+            };
         } catch (error) {
             this.logger.error("clear failed", { error: errorMessage(error) });
             return {
@@ -534,19 +783,24 @@ export class Daemon {
         }
     }
 
-    private async clearSession(): Promise<void> {
+    private async clearSession(): Promise<number> {
         const old = this.handle;
         if (old === undefined) throw new Error("main agent is not created");
+        const previousId = this.mainSessionId;
         await this.ctx.channels.abortInteractions("clear");
         old.agent.cancel({ kind: "user" });
         await this.ctx.sessions.flush(old.agent.session);
         await this.goals.clearAll();
-        const previousId = this.mainSessionId;
+        this.curator.clear();
+        const removedSchedules =
+            previousId === null ? 0 : await this.clearSchedules(previousId);
         const next = await this.createAgent();
         this.handle = next;
         this.mainSessionId = next.agent.id;
+        this.ctx.sessionController.bind(next.agent, Promise.resolve());
         await this.ctx.sessions.flush(next.agent.session);
         await this.goals.bindMain(next.agent);
+        this.curator.bindMain(next.agent);
         this.state = {
             ...(this.state ?? defaultAgentState(this.config.version)),
             mainSessionId: this.mainSessionId,
@@ -555,6 +809,7 @@ export class Daemon {
         this.turnText.clear();
         await this.attachRuntime();
         await this.ctx.channels.drainBuffered();
+        this.ctx.sessionController.markReady();
         await this.writeState(false);
         try {
             await old.dispose();
@@ -578,6 +833,42 @@ export class Daemon {
             previous: previousId ?? "-",
             session: this.mainSessionId ?? "-",
         });
+        return removedSchedules;
+    }
+
+    /**
+     * Remove every reminder bound to a session that is being archived.
+     * Active and inactive rows are both removed so stale tasks cannot retry.
+     * @param sessionId - session whose reminders should stop.
+     * @returns number of rows the scheduler confirmed deleted.
+     */
+    private async clearSchedules(sessionId: string): Promise<number> {
+        let removed = 0;
+        try {
+            const entries = await this.ctx.schedule.catalog();
+            for (const entry of entries) {
+                if (String(entry.sessionId) !== sessionId) continue;
+                try {
+                    const result = await this.ctx.schedule.delete({
+                        sessionId: entry.sessionId,
+                        id: entry.id,
+                    });
+                    if (result.deleted) removed += 1;
+                } catch (error) {
+                    this.logger.warn("failed to delete schedule", {
+                        session: sessionId,
+                        schedule: entry.id,
+                        error: errorMessage(error),
+                    });
+                }
+            }
+        } catch (error) {
+            this.logger.error("failed to enumerate schedules for clear", {
+                session: sessionId,
+                error: errorMessage(error),
+            });
+        }
+        return removed;
     }
 
     private async emitStartupNotice(): Promise<void> {
