@@ -1,0 +1,201 @@
+# 14 路线图
+
+## 14.1 总原则
+
+- 分 6 个阶段（D125），每阶段结束都能运行/演示。
+- M6 才部署到 NixOS（D126）；M1–M5 在本地用测试通道验收。
+- 自动化为主（D127）：Vitest 单元/集成 + 进程级恢复场景；本地 `nix flake check`。
+- 任何实现期偏离决策都要回写本套文档。
+
+## 14.2 M1 骨架与消息闭环
+
+### 交付物
+
+- pnpm monorepo 骨架、tsdown/oxlint/oxfmt/tsc/Vitest 配置。
+- 薄启动器 + vendored profile-boot；可启动一个最小 bundle。
+- 最小 bundle 行：llm、session(+jsonl/projection/cache/title)、agent、agent-loop、tools、system-prompt、agent-instructions、commands、fs/tool-fs、jobs、shell-env、user-approval、user-questions、todo、compaction、timeout/spill/checkpoint、invariants、attachment 等（以实际最小闭包为准）。
+- 自研包骨架：shared、channel-core、channel-local-test、agent-app、prompt（基础 section + SOUL 加载 + AGENTS seed）、shell-bash + shell-host-local（可先只做 local host）。
+- 单实例锁、`agent-state.json`、主会话 create/resume、inbox/outbox 基础。
+- 命令框架：`/stop` `/status` `/clear` `/new`；`/steer` `/queue` 可先桩实现。
+- 本地测试通道：`POST /v1/inbound`、`GET /v1/outbound`、`GET /v1/status`。
+- 进程级恢复测试骨架（临时 DSH_HOME + daemon 子进程）。
+
+### 验收
+
+- 测试通道发消息 → 主 agent 回复；忙碌/空闲注入语义可验证。
+- `/stop`、`/status`、`/clear` 行为符合规格。
+- 重启后主会话恢复、outbox 重发、去重记录保留。
+- 自动化：ingress/outbox/命令/状态机单元 + 进程内集成 + 重启恢复场景。
+
+### 依赖/风险
+
+- 无外部依赖（除 DSH 包）。
+- 风险：DSH 启动/组合 API 细节；profile-boot vendoring；最小 bundle 依赖闭包。
+
+## 14.3 M2 安全闸与审批
+
+### 交付物
+
+- vendor `experimental-auto-review` 并打补丁：双档 reviewer、两阶段、sudo 启发式、child 审批桥接（D131）。
+- 挂载 `permission-presets`、`working-directory`；主会话程序化设 Auto；实现 `/permission` 报告。
+- interaction broker 完整实现：串行、超时、提示格式、回复解析、`/steer` 旁路、`/stop` 中止。
+- 系统提示词 safety 段与 approval/question 说明。
+- shell router 报告 `sandboxMode`（满足 permission-presets 挂载条件）。
+
+### 验收
+
+- 工具调用被 reviewer 审查；deny/不确定 → strong 复审 → 仍 deny 时 IM 单次授权。
+- 允许后执行、拒绝后失败；reviewer 技术失败 fail closed。
+- approval 60s/question 300s 超时行为。
+- 多个待应答串行；`/steer` 不打断待应答。
+- child 审批（fake goal child）也能到 IM（若补丁可行）。
+- 自动化：reviewer 路由/JSON 校验/两阶段、broker 状态机、集成场景。
+
+### 依赖/风险
+
+- 依赖 M1 的 channel/agent 骨架。
+- 最大不确定性：auto-review 在 IM-only profile 的可用性、child approval seam；若不可行需回退方案（child 汇报 → 主 agent 询问）。
+- 需要 fake reviewer 模型用于测试，避免真实 API。
+
+## 14.4 M3 shell hosts
+
+### 交付物
+
+- `shellHosts` registry + `shell-router`（唯一 `ctx.shell`）+ `bash(host)` 工具 + `get_available_shell_host`。
+- `local:workspace` provider（系统 PATH + extraPackages；sudo 仅部署时可用）。
+- `sandbox:default` provider：
+  - profile buildEnv + shellHook；
+  - 每 session 临时目录；落盘；TTL 30 分钟可配；
+  - `no_new_privs` + PATH 去 sudo；
+  - `sandbox`（reset/status）+ `sandbox_packages`（add/remove/list）；
+  - `DSH_SANDBOX_DIR` / `DSH_WORKSPACE_DIR`；
+  - 后台任务支持与 reset 保护。
+- 提示词 hosts 段、工具描述、错误提示。
+- 默认 host=sandbox；local 可用。
+
+### 验收
+
+- 模型可发现 host 并选择；未知 host 报错。
+- sandbox 命令与 workspace 隔离（不挂载）；cp/rsync 往返可用。
+- TTL 回收、reset、status、packages 临时加包。
+- sandbox 内 sudo 失败；local 可用系统工具。
+- 自动化：host 路由/能力校验/发现工具、fake host 集成；sandbox 生命周期（可能需要真实 nix，标记集成测试）。
+- 手工：nix shell 启动性能记录（作为风险数据）。
+
+### 依赖/风险
+
+- 依赖 M1（工具注册/提示词）。
+- 风险：nix shell 启动延迟；buildEnv + 运行时包叠加；TTL 与后台任务边界；`ctx.shell` façade 的 sandboxMode 兼容。
+
+## 14.5 M4 goal 子代理
+
+### 交付物
+
+- 挂载 goal 服务/tool/round-driver、subagent spawn/tool/control/report。
+- goal 跟踪：`goal/changed` + `listChildren`、多 goal、sessionId 前缀 id、state 持久化。
+- 两条创建路径：主 agent 工具；`/goal new` 桥接直接 spawn。
+- `/goal list/status/pause/resume/clear/archive`。
+- 主会话禁 goal（隐藏工具 + 误建清理）。
+- 重启恢复：冷恢复消息 + re-arm；失败通知/重试。
+- 归档：释放 Activation、archive JSONL、删除 sandbox、保留 session；完成询问流程。
+- goal child persona、汇报格式提示词。
+- 系统通知（blocked/error/恢复失败）。
+
+### 验收
+
+- 自然语言与 `/goal new` 均可创建 goal；多个并行。
+- 子代理里程碑/完成/阻塞报告到主 agent，主 agent 转述。
+- daemon 重启后 goal 自动恢复并继续；失败时通知且状态保留。
+- `/goal archive` 后不再出现在 list；archive JSONL 正确；sandbox 删除。
+- `/goal clear` 停止并归档。
+- 主会话建 goal 被阻止。
+- 自动化：tracking 状态机、命令、归档；进程级重启恢复场景。
+
+### 依赖/风险
+
+- 依赖 M1/M2/M3（主会话、审批、sandbox）。
+- 风险：cold resume 时序（sendMessage→live→re-arm）；goal 工具对 main/child 的可见性控制；多 goal 汇报噪声；完成通知重复。
+
+## 14.6 M5 memory + schedule + 提示词收尾
+
+### 交付物
+
+- memory 工具 + 文件存储 + 检索 + archive。
+- 记忆提炼子代理（secondary、里程碑触发）。
+- `dsh-schedule` + `dsh-time-context`；schedule 工具可用；逾期交付验证。
+- 全局/工作区 AGENTS.md 种子模板；SOUL.md 加载与 persona 落地。
+- 六段系统提示词定稿（除 M2 的 safety 外全部）；提示词与工具行为对齐。
+- `/status` full 完整实现。
+
+### 验收
+
+- "记住…" 后可跨会话 search 到；提炼子代理写入去重；不存秘密。
+- 创建提醒，到期后主 agent 主动回复；重复/逾期行为符合 DSH。
+- SOUL.md 身份生效；AGENTS.md seed 不覆盖；提示词与实现一致。
+- 自动化：memory 单元/集成、prompt 快照、schedule（fake clock）、提炼子代理脚本化。
+
+### 依赖/风险
+
+- 依赖 M1–M4。
+- 风险：提取子代理成本/噪声；全局 memory 跨项目可见；schedule 工具安装时序；SOUL 长度与模板转义。
+
+## 14.7 M6 NixOS 部署
+
+### 交付物
+
+- flake package + NixOS module；纯 Nix overlay 配置。
+- 专用用户/组、StateDirectory、systemd unit、sd_notify watchdog、journald。
+- agenix EnvironmentFile（`DEEPSEEK_API_KEY`）。
+- `sudo.enable` → `NOPASSWD: ALL` 规则（默认 false）。
+- 测试通道 token（Nix option 明文）。
+- SOUL/AGENTS 打包与 seed；sandbox buildEnv 构建。
+- 部署文档更新、手工验收清单执行。
+- `nix flake check` 本地门禁。
+
+### 验收
+
+- 12.12 手工清单全部通过。
+- 重启系统自启、会话/goal/outbox 恢复。
+- watchdog 能拉起卡死进程。
+- 升级流程演练一次（含 DSH 版本 bump + reviewer vendor 更新）。
+
+### 依赖/风险
+
+- 依赖 M1–M5 功能完整。
+- 风险：pnpm 固定输出构建；systemd 无硬化下的权限；agenix owner/mode；watchdog 实现（sd_notify）；Nix store 可写性禁止；NixOS 手工验收成本。
+
+## 14.8 后置（v1 之外）
+
+- **M7 SSH host**：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。
+- **真实 IM 适配器**：QQ/Milky、Telegram 等实现 ChannelDriver；sender/chat 白名单；图片下载；平台限速/长消息。
+- **heartbeat/主动唤醒**：当前明确不做。
+- **多人/群聊权限**：需要身份、权限、审计、隔离重新设计。
+- **token 预算插件**：可选未来能力。
+- **备份/自动回滚**：当前明确不做。
+- **web-debug**：当前明确不做；如需诊断，只能看 journald/session 文件/`/status`。
+- **NixOS VM 测试/CI**：当前不做；可本地 flake checks。
+- **更强的 sandbox 隔离**（bwrap/容器）：在 host 接口下可加。
+- **远程文件工具**（read/write/edit 走远程）：未设计。
+- **session search/长期记忆增强**：未纳入。
+
+## 14.9 实现前必须验证（进入 M1 前/早期）
+
+详见 [15 待验证项与风险](15-verification-and-risks.md)。摘要：
+
+1. IM-only profile 下 Auto 预设程序化设置与 permission-presets 挂载。
+2. patched auto-review 的两档路由与 child 审批桥接可行性。
+3. goal 冷恢复顺序与 re-arm 时序。
+4. resume 后 inbox 是否自动处理。
+5. schedule 工具安装时序 vs 主会话创建。
+6. nix buildEnv + 运行时包叠加性能。
+7. pnpm 依赖的 Nix 固定输出构建。
+8. 主模型图像支持（查 API 目录）。
+9. 主 agent 隐藏 goal 工具的实现方式。
+10. `/clear` 时 outbox 旧消息处理（文档中标注待实现决策）。
+
+## 14.10 v1 完成定义
+
+- M1–M6 验收全部通过；`nix flake check` 通过。
+- 文档（本套）与实现一致；所有偏离回写。
+- 安全检查清单（08）中的已接受风险被再次确认。
+- 手工验收清单（12.12）执行并记录结果。

@@ -1,0 +1,332 @@
+# 03 决策记录
+
+本文件是全部讨论结论的权威来源。按讨论时间顺序记录每个问题的背景、选项与用户选择；末尾列出"未逐条确认但默认采纳的提案"与"被取代/撤销"的索引。
+
+约定：
+
+- **最终**：当前有效。
+- **取代**：被后续决策替换，括号注明新决策。
+- **撤销**：明确回撤，不再实施。
+- **提问**：用户提出的问题/澄清，本身不是决策。
+- 用户选择以讨论中的原始答案为准；本文件在保留原意的前提下做了精简表述。
+
+---
+
+## 3.1 最终决策索引（按主题）
+
+| ID | 主题 | 最终选择 |
+|---|---|---|
+| D01 | 精简层次 | 运行时精简 + 薄启动器（不 fork、不用官方 `dsh` 启动器） |
+| D03 | IM 渠道 | v1 先只留抽象渠道接口（后补本地测试通道，见 D75） |
+| D04 | 接入形态 | 进程内 Cordis host 插件 |
+| D05 | 默认注入 | 忙碌 steer、空闲 followup；仅显式参数才 cancel |
+| D06 | 参数形式 | IM 命令前缀 + 代码层投递参数 |
+| D07 | SSH 形态 | `bash` 工具加可选 `host`，本地/远程统一入口（实现后置） |
+| D08 | 会话与权限 | 单用户、单常驻主会话 |
+| D09 | 部署 | NixOS + 声明式 systemd |
+| D10 | 模型接入 | DeepSeek 官方 API Key |
+| D12 | SSH 首轮 | v1 不做 SSH（后置） |
+| D13 | 渠道能力 | 纯文本、审批/提问文本应答、图片/附件 |
+| D14 | 控制命令 | `/stop` `/status` `/compact` `/goal` `/clear`/`/new` `/steer` `/queue` |
+| D16 | 媒体 | 入站图片直接给模型（无多模态模型时明确不支持） |
+| D17 | `/clear` | 新建主会话，旧会话归档保留 |
+| D19 | Nix 集成 | nur-packages 包 + NixOS 模块；专用用户 + `/var/lib/nokoribi-agent`；agenix |
+| D20 | 出站结构 | 主 agent 直接回复：每轮最后一条非空 assistant 文本镜像到 IM |
+| D21 | 播报时机 | 每轮结果一条；长任务按里程碑；错误/阻塞立即 |
+| D22 | goal 形态 | 主 agent spawn continuable 子代理；子代理自持 goal，round-driver 续跑 |
+| D23 | 发送工具名 | `send_to_user` |
+| D24 | host 路由 | router 提供 `ctx.shellHosts` 且是唯一 `ctx.shell` provider；host 插件注册到 router |
+| D25 | host v1 范围 | v1 做 router + local + sandbox + 发现工具 |
+| D26 | host 发现 | 独立模型工具 + service API |
+| D27 | SSH 寻址 | 模型只选 host id；host id 带路由前缀 |
+| D29 | host id 前缀 | `local:` / `sandbox:` / `ssh:` / `client:` |
+| D31 | auto-review 接法 | 全局 Auto 预设（A 方案） |
+| D34 | 升级参数 | 去掉 `sandbox_permissions` / `justification` |
+| D35 | sandbox 运行时 | profile 固定 Nix shell + 独立临时目录 |
+| D37 | v1 默认 host | 默认 sandbox，local 用于持久化操作 |
+| D44 | 沙箱语义 | 干净、与 workspace 隔离的执行环境（撤销 overlay） |
+| D45 | Nix 环境来源 | 只用 profile 固定环境（不读 workspace shell 文件） |
+| D46 | TTL | 可配置，默认 30 分钟空闲回收 |
+| D47 | workspace 可见性 | sandbox 不挂载 workspace |
+| D48 | 隔离强度 | 约定隔离（轻量），不做强制 namespace/容器 |
+| D49 | 默认 host | 仍为 `sandbox:*` |
+| D50 | 沙箱工具面 | `sandbox`（reset/status）+ `sandbox_packages`；copy_in/commit 不做工具 |
+| D52 | Nix 环境配置 | `sandbox.packages` + `shellHook` |
+| D53 | 可见性语义 | 不挂载、不作为 cwd，但同用户绝对路径可访问 |
+| D54 | 冲突安全 | 不做强制，靠提示词 |
+| D55 | 待应答路由 | 应答优先；命令可用；`/steer` 旁路 |
+| D56 | 并发待应答 | 串行排队 |
+| D57 | 交互超时 | 分级：approval 1 分钟、question 5 分钟（可配） |
+| D58 | `/steer` 语法 | 内联参数；无文本时设下一条的投递模式 |
+| D59 | 待应答期间的 `/steer` | 只旁路解析，不打断待应答 |
+| D60 | 记忆方案 | AGENTS.md 分层 + memory 工具 |
+| D61 | 记忆写入触发 | 用户显式、模型自主、里程碑/任务结束提炼 |
+| D62 | v1 主动行为 | schedule 提醒 + goal 自动续跑（无 heartbeat） |
+| D63 | 模型分配 | 主 agent 用配置选择的多模态模型；子代理模型由主 agent 选 |
+| D64 | reviewer 成本 | vendor/patch 成独立 reviewer 模型 |
+| D65 | 阶段推进 | 分阶段，每阶段可运行（最终 6 阶段，见 D125） |
+| D66 | memory 工具面 | 单工具 + action |
+| D67 | memory 作用域 | 只全局 |
+| D68 | 记忆提炼 | 便宜子代理执行 |
+| D69 | 图像回退 | 无多模态模型时直接不支持 |
+| D70 | goal 守卫 | 轮次上限 + 手动停止；无 token 预算 |
+| D71 | Nix 代码位置 | 内置于 nokoribi-agent 的 flake |
+| D74 | sandbox 环境构建 | Nix 预构建 `buildEnv` 作为基础 PATH |
+| D75 | 部署验收 | 本地测试通道（loopback HTTP） |
+| D77 | local PATH | 系统 PATH + `extraPackages` |
+| D78 | 测试通道形态 | loopback HTTP + token |
+| D79 | local 权限 | 专用用户 + `NOPASSWD: ALL` sudo，Auto review 兜底 |
+| D80 | workspace 语义 | 默认目录，不强制禁止访问宿主路径 |
+| D81 | sudo 范围 | `NOPASSWD: ALL` |
+| D82 | sudo 审批 | 全部 auto-review 自动判定（仅 reviewer 拒绝才问用户） |
+| D83 | reviewer 模型 | 只给 reviewer 配置两个 tier，不是全局模型分层 |
+| D84 | 审计/回滚 | 只做日志；不做自动回滚 |
+| D86 | sandbox 提权 | 禁止提权（`no_new_privs` + PATH 去 sudo） |
+| D87 | reviewer 策略 | 双阶段：fast 全审 → deny/不确定/sudo → strong 复审 |
+| D88 | goal 创建路径 | 两种都支持（主 agent 工具 / `/goal` 命令） |
+| D89 | `/goal` 职责 | 包含创建 |
+| D90 | 重启后 goal | 自动冷恢复 + re-arm |
+| D91 | `/stop` 范围 | 只停主 agent |
+| D92 | sandbox 作用域 | 每个 session 独立 |
+| D93 | goal 数量 | 允许多个并行 |
+| D94 | goal 结束 | 归档保留会话；主 agent 询问用户；用户命令归档 |
+| D95 | 恢复失败 | 通知用户、保持 tracked、等重试 |
+| D96 | goal 并发上限 | 不限制 |
+| D97 | 模型创建路径 | 通用 `subagent` 工具 + 桥接监控 `goal/changed` |
+| D98 | 归档实现 | 保留 session 文件 + 归档索引（JSONL） |
+| D99 | `/goal clear` | 停止 + 自动归档 |
+| D100 | 归档触发 | 主 agent 提示，用户回复 `/goal archive <前缀>` |
+| D101 | 主会话 goal | 禁止；隐藏 main 的 goal 工具，误建则清除并提示 |
+| D102 | goal 短 id | sessionId 前缀 |
+| D103 | 高危硬确认 | 不需要（完全信任 auto-review） |
+| D104 | sudo 审计 | 命令与结果进 journald，不记录输出 |
+| D105 | 备份 | 不做 |
+| D106 | 测试 token | 固定 token |
+| D107 | `/status` | 摘要 + `/status full` |
+| D108 | web-debug | 不做（取代 D02） |
+| D109 | 看门狗 | sd_notify + systemd `WatchdogSec` |
+| D110 | 升级 | 直接升级，不做快照 |
+| D111 | persona | 用户提供 SOUL.md |
+| D112 | 身份 | 完全自定义身份 |
+| D113 | memory 存储 | 每条一个 Markdown 文件 |
+| D114 | AGENTS.md | 首次 seed 全局 + 工作区两处 |
+| D115 | SOUL.md 位置 | 源码仓库、Nix 打包（运行时不可变） |
+| D116 | SOUL 生效 | 启动时加载 |
+| D117 | 身份范围 | 只替换身份句，保留其他提示词段 |
+| D118 | 配置可变性 | 纯 Nix 只读 |
+| D119 | 测试 token 来源 | Nix option 明文 |
+| D120 | sudo 默认 | 模块默认关闭，显式开启 |
+| D121 | 仓库结构 | pnpm monorepo `packages/*` |
+| D122 | DSH 版本 | 固定 `0.2.1-rc.3`，手动整批升级 |
+| D123 | reviewer 维护 | vendor 源码 + LICENSE + 上游版本标识 |
+| D124 | 构建规范 | tsdown + oxlint + oxfmt + tsc |
+| D125 | 阶段数 | 6 阶段（M1–M6） |
+| D126 | 部署时机 | M6 才部署 |
+| D127 | 验收方式 | 自动化为主 |
+| D128 | 测试框架 | Vitest |
+| D129 | CI | 只 flake checks |
+| D130 | NixOS VM 测试 | 不做 |
+| D131 | 子代理审批 | 也桥接到 IM 问用户（需补丁） |
+| D132 | outbox 语义 | at-least-once |
+| D133 | 测试通道协议 | 长轮询 |
+
+---
+
+## 3.2 详细决策记录（按讨论顺序）
+
+### 第一轮：总体方向（8 问）
+
+- **D01 精简层次** — 选项：运行时精简 + 薄启动器 / 只做运行时精简 / 完整 fork / 另写 harness。选择：**运行时精简 + 薄启动器**。备注：安装物也精简；启动器只依赖所选包与 vendored profile-boot。
+- **D02 Web 界面** — 选项：生产纯 IM + 按需 Web 调试 profile / 完全不要 / 保留完整 Web。选择：**生产纯 IM + 按需 Web 调试 profile**。状态：**被 D108 取代**（最终不做 web-debug）。
+- **D03 IM 渠道** — 选项：QQ/Milky、AstrBot、Telegram、Discord、飞书、先留抽象接口。选择：**先只留抽象渠道接口**。备注：真实适配器后置；本地测试通道后来作为验收手段（D75/D78）。
+- **D04 接入形态** — 选项：进程内插件 / 独立 gateway + 自定义 IPC / 独立 gateway + SDK / 独立 gateway + Web API。选择：**进程内 Cordis host 插件**。备注：能直接 `steer`/`followup`、订阅事件、注册审批/Prompt 应答者；SDK 不暴露 steer。
+- **D05 默认注入** — 选项：默认 steer / 默认 steer + 合并 / 默认 followup / 可配置。选择：**默认 steer 到最近 step 边界；仅显式参数才取消当前轮**。备注：等价于 teammate `send_message` 的语义；工具执行不被打断。
+- **D06 参数形式** — 多选。选择：**IM 命令前缀 + 代码层调用参数**。
+- **D07 SSH 形态** — 选项：`bash` 加 `host` / 独立 ssh 工具 / 全走远程 / 其他。选择：**`bash` 工具加可选 `host`，本地/远程统一入口**。备注：实现后置（D12）。
+- **D08 会话与权限** — 选项：单用户单主会话 / 按 IM 会话建 session / 主+子会话 / 多人。选择：**单用户、单常驻主会话**。
+
+### 第二轮：v1 边界（6 问）
+
+- **D09 部署** — 选项：NixOS + systemd / 现有 Linux + systemd / 容器 / 本机前台。选择：**NixOS 主机 + 声明式 systemd 服务**。
+- **D10 模型** — 选项：API Key / 复用账号登录态 / 两者 / 其他。选择：**DeepSeek 官方 API Key（`DEEPSEEK_API_KEY`）**。
+- **D11 v1 长程能力** — 多选。选择：**先只做消息闭环 + 工具 + 持久会话**。状态：后续讨论扩展了 v1（加入 sandbox、auto-review、memory、schedule、goal、NixOS 等）；以最终 6 阶段（D125）为准。
+- **D12 SSH 首轮** — 自定义：**第一轮先不做 SSH 远程执行**。状态：最终有效；SSH 后置。
+- **D13 渠道能力** — 多选。选择：**纯文本进出、审批与提问（文本回复）、图片/附件**。备注：最终仍不做流式；图片最终入站直接给模型（D16），无流式。
+- **D14 控制命令** — 多选。选择：`/stop`、`/status`、`/compact`、`/goal ...`、`/clear` 或 `/new`、`/steer`、`/queue`。备注：`/compact` 与 `/goal` 后续改为桥接自有语义（见 D89 等）。
+
+### 第三轮：出站/goal/Nix 初版
+
+- **D15 出站结构（初版）** — 自定义：**由一个 subagent 进行总结，接受主 agent 的输入，调用 `send_message` TOOL Call**。状态：**被 D20 取代**（主 agent 直接回复）。
+- **D16 媒体** — 选择：**入站图片直接给模型看**。备注：需多模态模型；没有时按 D69 不支持。
+- **D17 `/clear`** — 选择：**新建主会话，旧会话归档保留**。
+- **D18 goal 形态（初版）** — 自定义：**goal 由子代理跑，主代理随时处理新的消息**。备注：后续细化为 D22、D88–D102。
+- **D19 Nix 集成** — 选择：**nur-packages 加包 + NixOS 模块；专用用户 + `/var/lib/nokoribi-agent`；agenix 管密钥**。
+
+### 第四轮：出站细化与 goal 形态
+
+- **D20 出站结构（最终）** — 选择：**主 agent 直接回复**：每轮结束把该轮最后一条非空 assistant 文本镜像为一条 IM 消息；goal 子代理通过 report 回流主 agent，主 agent 汇总转述。
+- **D21 播报时机** — 多选：每轮结束回一条结果、长任务按里程碑、错误/阻塞立即播报。选择：**全部三项**。
+- **D22 goal 子代理形态** — 选择：**主 agent spawn continuable 子代理，子代理自持 goal 并被 round-driver 续跑**；需要 daemon 启动时恢复 cold goal 子代理。
+- **D23 发送工具名** — 选择：**`send_to_user`**（避免与内置 `send_message` 冲突）。备注：v1 主要用于主动补发/未来附件，常规回复走自动镜像。
+
+### 第五轮：shell host 与 sandbox（大量迭代）
+
+- **D24 host 路由架构** — 用户提案：shell 工具带 `host`；host 由 local/local-sandbox/ssh/client 等插件注册并按 host 路由；新增 `get_available_shell_host`。设计确认：**可以，但 DSH 的 `ctx.shell` 是单 provider**，因此 host 插件不能各自注册 `ctx.shell`；改为 **一个 `shell-router` 提供 `ctx.shellHosts` 并作为唯一 `ctx.shell` provider**，host provider 注册到 router，`bash` 工具走 `ctx.shellHosts` 并带 `host` 参数。
+- **D25 host 落地范围** — 选择：**v1 就做 router + `local` + `sandbox` + 发现工具**；SSH 后续只加 provider。
+- **D26 发现工具** — 选择：**独立模型工具 + service API**（`get_available_shell_host`）。
+- **D27 SSH 寻址** — 自定义：**模型只选 host id，但 host id 携带路由前缀**（可看出执行来源）。
+- **D28 默认 host（初版）** — 选择：`sandbox:workspace`。最终默认仍是 sandbox（D49），但命名/语义按 D29、D44 修正。
+- **D29 host id 前缀** — 选择：`local:` / `sandbox:` / `ssh:` / `client:`。
+- **D30 非沙箱 host 授权（初版）** — 自定义：**审批复用 experimental-auto-review，非置信时再向用户要求单次授权**。状态：被 D31/D79/D82 的全局 Auto 方案覆盖（不再有 per-host 授权）。
+- **D31 auto-review 接法** — 选项：A 全局 Auto 预设 / B 裁剪成 host gate / C 混合。选择：**A. 全局 Auto 预设**。备注：从此 host 选择本身不再单独授权；所有工具调用都过 reviewer。
+- **D32 host 授权粒度** — 用户选择"其他"（无补充）。在 A 方案下该问题失效。
+- **D33 sandbox 语义（初版）** — 自定义：**沙箱随时可能被回收重置，不保证持久化（也不保证一定重置，必要时可手动 reset）**。
+- **D34 升级参数** — 选择：**bash 工具去掉 `sandbox_permissions` / `justification`**。
+- **D35 sandbox 运行时** — 选择：**独立的 nix shell + 临时目录**（后来明确为 profile 固定环境，D45）。
+- **D36 sandbox 持久化（初版）** — 选择：**临时 overlay + 手动提交**。状态：**撤销**（D44）。
+- **D37 v1 默认 host** — 选择：**v1 默认 sandbox，local 用于持久化操作**。
+- **D38 sandbox 文件模型（初版）** — 选择：**overlayfs：workspace 为 lower，temp 为 upper**。状态：**撤销**（D44）。
+- **D39 Nix 环境来源（初版）** — 自定义：**从工作区里的 shell 文件开始，允许模型在不修改 shell 文件的情况下临时新增包**。状态：来源部分被 D45 取代；"临时加包"由 D41 承接。
+- **D40 sandbox 控制面** — 选择：**只给模型工具**。
+- **D41 临时加包** — 选择：**`sandbox_packages` 工具，状态保留到 reset**。
+- **D42 生命周期（初版）** — 选择：**落盘 + 空闲自动回收**。最终有效（D46）。
+- **D43 commit 冲突（初版）** — 选择：**对比基线，冲突时拒绝**。状态：因 D50 取消 commit 工具而失效；最终只靠提示词（D54）。
+- **D44 overlay 撤销** — 自定义：**回撤关于沙箱 overlay 的决定，沙箱就是一个干净的执行环境，跟 workspace 隔离**。影响：取代 D36、D38；沙箱不再与 workspace 共享文件视图。
+- **D45 Nix 环境来源（最终）** — 选择：**只用 profile 固定环境**（不读 workspace shell 文件）。
+- **D46 TTL** — 选择：**可配置，默认 30 分钟空闲回收**。
+- **D47 workspace 可见性** — 选择：**完全不可见，显式拷入拷出**。随后 D53 澄清"不可见"= 不挂载/不作为 cwd，但同用户路径可访问。
+- **D48 隔离强度** — 选择：**约定隔离（轻量）**。
+- **D49 默认 host（最终）** — 选择：**sandbox 仍为默认**。
+- **D50 沙箱工具面（最终）** — 自定义：**`sandbox` 多 action + `sandbox_packages`；但 copy_in 和 commit 不做工具，让模型通过 shell 命令自己管理**。
+- **D51 commit 覆盖策略** — 选择：**默认拒绝，需显式 overwrite**。状态：在无 commit 工具后失效，最终仅提示词约束（D54）。
+- **D52 Nix 环境配置** — 选择：**`sandbox.packages` + `shellHook`**。
+- **D53 可见性语义** — 选择：**不挂载但路径可访问**（`DSH_SANDBOX_DIR` / `DSH_WORKSPACE_DIR` 暴露给模型，用 cp/rsync）。
+- **D54 冲突安全落点** — 选择：**不做强制，靠提示词**。
+
+### 第六轮：渠道交互语义
+
+- **D55 待应答路由** — 选择：**应答优先 + 命令可用 + `/steer` 旁路**。
+- **D56 并发待应答** — 选择：**串行排队，一次一个提示**。
+- **D57 超时** — 选择：**分级短超时：approval 1 分钟、question 5 分钟**（可配）。
+- **D58 `/steer` 语法** — 选择：**内联参数 ` /steer <文本>`；无文本时设下一条的投递模式**。
+- **D59 待应答期间的 `/steer`** — 选择：**只旁路解析，不打断待应答**；真正注入要等应答解决、轮次恢复。
+
+### 第七轮：记忆、主动行为、模型成本
+
+- **D60 记忆方案** — 选择：**AGENTS.md 分层 + memory 工具**。
+- **D61 记忆写入触发** — 多选：用户显式要求、模型自主判断、里程碑/任务结束提炼。选择：**三项全部**。
+- **D62 主动行为 v1** — 多选：schedule 提醒、heartbeat、goal 自动续跑、都后置。选择：**schedule 提醒 + goal 自动续跑**；不做 heartbeat。
+- **D63 模型分配** — 自定义：**主代理用支持图像输入的模型，由配置选择；其他 subagent 的模型让主代理选择**。
+- **D64 reviewer 成本** — 选择：**改成独立便宜 reviewer**（后来细化为 reviewer-only 双 tier，D83/D85/D87）。
+- **D65 阶段推进** — 选择：**分阶段推进，每阶段可运行**（最终 6 阶段 D125）。
+- **D66 memory 工具面** — 选择：**单工具 + action**。
+- **D67 memory 作用域** — 选择：**只全局**。
+- **D68 记忆提炼执行者** — 选择：**便宜子代理提炼**。
+- **D69 图像回退** — 选择：**无多模态模型时直接不支持**（明确告知用户）。
+- **D70 goal 成本守卫** — 选择：**轮次上限 + 手动停止**（`maxGoalRounds`、`/stop`、`/goal pause`）；无 token 预算。
+
+### 第八轮：NixOS 与安全
+
+- **D71 Nix 代码位置** — 选择：**nokoribi-agent 内置 flake**，nur-packages 引用/转发。
+- **D72 workspace 权限（提问）** — 自定义提问：**独立 workspace、不碰宿主目录，但这样隔离后 shell 工具怎么工作？** 状态：讨论澄清（见 05/07/12）；最终 D79 选择专用用户 + sudo。
+- **D73 systemd 硬化（初版）** — 选择：**中等硬化**。状态：**被 D79 实质取代**（为让 local host 执行任意命令并允许 sudo，不再做文件系统硬化）。
+- **D74 sandbox 环境构建** — 选择：**Nix 预构建 `buildEnv` 基础 PATH**；临时加包才运行时 `nix shell`。
+- **D75 部署验收** — 选择：**本地测试通道**（不是 web-debug）。
+- **D76 local host 目标** — 自定义：**希望 shell 的 local host 可以在主机上执行任何命令**。最终通过 D79/D81 实现（专用用户 + NOPASSWD ALL）。
+- **D77 local PATH** — 选择：**系统 PATH + `extraPackages`**。
+- **D78 测试通道** — 选择：**loopback HTTP + token**。
+- **D79 local 权限模型** — 自定义：**专用用户，允许 sudo（NOPASSWD），通过 auto-review 兜底**。
+- **D80 workspace 语义** — 选择：**默认目录，不强制禁止访问宿主路径**。
+- **D81 sudo 范围** — 选择：**`NOPASSWD: ALL`**（`nokoribi ALL=(ALL) NOPASSWD: ALL`）。
+- **D82 sudo 审批** — 选择：**全部 auto-review 自动判定**；reviewer 拒绝时才问用户。
+- **D83 reviewer 模型命名** — 自定义：**不要叫主模型/便宜模型，可以配置两个 Tier**。
+- **D84 审计与回滚** — 选择：**只做日志**；不做自动回滚。
+- **D85 Tier 范围澄清** — 自定义：**两个 tier 只给 review model 可选，不是所有模型都只分两个 tier**。
+- **D86 sandbox 提权** — 选择：**sandbox 禁提权**（`no_new_privs` + PATH 去 sudo）；local 保留 sudo。
+- **D87 reviewer 策略** — 选择：**双阶段：fast 全审 → deny/不确定/sudo → strong 复审 → 仍拒绝才问用户**。
+
+### 第九轮：goal 生命周期（多 goal）
+
+- **D88 goal 创建路径** — 选择：**两种都支持**（主 agent 工具 / `/goal` 命令）。
+- **D89 `/goal` 职责** — 选择：**包含创建**。
+- **D90 重启后 goal** — 选择：**自动冷恢复 + re-arm**（接受额外一轮）。
+- **D91 `/stop` 范围** — 选择：**只停主 agent**；goal 用 `/goal pause`/`clear`。
+- **D92 sandbox 作用域** — 选择：**每个 session 独立**。
+- **D93 goal 数量** — 选择：**允许多个并行**。
+- **D94 goal 结束处理** — 自定义：**保留，但要控制 subagent 数量，转成归档形式仅在 debug 查看；主 agent 在 goal 完成后询问用户是否归档；归档则删除 subagent、保留记录存档**。最终落点见 D98/D100。
+- **D95 恢复失败** — 选择：**通知用户、保持 tracked、等 `/goal resume` 或新消息重试**。
+- **D96 goal 并发上限** — 选择：**不限制**。
+- **D97 模型创建路径** — 选择：**通用 `subagent` 工具 + 桥接监控 `goal/changed`**（不注册专用 `start_goal` 工具）。
+- **D98 归档实现** — 选择：**保留会话文件 + 归档索引**（DSH 无删除会话 API；debug profile 不存在，归档按 session id 查文件）。
+- **D99 `/goal clear`** — 选择：**停止 + 自动归档**。
+- **D100 归档触发** — 选择：**主 agent 提示 + 用户命令**（`/goal archive <前缀>`；不注册 `archive_goal` 工具）。
+- **D101 主会话 goal** — 选择：**禁止**；隐藏主 agent 的 goal 工具；若出现则桥接清除并提示。
+- **D102 goal 短 id** — 选择：**sessionId 前缀**。
+
+### 第十轮：最终安全/运维/提示词/配置/构建/测试
+
+- **D103 高危硬确认** — 选择：**不需要**；完全信任 auto-review，不加模式拦截。
+- **D104 sudo 审计** — 选择：**默认命令审计**（命令与结果进 journald，不记录输出）。
+- **D105 备份** — 选择：**不做**。
+- **D106 测试 token** — 选择：**固定 token**。
+- **D107 `/status`** — 选择：**摘要 + `/status full`**。
+- **D108 web-debug** — 选择：**不做**。状态：取代 D02。
+- **D109 看门狗** — 选择：**sd_notify + `WatchdogSec`**。
+- **D110 升级** — 选择：**直接升级，不做快照**。
+- **D111 persona** — 自定义：**我提供 SOUL.md**。
+- **D112 身份** — 选择：**完全自定义身份**。
+- **D113 memory 存储** — 选择：**每条一个 Markdown 文件**。
+- **D114 AGENTS.md** — 选择：**首次 seed 全局 + 工作区两处模板**。
+- **D115 SOUL.md 位置（澄清后）** — 自定义最初"项目里的文件"；确认选择：**源码仓库、Nix 打包（运行时不可变）**。
+- **D116 SOUL 生效** — 选择：**启动时加载**。
+- **D117 身份范围** — 选择：**只替换身份句**（`includeHarnessIdentity=false`，其他提示词段保留）。
+- **D118 配置可变性** — 选择：**纯 Nix 只读**（改配置需 `nixos-rebuild`）。
+- **D119 测试 token 来源** — 选择：**Nix option 明文**。
+- **D120 sudo 默认** — 选择：**模块默认关闭，显式开启**。
+- **D121 仓库结构** — 选择：**pnpm monorepo `packages/*`**。
+- **D122 DSH 版本** — 选择：**固定版本，手动升级**（`0.2.1-rc.3`）。
+- **D123 reviewer 维护** — 选择：**vendor 源码**。
+- **D124 构建规范** — 选择：**tsdown + oxlint + oxfmt + tsc --noEmit**。
+- **D125 阶段数** — 选择：**6 阶段（M1–M6）**。
+- **D126 部署时机** — 选择：**M6 才部署**。
+- **D127 验收方式** — 选择：**自动化为主**。
+- **D128 测试框架** — 选择：**Vitest**。
+- **D129 CI** — 选择：**只 flake checks**。
+- **D130 NixOS VM 测试** — 选择：**不做**。
+- **D131 子代理审批** — 选择：**也桥接到 IM 问用户**（需要 patch auto-review 的 child `never` 行为；全局串行提示，标明 goal 短 id）。
+- **D132 outbox 语义** — 选择：**at-least-once**（重启重发，极端可能重复）。
+- **D133 测试通道协议** — 选择：**长轮询**（`GET /v1/outbound?after=seq`）。
+
+---
+
+## 3.3 未逐条确认、默认采纳的设计提案
+
+以下内容在讨论中提出、用户未反对，作为实现默认方案；若实施时改变需回写文档。
+
+1. **ChannelDriver 契约**：`start/stop/send`、capabilities（markdown、maxTextLength、inboundImages、outboundFiles）、标准 `InboundMessage`（channelId/chatId/senderId/messageId/text/images/receivedAt/delivery）。见 06。
+2. **入站幂等**：持久去重 `channelId+messageId`；先记后注入（接受"崩溃丢失极小窗口"以换取不重复处理）。见 05/06。
+3. **出站投递**：每轮最后一条非空 assistant 文本；长文本按渠道上限分段、尽量不拆代码块；按 markdown 能力降级；⚠️ 系统通知只覆盖 error/aborted（非用户触发）/goal blocked/daemon 重启。见 06。
+4. **交互 broker**：提示前缀 🔐（审批）/ ❓（提问）/ ⚠️（通知）；回复解析编号/允许/拒绝/自定义文本；超时拒绝/报错；全局串行。见 06。
+5. **启动/恢复顺序**：单实例锁 → 加载 state → resume main → 挂 channel 并缓冲 → 恢复 goal 子代理 → 清空待应答并通知 → 重发 outbox → 放行缓冲 → schedule 逾期交付。见 05。
+6. **状态文件**：`agent-state.json` 保存 mainSessionId、goals[]、lastActiveChat、cleanShutdown、outbox 游标等；原子写。见 05。
+7. **提示词分段**：环境/hosts、IM 交互、memory、goal、schedule、safety 六段静态 section；动态值走 runtime context（time-context）。见 09。
+8. **memory 规范**：全局 `$DSH_HOME/memory/entries/<id>.md` + frontmatter；单工具四 action；只存持久事实；提炼子代理去重写入。见 09。
+9. **AGENTS.md**：首次启动 seed 全局与工作区模板，存在不覆盖；SOUL.md 不进 AGENTS。见 09。
+10. **NixOS module 选项表**（models/hosts/review/approval/channel/memory/goal/schedule/prompt/sudo/log 等）。见 12。
+11. **构建/装配**：bundle patch 行 id 稳定；Nix 生成 overlay；launcher 读打包 profile；store 目录布局。见 04。
+12. **测试策略分层**：Vitest 单元/集成、进程级恢复场景、flake checks；无 VM/CI。见 13。
+13. **阶段验收标准**：M1–M6 的交付物与验收（见 14）。
+
+## 3.4 被取代 / 撤销索引
+
+详细说明见 [16 被取代/否决与术语](16-superseded-and-glossary.md)。摘要：
+
+- D02（Web 调试 profile）→ D108 不做。
+- D15（summarizer subagent 出站）→ D20 主 agent 直接回复。
+- D28（默认 sandbox:workspace 命名）→ D29/D44/D49 语义修正。
+- D30（per-host 授权）→ D31/D82 全局 Auto。
+- D36/D38（overlay 沙箱）→ D44 撤销。
+- D39（workspace shell 文件）→ D45 profile 固定环境。
+- D43/D51（commit 基线/覆盖策略）→ D50/D54 无 commit 工具、提示词约束。
+- D73（中等 systemd 硬化）→ D79/D81 为 sudo/local 全权限取消。
+- D11（v1 仅消息闭环）→ D125 六阶段扩展。
