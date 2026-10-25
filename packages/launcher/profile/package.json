@@ -1,0 +1,11 @@
+{
+    "name": "nokoribi-agent-profile",
+    "private": true,
+    "dsh": {
+        "profile": {
+            "bundles": [
+                "@nokoribi/bundle"
+            ]
+        }
+    }
+}

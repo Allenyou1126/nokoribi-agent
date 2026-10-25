@@ -1,0 +1,188 @@
+# Nokoribi Agent M1 bundle.
+#
+# This is a complete Cordis tree, not a layer over dsh-base. Rows are loaded in
+# order; `inject` declarations decide activation. Keep row ids stable: the NixOS
+# module overrides rows by id.
+
+- insert:
+      - id: timer
+        name: "@deepseek-ai/cordis-plugin-timer"
+
+      - id: llm
+        name: "@deepseek-ai/dsh-llm"
+
+      - id: llm-deepseek
+        name: "@deepseek-ai/dsh-llm-deepseek-api-key"
+        config:
+            apiKeyEnv: DEEPSEEK_API_KEY
+
+      - id: llm-retry
+        name: "@deepseek-ai/dsh-llm-retry"
+
+      - id: session
+        name: "@deepseek-ai/dsh-session"
+
+      - id: sessions
+        name: "@deepseek-ai/dsh-session-persistence-jsonl"
+        config:
+            root: !!js dshHomePath('sessions')
+            compression: none
+
+      - id: session-projection
+        name: "@deepseek-ai/dsh-session-projection"
+
+      - id: session-title
+        name: "@deepseek-ai/dsh-session-title"
+        config:
+            fallbackMaxWords: 5
+            fallbackMaxBytes: 40
+            maxTitleBytes: 80
+
+      - id: session-checkpoint-policy
+        name: "@deepseek-ai/dsh-session-checkpoint-policy"
+
+      - id: token-meter
+        name: "@deepseek-ai/dsh-token-meter"
+
+      - id: compaction-basic
+        name: "@deepseek-ai/dsh-compaction-basic"
+
+      - id: compaction-pruner
+        name: "@deepseek-ai/dsh-compaction-tool-result-pruner"
+
+      - id: agent
+        name: "@deepseek-ai/dsh-agent"
+
+      - id: tools
+        name: "@deepseek-ai/dsh-tools"
+
+      - id: system-prompt
+        name: "@deepseek-ai/dsh-system-prompt"
+        config:
+            includeHarnessIdentity: false
+            includeRuntimeContext: false
+            personaPrefix: ""
+
+      - id: agent-instructions
+        name: "@deepseek-ai/dsh-agent-instructions"
+        config:
+            maxBytes: 65536
+
+      - id: working-directory
+        name: "@deepseek-ai/dsh-working-directory"
+
+      - id: commands
+        name: "@deepseek-ai/dsh-commands"
+
+      - id: filesystem
+        name: "@deepseek-ai/dsh-fs-local"
+
+      - id: fs-observation-policy
+        name: "@deepseek-ai/dsh-fs-observation-policy"
+
+      - id: tool-fs
+        name: "@deepseek-ai/dsh-tool-fs"
+        config:
+            read: true
+            readImage: false
+            write: true
+            edit: true
+
+      - id: tool-fs-search
+        name: "@deepseek-ai/dsh-tool-fs-search"
+        config:
+            sampleOverCapGlobResults: false
+
+      - id: subprocess
+        name: "@deepseek-ai/dsh-subprocess-local"
+
+      - id: shell-env
+        name: "@deepseek-ai/dsh-shell-env"
+
+      - id: jobs
+        name: "@deepseek-ai/dsh-jobs-local"
+
+      - id: tool-jobs
+        name: "@deepseek-ai/dsh-tool-jobs"
+
+      - id: user-approval
+        name: "@deepseek-ai/dsh-user-approval"
+        config:
+            policy: never
+
+      - id: user-questions
+        name: "@deepseek-ai/dsh-user-questions"
+
+      - id: tool-todo
+        name: "@deepseek-ai/dsh-tool-todo"
+        config:
+            allowParallelInProgress: true
+
+      - id: tool-call-timeout-policy
+        name: "@deepseek-ai/dsh-tool-call-timeout-policy"
+
+      - id: spill
+        name: "@deepseek-ai/dsh-spill-local"
+        config:
+            root: !!js dshHomePath('spill')
+
+      - id: spill-policy
+        name: "@deepseek-ai/dsh-spill-policy"
+
+      - id: repeat-tool-reminder
+        name: "@deepseek-ai/dsh-repeat-tool-reminder"
+
+      - id: attachment-local
+        name: "@deepseek-ai/dsh-attachment-local"
+
+      - id: agent-loop
+        name: "@deepseek-ai/dsh-agent-loop"
+        config:
+            agents: []
+
+      # --- Nokoribi rows ---------------------------------------------------
+
+      - id: nokoribi-prompt
+        name: "@nokoribi/prompt"
+        config:
+            soulFile: !!js process.env.NOKORIBI_SOUL_FILE ?? ''
+            templatesDir: !!js process.env.NOKORIBI_TEMPLATES_DIR ?? ''
+            workspace: !!js process.env.NOKORIBI_WORKSPACE ?? dshHomePath('workspace')
+            seedGlobalAgents: true
+            seedWorkspaceAgents: true
+
+      - id: nokoribi-shell-router
+        name: "@nokoribi/shell-bash"
+        config:
+            defaultHost: local:workspace
+
+      - id: nokoribi-shell-host-local
+        name: "@nokoribi/shell-host-local"
+        config:
+            workspace: !!js process.env.NOKORIBI_WORKSPACE ?? dshHomePath('workspace')
+
+      - id: nokoribi-channel-core
+        name: "@nokoribi/channel-core"
+        config:
+            allowedSenders: !!js (process.env.NOKORIBI_ALLOWED_SENDERS ?? 'local-user').split(',')
+            allowedChats: !!js (process.env.NOKORIBI_ALLOWED_CHATS ?? 'local').split(',')
+            defaultChatId: local
+
+      - id: nokoribi-channel-local-test
+        name: "@nokoribi/channel-local-test"
+        config:
+            host: 127.0.0.1
+            port: !!js Number(process.env.NOKORIBI_TEST_PORT ?? 8787)
+            token: !!js process.env.NOKORIBI_TEST_TOKEN ?? ''
+            senderId: local-user
+            chatId: local
+            longPollTimeoutMs: 25000
+
+      - id: nokoribi-agent-app
+        name: "@nokoribi/agent-app"
+        config:
+            provider: !!js process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
+            model: !!js process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
+            workspace: !!js process.env.NOKORIBI_WORKSPACE ?? dshHomePath('workspace')
+            shutdownGraceMs: !!js Number(process.env.NOKORIBI_SHUTDOWN_GRACE_MS ?? 20000)
+            version: !!js process.env.NOKORIBI_VERSION ?? '0.0.0-dev'
