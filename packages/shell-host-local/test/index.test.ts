@@ -92,6 +92,13 @@ describe("shell-host-local", () => {
         });
     });
 
+    it("does not register when disabled", () => {
+        const ctx = createHostContext();
+        const dispose = apply(ctx, { enabled: false });
+        expect(ctx.shellHosts.list()).toEqual([]);
+        dispose();
+    });
+
     it("registers with the shell router and disposes cleanly", () => {
         const ctx = createHostContext();
         const dispose = apply(ctx, {});
@@ -127,9 +134,11 @@ describe("shell-host-local", () => {
 
     it("validates the default host id and extraPackages in configuration", () => {
         const parsed = Config({}) as unknown as {
+            enabled: boolean;
             id: string;
             extraPackages: string[];
         };
+        expect(parsed.enabled).toBe(true);
         expect(parsed.id).toBe(LOCAL_HOST_ID);
         expect(parsed.extraPackages).toEqual([]);
         const withPackages = Config({
