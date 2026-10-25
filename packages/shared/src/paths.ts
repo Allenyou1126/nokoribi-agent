@@ -5,6 +5,7 @@ import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 /** Resolved runtime paths for one daemon instance. */
 export interface HomePaths {
     readonly home: string;
+    readonly homeDir: string;
     readonly stateDir: string;
     readonly runDir: string;
     readonly sessionsDir: string;
@@ -35,6 +36,7 @@ export function resolveHomePaths(
     const workspaceDir = configuredWorkspace ?? join(home, "workspace");
     return {
         home,
+        homeDir: join(home, "home"),
         stateDir,
         runDir,
         sessionsDir: join(home, "sessions"),
@@ -59,6 +61,7 @@ export function resolveHomePaths(
 export async function ensureHomeDirs(paths: HomePaths): Promise<void> {
     const { mkdir } = await import("node:fs/promises");
     for (const dir of [
+        paths.homeDir,
         paths.stateDir,
         paths.runDir,
         paths.archiveDir,

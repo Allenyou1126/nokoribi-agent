@@ -5,4 +5,5 @@ export * from "./paths.js";
 export * from "./recent.js";
 export * from "./schemas.js";
 export * from "./state.js";
+export * from "./systemd.js";
 export * from "./version.js";

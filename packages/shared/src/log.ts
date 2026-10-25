@@ -12,12 +12,41 @@ export type LogFields = Record<string, LogFieldValue>;
 /** Sink receiving one fully formatted line. */
 export type LogSink = (line: string) => void;
 
+/** Ordered set of accepted log levels. */
+export const LOG_LEVELS: readonly LogLevel[] = [
+    "debug",
+    "info",
+    "warn",
+    "error",
+];
+
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
     debug: 10,
     info: 20,
     warn: 30,
     error: 40,
 };
+
+/**
+ * Parse one configured log level.
+ * @param value - candidate text, usually from `NOKORIBI_LOG_LEVEL`.
+ * @returns the normalized level, or undefined for an empty/invalid value.
+ */
+export function parseLogLevel(value: string | undefined): LogLevel | undefined {
+    const normalized = value?.trim().toLowerCase();
+    return LOG_LEVELS.find((level) => level === normalized);
+}
+
+/**
+ * Resolve the process log threshold.
+ * @param env - environment to inspect.
+ * @returns the configured level, defaulting to `info`.
+ */
+export function resolveLogLevel(
+    env: Record<string, string | undefined> = process.env
+): LogLevel {
+    return parseLogLevel(env.NOKORIBI_LOG_LEVEL) ?? "info";
+}
 
 function formatValue(value: LogFieldValue): string {
     if (typeof value === "string") {
@@ -38,15 +67,17 @@ function formatFields(fields: LogFields | undefined): string {
 export class Logger {
     private readonly moduleName: string;
     private readonly sink: LogSink;
+    private readonly level: LogLevel;
     private readonly threshold: number;
 
     constructor(
         moduleName: string,
         sink: LogSink = (line) => process.stderr.write(line),
-        level: LogLevel = "info"
+        level: LogLevel = resolveLogLevel()
     ) {
         this.moduleName = moduleName;
         this.sink = sink;
+        this.level = level;
         this.threshold = LEVEL_WEIGHT[level];
     }
 
@@ -55,13 +86,7 @@ export class Logger {
         return new Logger(
             `${this.moduleName}.${moduleName}`,
             this.sink,
-            this.threshold === LEVEL_WEIGHT.debug
-                ? "debug"
-                : this.threshold === LEVEL_WEIGHT.info
-                  ? "info"
-                  : this.threshold === LEVEL_WEIGHT.warn
-                    ? "warn"
-                    : "error"
+            this.level
         );
     }
 
