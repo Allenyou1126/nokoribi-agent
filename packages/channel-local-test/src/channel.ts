@@ -335,6 +335,7 @@ export class LocalTestChannel implements ChannelDriver {
         }
         const timeoutMs = Math.min(60_000, timeoutSeconds * 1000);
         const items = await this.channels.waitForOutbound(after, timeoutMs);
+        const lastSeq = items.at(-1)?.seq;
         sendJson(response, 200, {
             items: items.map((item) => ({
                 seq: item.seq,
@@ -345,7 +346,10 @@ export class LocalTestChannel implements ChannelDriver {
                     ? {}
                     : { interactionId: item.interactionId }),
             })),
-            nextSeq: this.channels.nextOutboxSeq,
+            // A concurrent enqueue can advance nextOutboxSeq after the
+            // history read; report a cursor consistent with the returned
+            // items so a client cannot skip an unseen sequence.
+            nextSeq: lastSeq === undefined ? after : lastSeq + 1,
         });
     }
 }

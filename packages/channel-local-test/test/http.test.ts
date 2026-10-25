@@ -192,5 +192,12 @@ describe("local test channel", () => {
             ],
             nextSeq: 3,
         });
+        const empty = await fetch(`${url}/v1/outbound?after=2&timeout=0`, {
+            headers: auth(),
+        });
+        await expect(empty.json()).resolves.toEqual({
+            items: [],
+            nextSeq: 2,
+        });
     });
 });
