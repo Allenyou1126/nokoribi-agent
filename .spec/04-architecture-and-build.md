@@ -79,14 +79,15 @@ nokoribi-agent/
 核心：
 
 - cordis 基础：timer、include、loader（不启用 HMR；生产不需要模块热替换）。
-- `dsh-llm` + `dsh-llm-deepseek`（API Key 适配器）+ `dsh-llm-retry`。
-- `dsh-session` + `dsh-session-persistence-jsonl` + `dsh-session-projection` + `dsh-session-projection-cache` + `dsh-session-title`。
-- `dsh-agent` + `dsh-agent-loop` + 相关 invariants。
-- `dsh-tools`、`dsh-system-prompt`、`dsh-agent-instructions`、`dsh-time-context`。
+- `dsh-llm` + `dsh-llm-deepseek-api-key`（实际 API Key 适配器名）+ `dsh-llm-retry`。
+- `dsh-session` + `dsh-session-persistence-jsonl` + `dsh-session-projection` + `dsh-session-title` + `dsh-session-checkpoint-policy`。
+  0.2.1-rc.3 没有 `dsh-session-projection-cache`；投影缓存由 checkpoint policy 承担。
+- `dsh-agent` + `dsh-agent-loop`。
+- `dsh-tools`、`dsh-system-prompt`、`dsh-agent-instructions`；`dsh-time-context` 留到 M5。
 - `dsh-fs-local`、`dsh-fs-observation-policy`、`dsh-tool-fs`、`dsh-tool-fs-search`。
 - `dsh-jobs-local`、`dsh-tool-jobs`。
 - `dsh-shell-env`（DSH_* 环境事实；我们的 bash 工具使用它，但 `ctx.shell` 由 router 提供）。
-- `dsh-user-approval`、`dsh-user-questions`、`dsh-tool-ask-user`。
+- `dsh-user-approval`、`dsh-user-questions`；`dsh-tool-ask-user` 在 M1 不挂载（没有应答 UI）。
 - `dsh-commands`、`dsh-command-compact`。
 - `dsh-compaction-basic`、`dsh-compaction-tool-result-pruner`、`dsh-token-meter`。
 - `dsh-goal`、`dsh-tool-goal`、`dsh-goal-round-driver`（不挂 `dsh-command-goal`，`/goal` 由我们实现）。
@@ -94,9 +95,10 @@ nokoribi-agent/
 - `dsh-subagent`、`dsh-subagent-spawn-in-process`、`dsh-tool-subagent`、`dsh-tool-subagent-control`、`dsh-tool-subagent-report`。
 - `dsh-permission-presets`、`dsh-working-directory`、patched `experimental-auto-review`。
 - `dsh-tool-todo`、`dsh-tool-present`（present 用于交付物；是否启用可在配置层覆盖）。
-- `dsh-attachment` + `dsh-attachment-local`（入站图片）。
+- `dsh-attachment`（能力/类型包）+ `dsh-attachment-local`（存储 provider）；M1 不启用入站图片。
 - `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`（技能能力保留，v1 不重点使用）。
-- `dsh-spill-local` + `dsh-spill-policy`、`dsh-session-checkpoint-policy`、`dsh-timeout-policy`、`dsh-repeat-tool-reminder`、`dsh-scope`、`dsh-atomic-write` 等辅助行。
+- `dsh-spill-local` + `dsh-spill-policy`、`dsh-session-checkpoint-policy`、`dsh-tool-call-timeout-policy`（实际名）、`dsh-repeat-tool-reminder` 等辅助行。
+- `dsh-scope`、`dsh-atomic-write` 是库而不是可加载行；作为编译期/运行期依赖保留。
 - 可选：`dsh-tool-web` + `dsh-web-search-deepseek` + `dsh-web-fetch-http`（联网能力；是否 v1 启用需在配置层决定）。
 - 可选：`dsh-mcp-client`（v1 不纳入，后续可加）。
 
@@ -128,13 +130,19 @@ nokoribi-agent/
 
 > 具体行清单在 M1 以锁定版本逐项验证；不在本清单不等于永久排除，但增加任何行都要回写本文档。
 
+**M1 实际清单**：`packages/bundle/cordis.patch.yml`。M1 分两波装配：
+
+- Wave A（消息闭环必需）：timer、llm/llm-deepseek-api-key/llm-retry、session/persistence-jsonl/projection、agent/agent-loop/tools/system-prompt/agent-instructions/working-directory/commands、fs-local/fs-observation-policy、subprocess-local、shell-env、自研 6 行。
+- Wave B（M1 完整）：session-title、session-checkpoint-policy、token-meter、compaction-basic/tool-result-pruner、tool-fs/tool-fs-search、tool-todo、jobs-local/tool-jobs、user-approval/user-questions、tool-call-timeout-policy、spill-local/spill-policy、repeat-tool-reminder、attachment-local。
+- 每行有稳定 id；Nix overlay 按 id 覆盖。行数/名称以实际 boot 与测试为准。
+
 ## 4.5 薄启动器
 
 动机：官方 `@deepseek-ai/dsh` 启动器直接依赖 86 个包（含 Web/实验 bundle），会破坏安装物精简。
 
 设计：
 
-- `vendor/profile-boot/`：vendored 的 `profile-boot` 逻辑（约 16KB，MIT），保留上游 LICENSE、版本号与来源说明。
+- `vendor/profile-boot/`：vendored 的 `profile-boot` 逻辑（约 14KB，MIT），保留上游 LICENSE、版本号与来源说明；实现为 workspace 包 `@nokoribi/profile-boot`，便于模块解析。M1 补丁见 `vendor/profile-boot/PATCHES.md`：关闭上限改为 `NOKORIBI_SHUTDOWN_TIMEOUT_MS`（默认 30s）、诊断名、install anchor 环境覆盖。
 - 启动器只依赖：
   - `@deepseek-ai/dsh-app-boot`
   - `@deepseek-ai/dsh-cmdline`
@@ -143,9 +151,11 @@ nokoribi-agent/
   - `@deepseek-ai/dsh-launch-environment`
   - `@deepseek-ai/cordis` 及其 loader/include/timer 等启动所需基础包
   - Node 内置模块
-- 参数（草案）：`--profile <name>`、`--patch <file>`（可重复）、`--dump-config`、`--version`。
-- profile 由打包产物提供（见 4.6），启动器在启动时把打包 profile + Nix overlay 组合后交给 app-boot。
-- 单实例锁、DSH_HOME 目录创建、状态文件由 `agent-app` 负责；启动器只负责引导。
+- 参数：M1 实现 `--profile <name>`（只接受 `nokoribi-agent`）、`--patch <file>`（可重复）、`--version`、`--help`；`--dump-config` 留到 M2。
+- profile 由打包产物提供，但运行 profile 目录是 `$DSH_HOME/run/profile/`：启动器每次启动原子重写 `package.json` 与空 `cordis.patch.yml`，再用 `loadProfileDirectory()` + `runProfile({ resolvedProfile })` 启动。这样 `profile-boot` 写 `cordis.yml` 时不会碰只读打包目录。
+- overlay 顺序：bundle → runtime profile 用户层 → `$DSH_HOME/cordis.patch.yml` → `NOKORIBI_PATCH` → `--patch`。
+- 启动器写 `run/ready.json` / `run/startup-error.json` 与自身 pid；启动完成后等待 ready 文件，失败则退出非 0。单实例锁、目录与状态文件仍由 `agent-app` 负责。
+- 启动器设置 `NOKORIBI_SOUL_FILE` / `NOKORIBI_TEMPLATES_DIR` 的开发默认值（仓库布局），Nix 部署时由 overlay 显式设置。
 
 ## 4.6 构建与装配流水线
 
@@ -154,11 +164,13 @@ nokoribi-agent/
 - pnpm workspace；Node.js 24；pnpm 版本固定在 `packageManager` 字段。
 - 每个包用 tsdown 构建为 ESM；类型用 `tsc --noEmit` 检查；oxlint/oxfmt。
 - 测试用 Vitest。
-- 脚本（草案）：
-  - `pnpm build`：构建所有包。
-  - `pnpm build:bundle`：生成 `packages/bundle/dist/` 的 profile manifest 与 patch（把相对源码路径替换为构建产物路径）。
-  - `pnpm typecheck` / `lint` / `format` / `test`。
-- bundle patch 中自研行使用相对于 patch 文件的路径（如 `../shell-bash/dist/index.js`）；`@deepseek-ai/*` 行使用包标识符。
+- 实际脚本：
+  - `pnpm build`：tsdown 构建所有 `packages/*`。
+  - `pnpm typecheck`：先 `pnpm build`（类型检查依赖各包 `dist/*.d.ts`），再根 `tsc --noEmit` 与每包 `tsc --noEmit`。
+  - `pnpm test`：Vitest 单元 + 进程内集成；`pnpm test:process`：构建后跑进程级场景。
+  - `pnpm build:bundle` / Nix profile 生成留到 M6。
+- M1 的 bundle patch 全部使用包标识符（`@nokoribi/*`、`@deepseek-ai/*`），由 launcher 的安装锚点与 runtime resolution 解析；M6 再决定是否需要相对构建产物路径。
+- 类型检查兼容性：TypeScript 7 的 native 实现没有 tsdown dts 需要的 classic API，根 tsconfig 开启 `isolatedDeclarations` 以使用 Oxc 生成声明；导出的函数/常量/类成员必须写显式类型。
 - 每条行有稳定 id（如 `nokoribi-shell-router`），Nix overlay 依赖这些 id。
 
 ### Nix 打包

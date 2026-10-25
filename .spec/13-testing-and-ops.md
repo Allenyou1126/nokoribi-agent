@@ -12,6 +12,8 @@
   3. 进程级场景/恢复测试
   4. flake checks（构建 + 静态配置检查）
 
+M1 落点：单元测试在各包 `test/`；进程级场景在 `tests/process/`，用 `dsh-llm-mock-server` + 临时 DSH_HOME + launcher 子进程；命令为 `pnpm test` 与 `pnpm test:process`。flake checks 留到 M6。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站，可脚本化注入消息与失败。

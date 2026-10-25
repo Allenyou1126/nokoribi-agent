@@ -1,5 +1,7 @@
 # 07 Shell Hosts 与 Sandbox
 
+> **M1 实现范围**：只实现 `ctx.shellHosts` registry、`shell-router`（唯一 `ctx.shell`）、`local:workspace` provider 元数据与 local 执行；默认 host 暂为 `local:workspace`。M1 不挂模型侧 `bash` 工具，不实现 sandbox host、background、TTL、reset、`sandbox`/`sandbox_packages`、`get_available_shell_host`；这些在 M3 完成。因此 7.2 的 provider 接口在 M1 是缩减子集（metadata + optional `run` + `defaultWorkdir`，执行可回落到 router 的本地 bash）。
+
 ## 7.1 背景与结论
 
 DSH 的 `ctx.shell` 是**单 provider** 能力 seam：一个组合只能挂载一个 `ShellExecutor`（同时挂 `dsh-bash-local` 与 `dsh-bash-sandbox` 会 duplicate service 失败）。因此"本地 + 沙箱 + SSH + 未来 client"不能各自注册 `ctx.shell`。

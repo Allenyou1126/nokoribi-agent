@@ -11,7 +11,7 @@
 
 ## 5.2 状态文件
 
-`$DSH_HOME/state/agent-state.json`（原子写；实现可用 `dsh-atomic-write` 或自有实现）。
+`$DSH_HOME/state/agent-state.json`（`writeJsonAtomic`，0600）。M1 还持久化 `state/outbox.json`、`state/ingress-seen.json`；`run/agent.lock` 是 O_EXCL 持有的单实例锁，`run/ready.json` / `run/startup-error.json` 供 launcher 与进程测试握手。
 
 字段草案：
 
@@ -36,43 +36,51 @@
   "cleanShutdown": true,
   "outboxSeq": 123,
   "lastStartedAt": "...",
-  "lastVersion": "0.1.0"
+  "lastVersion": "0.1.0",
+  "lastRestartReason": "first-start"   // first-start | clean | crash | state-corrupt
 }
 ```
 
 - `mainSessionId`：主会话的稳定 id；首次启动创建并写入，之后 resume。
 - `goals[]`：桥接通过 `goal/changed` + `listChildren` 识别的 goal 子代理；用于重启恢复与 `/goal` 命令。
-- `cleanShutdown`：SIGTERM 正常退出时置 true；启动时若为 false，视为崩溃恢复并发送通知。
+- `cleanShutdown`：启动即写 false；SIGTERM 正常退出时置 true。启动时若为 false 视为崩溃恢复并发送通知。
+- `lastRestartReason`：M1 增加，供 `/status` 与通知逻辑使用；损坏状态会先备份为 `agent-state.json.corrupt-<ts>`。
+- 主会话创建后立即 `ctx.sessions.flush()`，确保“新建后马上崩溃”也能 resume；resume/`dispose()` 不会删除已落盘的 session 文件。
 - 归档索引 `$DSH_HOME/archive/goals.jsonl`：每行一条归档记录（见 10）。
 
 ## 5.3 启动顺序
 
-1. 取得单实例锁。
-2. 读取/校验 `agent-state.json`；损坏则保留原文件并重命名备份，按首次启动处理（记录错误日志）。
-3. 确保目录结构存在：`$DSH_HOME/{state,sessions,memory,archive,sandboxes,run,logs?}`（日志由 journald，不强制本地目录）。
-4. 挂载 Cordis 插件树（bundle + Nix overlay）；等待服务就绪（agent-loop、session persistence、tools、prompt、commands、approval 等）。
+M1 实现顺序：
+
+1. `agent-app` 在插件树就绪后取得单实例锁（O_EXCL + holder pid；stale 锁只接管一次；无法读取的锁 fail closed）。
+2. 读取/校验 `agent-state.json`；损坏则备份并按首次启动处理，记录 `state-corrupt`。
+3. 确保目录存在（state/run/archive/memory/sandboxes/workspace；sessions 由 DSH 创建）。
+4. 挂载 Cordis 插件树；`channel-local-test` 先监听 loopback 并缓冲入站。
 5. 创建或恢复主 agent：
-   - 有 `mainSessionId` 且持久化会话存在 → `ctx.agents.resume({ sessionId })`；
-   - 否则 `ctx.agents.create({ sessionId: 新 id, ... })` 并写回 state。
-   - DSH 会在 resume 时补写 `interruptedTurnClosers`，修复中断轮次。
-6. 挂载渠道 driver，缓冲入站消息（不立即注入，等恢复完成）。
-7. 恢复 goal 子代理（见 10.6）；逐个冷恢复，失败记录并通知。
-8. 清空内存中的待审批/待提问状态；若上次为崩溃恢复，通知用户"待应答已失效"。
-9. 重发 outbox 中未发送消息（at-least-once）。
-10. 若非 clean shutdown，发送"进程重启，已恢复会话"通知（⚠️）。
-11. 放行缓冲的入站消息，按正常 ingress 处理。
-12. schedule 的逾期提醒在主 agent live 后由 DSH 交付（作为 follow-up）。
+   - 有 `mainSessionId` 且持久化会话可打开 → `ctx.agents.resume({ resumeSessionId })`；
+   - 找不到持久化会话 → 创建新会话并通知；其它 resume 错误 fail loud；
+   - 否则 `ctx.agents.create({ sessionId: "main-"+uuid, meta.cwd=workspace })`。
+   - 创建/恢复后立即 flush，随后写回 state。
+6. 安装 `session/event` 监听、注册命令、安装 status provider，再 `channels.attachRuntime()`。
+7. `channels.resumeOutbox()` 重发 pending（at-least-once）。
+8. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
+9. `channels.drainBuffered()` 放行启动期入站，然后写 `run/ready.json` 并开始正常收发。
+10. goal/schedule 恢复留到 M4/M5。
+
+> V4 验证结果（M1）：resume 会恢复 `next-turn` inbox，但**不会自动开启新轮**；下一次用户消息或显式唤醒会带上排队消息。M1 不额外重放，后续里程碑可加系统提示唤醒。
 
 > 启动顺序中的 4–5 与 12 的时序需要在实现时验证：Schedule 只给"插件加载后创建"的 agent 安装工具；因此主 agent 必须在 Schedule 插件就绪后创建/恢复。`agent-app` 应作为 app-boot 的启动提供方在准备完成后执行主会话生命周期。
 
 ## 5.4 正常关闭（SIGTERM）
 
-1. 停止接受新入站消息（driver 停止/关闭）。
-2. 若主 agent 正在运行：有限时间等待当前轮完成（配置，草案 20–30 秒；systemd `TimeoutStopSec` 要大于它）；超时则 `cancel()`，让会话记录中止状态。
-3. 中止所有待审批/提问（approval 以 cancelled/denied 结算，question 以错误结算），清空内存状态。
-4. 对 goal 子代理：不逐个等待；通过 Cordis teardown / `drainContinuableDescendants([mainAgent])` 释放；它们的状态在会话日志中，重启恢复。
-5. flush 会话与 state（`ctx.sessions.flush`、原子写 state），标记 `cleanShutdown=true`。
-6. dispose 主 agent handle；退出进程（0）。
+M1 实际流程：
+
+1. `channels.pause()` 停止接受新入站。
+2. 等待当前轮完成至 `shutdownGraceMs`（默认 20s，可配）；超时用 `cancel({ kind:'disposed' })`。
+3. M1 无 broker；M2 在此中止待审批/提问。
+4. goal 子代理留到 M4。
+5. `ctx.sessions.flush()`，写 state 并置 `cleanShutdown=true`。
+6. 进程由 vendored profile-boot 的 bounded shutdown 退出；vendored 上限由 `NOKORIBI_SHUTDOWN_TIMEOUT_MS` 控制，默认 30s。M6 的 systemd `TimeoutStopSec` 必须大于它。
 
 > 关闭时不在 outbox 中的"正在生成的回复"会丢失；若已生成但尚未入队，属于可接受窗口。所有已入 outbox 的消息会重发。
 

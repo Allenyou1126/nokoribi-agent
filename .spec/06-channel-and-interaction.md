@@ -162,7 +162,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 
 ### outbox
 
-- 持久化条目：`{seq, channelId, chatId, kind, text, interactionId?, attempts, nextAttemptAt, createdAt}`。
+- 持久化条目：`{seq, channelId, chatId, kind, text, interactionId?, state, attempts, nextAttemptAt, createdAt, sentAt}`，落盘在 `$DSH_HOME/state/outbox.json`（M1）；`nextSeq` 单调，历史保留最近 `outboxHistoryLimit` 条终态记录，pending 不裁剪。
 - 按 seq 全局有序投递；失败指数退避重试；超过最大尝试次数记录错误并丢弃（同时 journald 告警）。
 - **at-least-once**（D132）：发送成功后落盘标记；崩溃可能造成重复发送，接受。
 - 重启后从持久 outbox 继续；已解决交互的提示跳过。
@@ -204,7 +204,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 }
 ```
 
-`seq` 持久化、有界（草案保留最近 1000 条）；重启后仍可按 seq 取到未过期条目。
+`seq` 持久化、有界（默认保留最近 1000 条终态记录，pending 不裁剪）；重启后仍可按 seq 取到未过期条目。M1 启动后写 `$DSH_HOME/run/test-channel.json`（host/port/pid），进程测试据此发现端口。
 
 ### `GET /v1/status`
 
@@ -217,9 +217,12 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
   "goals": [{ "shortId": "a1b2c3d4", "phase": "active", "rounds": 3 }],
   "pendingInteractions": 0,
   "outboxLength": 0,
-  "lastRestartReason": "clean"
+  "lastRestartReason": "clean",
+  "ready": true
 }
 ```
+
+`ready` 在 `run/ready.json` 与主会话恢复完成后置 true；启动中返回 `agentStatus:"starting"`。M1 的 `images` 入站返回 501（附件图片链路 M2 启用）。
 
 ### 其他
 

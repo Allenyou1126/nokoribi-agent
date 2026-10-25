@@ -2,7 +2,7 @@
 
 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下文简称 DSH）的单用户、常驻、长程个人 Agent 的设计文档。
 
-> **状态（2026-10-25）**：前期规划完成，尚未开始实现。本仓库当前只有设计文档，没有代码。
+> **状态（2026-10-25）**：M1（骨架与消息闭环）已实现；M2–M6 仍按路线图推进。M1 可在本地用测试通道运行，但还没有部署闭环（无 auto-review，不可用作生产服务）。
 >
 > **目标 DSH 版本**：全部 `@deepseek-ai/*` 包固定 `0.2.1-rc.3`，手动整批升级。
 
@@ -46,7 +46,30 @@
 
 ## 开发
 
-当前仓库只有设计规格；工具链、代码规范与提交约定见 [AGENTS.md](AGENTS.md)。提交前运行 `pnpm check`。
+工具链、代码规范与提交约定见 [AGENTS.md](AGENTS.md)。
+
+```sh
+pnpm install
+pnpm check          # 构建 + 类型检查 + lint + 格式检查
+pnpm test           # 单元 + 进程内集成
+pnpm test:process   # 构建后运行进程级恢复场景
+```
+
+M1 本地运行（需要测试通道 token；真实模型调用需要 `DEEPSEEK_API_KEY`）：
+
+```sh
+cp .env.example .env   # 填写 DEEPSEEK_API_KEY / NOKORIBI_TEST_TOKEN
+pnpm build
+DSH_HOME=/tmp/nokoribi-dev node packages/launcher/dist/index.js
+
+curl -s -X POST http://127.0.0.1:8787/v1/inbound \
+  -H "Authorization: Bearer $NOKORIBI_TEST_TOKEN" \
+  -H 'content-type: application/json' -d '{"text":"你好"}'
+curl -s "http://127.0.0.1:8787/v1/outbound?after=0&timeout=10" \
+  -H "Authorization: Bearer $NOKORIBI_TEST_TOKEN"
+```
+
+M1 范围与已知限制见 [14.2](.spec/14-roadmap.md)。实现时发现的实际 DSH 包名、行清单与启动方式已回写 [04](.spec/04-architecture-and-build.md)。
 
 ## 重要约定
 

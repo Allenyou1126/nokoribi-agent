@@ -7,7 +7,7 @@
 | V1 | IM-only profile 里能否程序化设置 Auto 预设，且 permission-presets 正常挂载 | auto-review 依赖 Auto preset；README 按 Web profile 写 | 用锁定 0.2.1-rc.3 起一个无 Web 的测试 profile，检查 `permissionPresets.registerAuto()`、当前 preset、`/permission` 行为 | 若不能程序化，改为在启动时通过内部 API 写 preset，或 fork permission-presets；最坏退回"不做 Auto 审查"需重新讨论安全模型 |
 | V2 | patched auto-review 的双档 reviewer 与 child 审批桥接是否可行 | 上游未导出评审函数；child 固定 `never`；需求 D64/D131 | vendor 后做最小补丁，用 fake LLM 跑工具调用与子代理场景 | 若 child 桥接不可行：child 审批保持 `never`，失败后 report 给主 agent 由主 agent 询问用户；更新文档 |
 | V3 | goal 冷恢复时序：`sendMessage` → child live → `ctx.goals.resume` 重新 arm | goal 在 session-start 必 disarm；冷恢复只有 sendMessage 路径 | 进程级测试：kill daemon → 重启 → 观察 child live/阶段/arm 状态 | 若时序不稳，改为启动后延迟重试/显式 `agent/created` 等待；必要时用 child 首轮消息里显式 `resume` |
-| V4 | resume 后 inbox 是否自动处理 | 排队消息持久化，但 driver 是否自动唤醒未确认 | 进程级测试：消息入 inbox 后 kill → 重启 → 是否自动继续 | 若不自动：用 bridge 记录未消费入站队列重放（按 messageId 去重），或注入一条系统提示唤醒 |
+| V4 | resume 后 inbox 是否自动处理 | 排队消息持久化，但 driver 是否自动唤醒未确认 | 进程级测试：消息入 inbox 后 kill → 重启 → 是否自动继续 | **已验证（M1）**：resume 会恢复 `next-turn` inbox，但不会自动开启新轮；M1 用“用户下一条消息/显式唤醒”消费，未加 bridge 重放。若 M2 需要立即处理，采用系统提示唤醒或入站队列重放。 |
 | V5 | schedule 工具安装时序 vs 主会话创建 | schedule 只给"插件加载后创建"的 agent 安装工具 | 启动恢复测试：重启后 overdue 提醒是否交付 | 调整启动顺序（先 schedule 插件就绪再 create/resume）；或重启后触发一次空 followup |
 | V6 | Nix buildEnv + 运行时 `nix shell` 叠加的性能 | sandbox 默认 host，命令延迟影响体验 | 在开发机/目标机实测：首次/缓存后命令延迟；加包耗时 | 预构建更大 buildEnv；缓存 `nix develop` 环境；必要时 sandbox 内持久 shell（后续） |
 | V7 | pnpm 依赖在 Nix 固定输出构建中的可行性 | 发行版要可复现、可离线 | 写 package.nix，跑 `nix build` | 调整 `pnpmDeps`/fetch 方案；必要时 vendor store |
@@ -16,7 +16,7 @@
 
 ## 15.2 其他实现期需确认的点
 
-1. `/clear` 时 outbox 中属于旧会话的未发送回复如何处理（保留发完 / 丢弃）；当前文档标注为待实现决策。
+1. `/clear` 时 outbox 中属于旧会话的未发送回复：M1 决定**保留并继续发送**（已写回 06/05）；后续里程碑如改变需再记录。
 2. 消息分段算法的具体边界（代码块、编号、超长单行）与平台差异。
 3. reviewer sudo/root 启发式的具体模式与误报处理。
 4. 测试通道 `seq` 日志的保留条数与持久化格式。

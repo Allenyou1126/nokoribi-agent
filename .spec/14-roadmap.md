@@ -32,6 +32,16 @@
 - 无外部依赖（除 DSH 包）。
 - 风险：DSH 启动/组合 API 细节；profile-boot vendoring；最小 bundle 依赖闭包。
 
+### M1 实现记录（2026-10-25）
+
+- 已完成 pnpm workspace、tsdown/Vitest、vendored `profile-boot`、薄启动器、application-owned runtime profile、bundle 两波行装配。
+- 已完成 `shared` / `channel-core` / `channel-local-test` / `agent-app` / `prompt` / `shell-bash` / `shell-host-local`；`bundle` 与 `launcher` 已可启动完整 M1。
+- 本地测试通道三端点、长轮询、token、`run/test-channel.json`、`run/ready.json` / `run/startup-error.json` 已实现。
+- 已验证：消息→回复、去重、`/status`、`/clear`（旧 session 文件保留）、`/stop`、`/steer`/`/queue` 一次性模式、SIGTERM 干净退出、kill -9 后主会话恢复 + outbox 重发 + 崩溃通知、单实例锁、state 损坏备份与通知。
+- 自动化：`pnpm test`（单元/进程内）与 `pnpm test:process`（8 个进程场景）通过；`pnpm check` 通过。
+- M1 偏差：默认 host 暂为 `local:workspace`（M3 切 sandbox）；`/steer`/`/queue` 直接完整实现；入站图片返回 501（M2）；`--dump-config`、`tool-ask-user`、`/compact` 后移；`dsh-scope`/`dsh-atomic-write` 是库不是行。
+- 仍待 M2/M3：auto-review/审批 broker、permission-presets、sandbox host、模型侧 `bash(host)`、图片附件链路。
+
 ## 14.3 M2 安全闸与审批
 
 ### 交付物
