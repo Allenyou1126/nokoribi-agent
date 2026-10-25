@@ -129,6 +129,8 @@
 | D131 | 子代理审批 | 也桥接到 IM 问用户（需补丁） |
 | D132 | outbox 语义 | at-least-once |
 | D133 | 测试通道协议 | 长轮询 |
+| D134 | `ctx.shell` 角色 | sessionless façade 仅 local；sandbox default fail closed |
+| D135 | 前台命令超时 | 只返回超时结果，不自动转后台 job |
 
 ---
 
@@ -296,6 +298,8 @@
 - **D131 子代理审批** — 选择：**也桥接到 IM 问用户**（需要 patch auto-review 的 child `never` 行为；全局串行提示，标明 goal 短 id）。M2 已验证：child deny 先转 `ask`，prompt 带 goal 短 id。
 - **D132 outbox 语义** — 选择：**at-least-once**（重启重发，极端可能重复）。
 - **D133 测试通道协议** — 选择：**长轮询**（`GET /v1/outbound?after=seq`）。
+- **D134 `ctx.shell` 角色（M3）** — 自定义：DSH 的 `ctx.shell` 是 sessionless seam，而 sandbox 执行需要 sessionId。选择：`shell-router` 仍是唯一 `ctx.shell` provider；default host 为 `local` 时委托 local provider，default 为 `sandbox` 时 `ctx.shell.execute` 明确 fail closed；模型工具始终走 `ctx.shellHosts`。依据：rc.3 没有第一方执行消费者依赖 `ctx.shell.execute`。
+- **D135 前台超时（M3）** — 选择：只有显式 `run_in_background: true` 才注册 `ctx.jobs`；前台命令超时按 `[timed out]` 返回并结束，不采用上游 `dsh-tool-bash` 的自动转后台。理由：减少 job 生命周期复杂度；需要后台时由模型显式选择。
 
 ---
 

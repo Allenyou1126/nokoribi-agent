@@ -52,7 +52,7 @@
 
 M1/M2 实现顺序：
 
-1. `agent-app` 在插件树就绪后取得单实例锁（O_EXCL + holder pid；stale 锁只接管一次；无法读取的锁 fail closed）。
+1. `agent-app` 在插件树就绪后取得单实例锁（O_EXCL + holder pid；stale 锁只接管一次；无法读取的锁 fail closed）；随后校验 default shell host 已注册（`ctx.shellHosts.requireDefaultHost()`），缺失则写 startup-error 并拒绝启动。sandbox 的 `baseEnvironment` 允许暂未配置，执行时返回明确错误。
 2. 读取/校验 `agent-state.json`；损坏则备份并按首次启动处理，记录 `state-corrupt`。
 3. 确保目录存在（state/run/archive/memory/sandboxes/workspace；sessions 由 DSH 创建）。
 4. 挂载 Cordis 插件树；`channel-local-test` 先监听 loopback 并缓冲入站。
@@ -95,7 +95,7 @@ M1/M2 实际流程：
 - 待审批/提问：进程内 promise 已消失；重启后无法恢复。启动时 `channels.initialize()` 把 outbox 中残留的 pending interaction 标记为失败，`resumeOutbox()` 后发一次“待应答已失效”提示；broker 内存状态为空。
 - goal 子代理：按 state 恢复（见 10.6）；可能多跑一轮（冷恢复需要发送一条"继续"消息）。
 - outbox：未发送消息重发；若崩溃前已发送但未标记，可能重复（at-least-once）。
-- sandbox：每个 session 的 sandbox 目录落盘；TTL 计时按 lastUsed 恢复；重启后首次使用若仍在 TTL 内可复用，过期则回收重建。
+- sandbox：每个 session 的 sandbox 目录落盘；TTL 计时按 `$DSH_HOME/sandboxes/<sessionId>.json` 的 lastUsed 恢复；重启后首次使用若仍在 TTL 内可复用，过期则回收重建。daemon 关闭只停止 TTL 定时器，不删除目录。
 - 重启通知：只在 `cleanShutdown=false` 或恢复失败时发送，避免每次部署都刷屏。
 
 ## 5.6 `/clear` 与 `/new`
@@ -108,7 +108,7 @@ M1/M2 实际流程：
 2. 若存在待应答：`channels.abortInteractions("clear")` 全部中止并通知用户，同时抑制已排队但未发送的旧提示。
 3. dispose 主 agent handle；旧会话保持在 DSH 会话库中（不删除）。
 4. 生成新的 `mainSessionId`，`ctx.agents.create()` 新会话；写回 state；清空 outbox 中属于旧会话的未发送回复？——**待实现决策**：草案为保留 outbox（已生成的消息仍发给用户）但给旧会话 id 标记；新消息进入新会话。
-5. 删除旧会话对应的 sandbox 目录（per-session scope）。
+5. 删除旧会话对应的 sandbox 目录（per-session scope）。M3 实现：旧 agent `dispose()` 后调用 `ctx.shellHosts.disposeSession(previousId)`，删除目录与 sidecar；失败只记录日志，不阻断 `/clear`。
 6. 发送确认消息："已新建会话，旧会话已归档"。
 
 - `/new` 与 `/clear` 等价（别名）。

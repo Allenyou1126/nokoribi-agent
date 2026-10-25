@@ -270,3 +270,14 @@ Inbox：
 - approval 与 question 的应答面分别是 `approval/request` 与 `user-questions/request` waterfall；`ask_user_question` 拒绝 child 调用（`DELEGATED_CALLER`）。
 - `dsh-tool-ask-user` 的 blocking 模式适合 IM 文本回答；M2 已挂载。
 - `system-prompt/assemble` 是可用的 waterfall，可替换 child 的 `subagent:delegation` 运行时上下文；M2 用于修正“审批一律自动拒绝”的旧文案。
+
+## 2.19 M3 实现期验证更新
+
+- rc.3 没有第一方执行消费者依赖 `ctx.shell.execute`；`permission-presets` 只读 `ctx.shell.sandboxMode`。因此 M3 可让 sessionless `ctx.shell` 仅在 local default 下工作，sandbox default 时 fail closed。
+- `ctx.shell.execute(spec)` 返回的 `ShellExecution` 本身就是后台句柄；`observed.stdout/stderr` 是非消费 reader，可直接作为 `ctx.jobs` 的 `JobOutputSource`。`process.done` 永不 reject，适合 job settlement。
+- `dsh-tool-bash` 的 artifact 显示 `run_in_background` 依赖 `ctx.jobs` + `ctx.jobs-local` + `dsh-tool-jobs`；M3 使用同一 `JobSpec` 形状（kind/label/owner/toolCall/output/run）。
+- `LocalBashExecutor` 始终 spawn `argv=["bash","-c",...]`，并按显式 `env.PATH` 解析 `bash`；sandbox 若只给 buildEnv PATH 会得到 `spawn bash ENOENT`。M3 在 guard 目录放 `bash` 符号链接解决，同时保留受限 PATH。
+- `nix shell <store-path> <pkg> --command ...` 会把包的 bin 前置到调用时传入的受限 PATH；`nix shell` 本身可用绝对路径运行，不会自动泄漏宿主 PATH。M3 只在有临时包时用它，base-only 直接受限 PATH。
+- `setpriv --no-new-privs -- <bash> ...` 在开发机可用；PATH guard 能挡住常见 sudo 调用，绝对路径仍由 no_new_privs 兜底。
+- Cordis loader 能加载包子路径插件（`@nokoribi/shell-bash/tool`）；进程测试已验证。
+- 新 `sandbox` 工具在模型侧可见，Auto review 会审查 `bash`/`sandbox`/`sandbox_packages` 调用；M3 未为这些工具增加硬确认。

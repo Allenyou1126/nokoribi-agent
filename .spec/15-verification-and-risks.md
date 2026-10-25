@@ -9,10 +9,12 @@
 | V3 | goal 冷恢复时序：`sendMessage` → child live → `ctx.goals.resume` 重新 arm | goal 在 session-start 必 disarm；冷恢复只有 sendMessage 路径 | 进程级测试：kill daemon → 重启 → 观察 child live/阶段/arm 状态 | 若时序不稳，改为启动后延迟重试/显式 `agent/created` 等待；必要时用 child 首轮消息里显式 `resume` |
 | V4 | resume 后 inbox 是否自动处理 | 排队消息持久化，但 driver 是否自动唤醒未确认 | 进程级测试：消息入 inbox 后 kill → 重启 → 是否自动继续 | **已验证（M1）**：resume 会恢复 `next-turn` inbox，但不会自动开启新轮；M1 用“用户下一条消息/显式唤醒”消费，未加 bridge 重放。若 M2 需要立即处理，采用系统提示唤醒或入站队列重放。 |
 | V5 | schedule 工具安装时序 vs 主会话创建 | schedule 只给"插件加载后创建"的 agent 安装工具 | 启动恢复测试：重启后 overdue 提醒是否交付 | 调整启动顺序（先 schedule 插件就绪再 create/resume）；或重启后触发一次空 followup |
-| V6 | Nix buildEnv + 运行时 `nix shell` 叠加的性能 | sandbox 默认 host，命令延迟影响体验 | 在开发机/目标机实测：首次/缓存后命令延迟；加包耗时 | 预构建更大 buildEnv；缓存 `nix develop` 环境；必要时 sandbox 内持久 shell（后续） |
+| V6 | Nix buildEnv + 运行时 `nix shell` 叠加的性能 | sandbox 默认 host，命令延迟影响体验 | 在开发机/目标机实测：首次/缓存后命令延迟；加包耗时 | **M3 已实测（开发机、Nix 缓存命中）**：base-only wrapper 约 4ms/命令，`nix shell nixpkgs#hello` 叠加约 28ms/命令；首次 fetch/realize 另计。M6 用更大 buildEnv 与目标机复核；必要时缓存/持久 shell |
 | V7 | pnpm 依赖在 Nix 固定输出构建中的可行性 | 发行版要可复现、可离线 | 写 package.nix，跑 `nix build` | 调整 `pnpmDeps`/fetch 方案；必要时 vendor store |
 | V8 | 主模型是否有支持图像输入的 API 模型 | 入站图片直接给模型（D16） | 用 API key 查 `dsh-llm-deepseek` 模型目录；实际发图测试 | 无模型则按 D69 明确告知不支持；能力位关闭 |
 | V9 | 主 agent 隐藏 goal 工具的实现方式 | D101 要求 main 不能建 goal | 阅读 `dsh-tools` 的 agent 限制 API；用 fake agent 测试可见工具 | 改为桥接监控 `goal/changed`，发现 main goal 立即 clear + 提示（已有备选） |
+
+> V6 M3 补充：除性能数据外，已用真实 `buildEnv { bash coreutils }` 直连 `ShellRouter` + `SandboxHost` 验证 cwd、`DSH_SANDBOX_DIR`、workspace→sandbox `cp`、sudo shim、`nixpkgs#hello` 临时包与 reset 清包；`rsync` 未包含在该最小 baseEnv，未单独验证。
 
 ## 15.2 其他实现期需确认的点
 
@@ -21,7 +23,7 @@
 3. reviewer sudo/root 启发式的具体模式与误报处理。
 4. 测试通道 `seq` 日志的保留条数与持久化格式。
 5. 审批/提问多问题批次的逐题呈现与超时计算方式。
-6. sandbox 后台任务与 reset/TTL 的具体交互（拒绝/终止策略）。
+6. sandbox 后台任务与 reset/TTL 的具体交互（拒绝/终止策略）。**M3 已定**：有活跃命令时 `reset` 拒绝；TTL sweep 跳过活跃 sandbox；`disposeSession` 在 `/clear` 时终止 handle 并删除目录。
 7. memory `index.json` 是否需要（v1 可纯扫描）。
 8. 归档索引与 session 文件的清理策略（当前不清理）。
 9. sd_notify 的 Node 实现选型与 watchdog 周期。
@@ -43,6 +45,7 @@
 | session format 升级不兼容 | 中高 | 回滚后旧版本读不了会话 | 固定版本、手动升级；接受回滚风险；升级前可人工快照（未强制） |
 | 冷恢复多一轮/时序不稳 | 中 | goal 重复执行/暂停 | 设计已接受多一轮；V3 验证；失败通知 + tracked |
 | nix shell 启动慢 | 中 | sandbox 命令延迟、体验差 | 预构建 buildEnv；临时包才 nix shell；实测调优 |
+| sandbox 依赖缺失（setpriv/nix/baseEnvironment） | 中 | 默认 sandbox host 命令失败 | M3 返回明确错误；M6 部署检查 util-linux/nix/buildEnv；开发可切 local |
 | 主模型无图像能力 | 中 | 入站图片不可用 | 查目录；无模型则明确不支持（D69） |
 | prompt injection（网页/工具结果） | 高 | 诱导危险动作 | reviewer 把外部内容视为 fact；系统提示词；残余风险接受 |
 | 子代理审批补丁复杂 | 中 | goal 工具被拒后无法请求用户 | V2 已验证；补丁写 child `ask` 并修正 delegation 文案；仍保留 report 回退 |

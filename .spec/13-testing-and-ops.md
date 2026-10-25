@@ -16,6 +16,8 @@ M1 落点：单元测试在各包 `test/`；进程级场景在 `tests/process/`�
 
 M2 落点：`tests/process/m2.test.ts` 用脚本化 LLM（按 model/system 路由）覆盖 reviewer allow/deny/批准/拒绝/超时/提问/steer/stop/clear/残留交互；`tests/integration/m2-child-approval.test.ts` 用 `dsh-agent-loop-testkit` + fake shell + fake channel 覆盖 child → broker → IM。
 
+M3 落点：`packages/shell-bash/test/` 覆盖 host 协议、router façade、bash(host)、background job、discovery、hosts 提示词；`packages/shell-host-sandbox/test/` 覆盖 command wrapper、meta、TTL/reset、guarded PATH、setpriv/nix 缺失、`sandbox`/`sandbox_packages`；`packages/shell-host-local/test/` 覆盖 extraPackages 与 background；`tests/process/m3.test.ts` 覆盖 local、sandbox、未知 host + discovery、background job、`/clear` 清理。真实 Nix/sudo 为手工/门控集成验收。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站，可脚本化注入消息与失败。
@@ -37,7 +39,8 @@ M2 落点：`tests/process/m2.test.ts` 用脚本化 LLM（按 model/system 路�
 | goal | tracking 状态机、短 id、归档索引 | 创建/汇报/归档/clear、主会话 goal 拦截 | 冷恢复 + re-arm、失败通知 |
 | memory | 文件格式、检索、upsert/forget、去重 | 工具调用、提炼子代理 | 跨重启检索 |
 | prompt | 模板渲染、SOUL 转义、section 顺序 | 组装快照（不含动态值） | 启动加载 |
-| shell hosts | host 路由、id 解析、能力校验 | bash(host)、未知 host、background、发现工具 | TTL/reset、sandbox 提权失败 |
+| shell hosts | host 路由、id 解析、能力校验、命令包装/TTL/meta | bash(host)、未知 host、background job、发现工具、fake sandbox base | local 执行、sandbox 隔离/sudo、`/clear` 清理 |
+| sandbox | command wrapper、sidecar、generation、TTL sweep、guard、setpriv/nix 缺失 | `sandbox`/`sandbox_packages`、reset 保护、fake subprocess | 手工 Nix buildEnv：cp/rsync、sudo 失败、TTL/reset |
 | reviewer patch | 两档路由、sudo 启发式、JSON 校验、超时 | 双阶段复审、fail closed、child 审批桥接 | 进程级 allow/deny/超时 |
 | interaction broker | 提示格式、解析、超时、串行、abort | approval/question 端到端、steer 旁路、stop/clear | 重启残留清理 |
 | NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12） |
@@ -49,7 +52,7 @@ M2 落点：`tests/process/m2.test.ts` 用脚本化 LLM（按 model/system 路�
 3. **Crash**：进程发消息 → 工具执行中 kill -9 → 重启 → 会话恢复、inbox 恢复（或重放）、outbox 重发、待应答通知失效。
 4. **Goal 重启**：goal child 活跃 → kill daemon → 重启 → 冷恢复消息 → re-arm → 下一轮继续 → 报告主 agent。
 5. **归档**：goal complete → 主 agent 询问 → 用户 `/goal archive` → state 移除、archive JSONL 追加、sandbox 删除、session 保留。
-6. **Sandbox**：默认 host 执行；TTL 到期回收；reset 拒绝有后台任务；`sandbox_packages` add 后可执行；sandbox 内 sudo 失败。
+6. **Sandbox**：默认 host 执行；TTL 到期回收；reset 拒绝有后台任务；`sandbox_packages` add 后可执行；sandbox 内 sudo 失败。M3 自动化用 fake baseEnv 覆盖 local/sandbox/background/`/clear`；真实 Nix 按 12.12 手工。
 7. **Memory**：任务结束提炼子代理写入；跨会话 search 命中；forget 归档。
 8. **Schedule**：创建 1 分钟提醒（或 fake clock）→ 到期 follow-up → 主 agent 回复镜像到测试通道。
 

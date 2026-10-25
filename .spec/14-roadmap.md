@@ -39,8 +39,8 @@
 - 本地测试通道三端点、长轮询、token、`run/test-channel.json`、`run/ready.json` / `run/startup-error.json` 已实现。
 - 已验证：消息→回复、去重、`/status`、`/clear`（旧 session 文件保留）、`/stop`、`/steer`/`/queue` 一次性模式、SIGTERM 干净退出、kill -9 后主会话恢复 + outbox 重发 + 崩溃通知、单实例锁、state 损坏备份与通知。
 - 自动化：`pnpm test`（单元/进程内）与 `pnpm test:process`（8 个进程场景）通过；`pnpm check` 通过。
-- M1 偏差：默认 host 暂为 `local:workspace`（M3 切 sandbox）；`/steer`/`/queue` 直接完整实现；入站图片仍返回 501（**未分配，M2 不做**）；`--dump-config`、`/compact` 后移；`dsh-scope`/`dsh-atomic-write` 是库不是行。
-- 仍待后续：sandbox host、模型侧 `bash(host)`（M3）；goal（M4）；memory/schedule（M5）；图片附件链路（未分配，建议 M5 或后置单独评估）。
+- M1 偏差：默认 host 当时暂为 `local:workspace`（M3 已切到 `sandbox:default`）；`/steer`/`/queue` 直接完整实现；入站图片仍返回 501（**未分配，M2 不做**）；`--dump-config`、`/compact` 后移；`dsh-scope`/`dsh-atomic-write` 是库不是行。
+- 后续：sandbox host、模型侧 `bash(host)` 已在 M3 实现；goal（M4）；memory/schedule（M5）；图片附件链路（未分配，建议 M5 或后置单独评估）。
 
 ## 14.3 M2 安全闸与审批
 
@@ -106,6 +106,17 @@
 
 - 依赖 M1（工具注册/提示词）。
 - 风险：nix shell 启动延迟；buildEnv + 运行时包叠加；TTL 与后台任务边界；`ctx.shell` façade 的 sandboxMode 兼容。
+
+### M3 实现记录（2026-10-25）
+
+- 已扩展 `shellHosts` 协议（`run`/`start`/`reset`/`status`/`disposeSession` + `spawnBash`），`shell-router` 是唯一 `ctx.shell` provider；`ctx.shell` 仅服务 sessionless local，default 为 sandbox 时 fail closed（D134）。
+- 已实现 `@nokoribi/shell-bash/tool`：`bash(host)`、`get_available_shell_host`、`nokoribi:hosts` 提示词、后台 job 适配；只有显式 `run_in_background` 注册 job（D135）；前台超时不自动转后台。
+- 已实现 `local:workspace`（前台/后台、`extraPackages` PATH）与 `sandbox:default`（每 session 目录、sidecar、generation、TTL、reset/status、`sandbox_packages`、`disposeSession`）。
+- sandbox 执行使用受限 PATH + `setpriv --no-new-privs` + sudo/su/pkexec/doas shim；有临时包时叠加 `nix shell`；base-only 直接受限 PATH；用户命令仅作为 `$1` 传入；`DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR` 注入。
+- 默认 host 改为 `sandbox:default`；`agent-app` 启动校验 default host；`/clear` 删除旧 session sandbox；默认 baseEnvironment 为空时命令返回明确错误，M6 负责构建。
+- 验证：`pnpm test` 24 文件/193 测试、`pnpm test:process` 24 场景（M1 8 + M2 11 + M3 5）、`pnpm check` 全部通过。
+- 手工真实 Nix 验证（M3，2026-10-25）：用 `buildEnv { bash coreutils }` 作为 baseEnvironment，`ShellRouter` + `SandboxHost` 直连 `SubprocessLocal`：cwd 在 sandbox、`DSH_SANDBOX_DIR` 正确、workspace→sandbox `cp` 成功、sudo shim 返回禁用、`sandbox_packages add nixpkgs#hello` 后 `hello` 可执行、reset 清空包且 generation+1。
+- M3 偏差/边界：`ctx.shell` sessionless façade；无前台超时转后台；sandbox 非强制隔离（D48）；`setpriv`/`nix` 由部署提供。
 
 ## 14.5 M4 goal 子代理
 

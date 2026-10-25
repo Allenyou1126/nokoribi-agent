@@ -57,9 +57,9 @@ nokoribi-agent/
 |---|---|---|
 | `launcher` | 解析参数、读打包 profile、叠加 Nix patch overlay、设置 DSH_HOME、调用 app-boot 启动。vendor profile-boot。 | `@deepseek-ai/dsh-app-boot`、`dsh-cmdline`、`dsh-home-paths`、`dsh-launch-environment`、`dsh-http-proxy`、cordis |
 | `shared` | 配置 schema（zod）、DSH_HOME/路径约定、原子读写、单实例锁、日志辅助、公共类型。 | cordis（仅类型/轻量）、node |
-| `shell-bash` | `shellHosts` service 定义、`shell-router`（唯一 `ctx.shell` provider）、`bash(host)` 工具、`get_available_shell_host` 工具。 | shared、cordis、`dsh-tools`、`dsh-shell` 类型 |
-| `shell-host-local` | local host provider：系统 PATH + extraPackages，cwd 为持久 workspace。 | shared、cordis、`ctx.subprocess` |
-| `shell-host-sandbox` | sandbox host provider：profile Nix buildEnv + shellHook、临时目录、TTL、禁提权；`sandbox` 与 `sandbox_packages` 工具。 | shared、cordis、`ctx.subprocess`、`ctx.shellHosts` |
+| `shell-bash` | `shellHosts` service 定义、`shell-router`（唯一 `ctx.shell` provider）、`bash(host)` 工具、`get_available_shell_host`、hosts 提示词。`@nokoribi/shell-bash/tool` 是模型工具入口。 | shared、cordis、`dsh-bash-local`、`dsh-shell`、`dsh-jobs`、`dsh-tools`、`dsh-shell-env`、`dsh-working-directory` |
+| `shell-host-local` | local host provider：系统 PATH + extraPackages，cwd 为持久 workspace；前台/后台。 | shared、cordis、`ctx.shellHosts` |
+| `shell-host-sandbox` | sandbox host provider：profile Nix buildEnv + shellHook、临时目录、TTL、no_new_privs；`sandbox` 与 `sandbox_packages` 工具。 | shared、cordis、`ctx.shellHosts`、`ctx.subprocess`、`dsh-tools` |
 | `channel-core` | driver 注册、ingress 管线（allowlist/去重/命令）、交互 broker、outbox、出站投递、系统通知。 | shared、cordis、`ctx.agents`、`ctx.commands` |
 | `channel-local-test` | 本地测试通道：HTTP server、token、长轮询。 | channel-core contract |
 | `memory` | memory 工具（search/read/write/forget）、Markdown 文件存储、检索。 | shared、cordis |
@@ -106,10 +106,8 @@ nokoribi-agent/
 
 - `nokoribi-shell-router`
 - `nokoribi-shell-host-local`
-- `nokoribi-shell-host-sandbox`
-- `nokoribi-tool-bash-hosted`
-- `nokoribi-tool-shell-hosts`
-- `nokoribi-sandbox-tools`（可与 host-sandbox 同包）
+- `nokoribi-shell-host-sandbox`（同时注册 `sandbox`/`sandbox_packages` 工具）
+- `nokoribi-tool-bash-hosted`（`@nokoribi/shell-bash/tool`，注册 `bash`/`get_available_shell_host`）
 - `nokoribi-channel-core`
 - `nokoribi-channel-local-test`
 - `nokoribi-memory`
@@ -136,6 +134,7 @@ nokoribi-agent/
 - Wave B（M1 完整）：session-title、session-checkpoint-policy、token-meter、compaction-basic/tool-result-pruner、tool-fs/tool-fs-search、tool-todo、jobs-local/tool-jobs、user-approval/user-questions、tool-call-timeout-policy、spill-local/spill-policy、repeat-tool-reminder、attachment-local。
 - 每行有稳定 id；Nix overlay 按 id 覆盖。行数/名称以实际 boot 与测试为准。
 - **M2 新增行**：`permission-presets`（仅 `danger-full-access` 预设）、`tool-ask-user`（blocking 模式）、`nokoribi-reviewer`（`@nokoribi/reviewer`，替代上游 auto-review 行）。`channel-core` 配置增加 approval/question 超时；`agent-app` 在创建/恢复主会话后设为 `auto`。
+- **M3 新增/调整行**：`nokoribi-shell-router`（default host 可配）、`nokoribi-shell-host-local`（extraPackages）、`nokoribi-shell-host-sandbox`、`nokoribi-tool-bash-hosted`（`@nokoribi/shell-bash/tool`）。`agent-app` 启动校验 default host；`/clear` 清理 sandbox。多入口包通过 `exports` 子路径加载，进程测试已验证。
 
 ## 4.5 薄启动器
 

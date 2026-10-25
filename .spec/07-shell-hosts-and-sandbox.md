@@ -1,6 +1,6 @@
 # 07 Shell Hosts 与 Sandbox
 
-> **M1 实现范围**：只实现 `ctx.shellHosts` registry、`shell-router`（唯一 `ctx.shell`）、`local:workspace` provider 元数据与 local 执行；默认 host 暂为 `local:workspace`。M1 不挂模型侧 `bash` 工具，不实现 sandbox host、background、TTL、reset、`sandbox`/`sandbox_packages`、`get_available_shell_host`；这些在 M3 完成。因此 7.2 的 provider 接口在 M1 是缩减子集（metadata + optional `run` + `defaultWorkdir`，执行可回落到 router 的本地 bash）。
+> **M3 实现状态（2026-10-25）**：`shellHosts`、`shell-router`、`bash(host)`、`get_available_shell_host`、`local:workspace`、`sandbox:default`、TTL/reset/status、`sandbox_packages`、`no_new_privs` 与 hosts 提示词已实现；默认 host 为 `sandbox:default`。实现细节与偏差见 7.12。
 
 ## 7.1 背景与结论
 
@@ -9,9 +9,9 @@ DSH 的 `ctx.shell` 是**单 provider** 能力 seam：一个组合只能挂载�
 最终方案：
 
 - 新增 `ctx.shellHosts` 注册表（我们的 seam）；host 由插件注册为 **provider**，按 `<kind>:<instance>` 路由。
-- `shell-router` 只承担一个角色：提供 `ctx.shellHosts`，并作为**唯一的 `ctx.shell` provider**（默认 host 的 façade，供未来其他 DSH 消费方使用）。
+- `shell-router` 提供 `ctx.shellHosts`，并作为**唯一的 `ctx.shell` provider**。M3 的 `ctx.shell` 是 sessionless façade：default host 为 `local` 时委托 local provider；default 为 sandbox 时明确 fail closed（sandbox 执行需要 session），模型工具始终走 `ctx.shellHosts`。详见 7.12 与 D134。
 - 模型侧 `bash` 工具由我们实现（fork/替代 `dsh-tool-bash`），增加可选 `host` 参数，执行时走 `ctx.shellHosts`；另提供 `get_available_shell_host` 工具。
-- host 插件只依赖 `ctx.subprocess` 等底层能力，不注册 `ctx.shell`。
+- host 插件向 `ctx.shellHosts` 注册，并通过 `spawnBash` 复用 router 的执行机制；不注册 `ctx.shell`。
 
 ## 7.2 host 标识与注册
 
@@ -54,6 +54,7 @@ interface ShellHostProvider {
 - router 校验 id 唯一、kind 合法、默认 host 存在；重复注册失败。
 - 启动顺序：host provider 插件先加载，router 后加载或延迟解析；`bash` 工具调用时按 id 查找。
 - 默认 host 由 profile 配置（`sandbox:default`）。
+- M3 实现：provider 不单独暴露 `resolve`；`run`/`start` 由 host 构造自己的 argv/env，并通过 `ctx.shellHosts.spawnBash` 复用 router 的 bash 机制。`background: true` 的 provider 必须实现 `start`。
 
 ## 7.3 `bash` 工具
 
@@ -137,7 +138,7 @@ bash(
 
 - 由 NixOS 预构建的 `buildEnv` 提供基础 PATH；`shellHook` 在每条命令的 shell 中执行（类似 devShell 初始化）。
 - **临时加包**：模型通过 `sandbox_packages` 工具 add/remove/list；状态保留到 reset/回收（D41）；实现上用运行时 `nix shell` 把这些包叠加到基础环境（Nix daemon 可用、需要网络/缓存）。
-- 每条命令启动成本需在 M3 实测；必要时缓存环境或引入 sandbox 内持久 shell（当前不要求）。
+- 每条命令启动成本已在 M3 手工测量（base-only 约 4ms、缓存命中的 `nix shell` 单包约 28ms；见 15 V6）；首次 fetch/realize 另计，必要时缓存环境或引入 sandbox 内持久 shell（当前不要求）。
 
 ### 提权
 
@@ -154,6 +155,7 @@ bash(
   - `reset`：销毁临时目录并重建，清空临时包；有后台任务时拒绝 reset。
 - TTL：空闲 30 分钟（可配，D46）自动回收（回收 upper/临时目录、清空包、generation+1）；回收前若有后台任务则跳过并在下一轮检查。
 - 进程重启：sandbox 目录落盘；TTL 按 lastUsed 恢复；重启后仍在 TTL 内则复用，否则回收。
+- M3 实现：metadata 放在 `$DSH_HOME/sandboxes/<sessionId>.json`（generation/packages/createdAt/lastUsedAt），目录为 `$DSH_HOME/sandboxes/<sessionId>/`；按 session 串行化 ensure/reset/start，避免竞态；损坏的 sidecar 备份为 `.corrupt-*` 后重建。
 - `/clear`、goal 归档：删除对应 session 的 sandbox 目录（见 05/10）。
 - 磁盘占用：不额外做配额；依赖 TTL 与手动 reset。
 
@@ -205,7 +207,7 @@ sandbox 是"干净/可重置环境"，**不是安全隔离边界**：同用户�
 ## 7.10 为什么不做复合 executor / 不改 DSH 契约
 
 - 把多个 executor 塞进一个 `ctx.shell` provider 需要私有类型扩展或把 host 塞进 `workdir`，会污染 DSH seam。
-- 我们的 `bash` 工具本来就是自研的，直接调用 `ctx.shellHosts` 更清晰；`ctx.shell` 保留为默认 host 的 façade，供其他 DSH 消费方（未来 hooks 等）使用。
+- 我们的 `bash` 工具本来就是自研的，直接调用 `ctx.shellHosts` 更清晰；`ctx.shell` 保留为本地 sessionless façade，sandbox default 时拒绝执行，模型工具永远带 session 走 host registry。
 - 这样本地执行器的沙箱/权限语义不会被"复合"破坏；我们也不再使用 DSH 的权限沙箱（Auto 下为 full access）。
 
 ## 7.11 已撤销/未采用的方案
@@ -215,3 +217,27 @@ sandbox 是"干净/可重置环境"，**不是安全隔离边界**：同用户�
 - DSH 原生 `/permission` 沙箱作为执行约束：**不使用**；Auto preset 下沙箱模式为 danger-full-access，权限判断在 reviewer。
 - 多个 host 插件各自注册 `ctx.shell`：**不可行**（单 provider），改 router。
 - 模型直接指定 SSH 目标：**不允许**；只选 host id。
+
+## 7.12 M3 实现记录（2026-10-25）
+
+### 已实现
+
+- `packages/shell-bash`：扩展 `ShellHostExecRequest`（`onExpiry`/`signal`/`env`/`dshEnv`/`sessionId`/`runInBackground`），provider 支持 `run`/`start`/`reset`/`status`/`disposeSession`；registry 增加 `execute`/`start`/`spawnBash`/`hasStart`/`reset`/`status`/`disposeSession`。`spawnBash` 复用 `LocalBashExecutor` 的超时、输出、spill、取消语义。
+- `@nokoribi/shell-bash/tool`：注册 `bash`、`get_available_shell_host`、`nokoribi:hosts`（order 3000）与 `tool:bash` 引导；`run_in_background` 通过 `ctx.jobs`，输出源来自 `ShellExecution.observed`。
+- `local:workspace`：实现前台/后台，`extraPackages` 前置 PATH；工具默认 cwd 为 session workspace。
+- `sandbox:default`：每 session 目录；sidecar `$DSH_HOME/sandboxes/<sessionId>.json`；generation/packages/lastUsed；TTL 30 分钟默认、可配；reset/status；`sandbox_packages`；`disposeSession`。
+- sandbox 执行：base PATH 为 `<guard>:<baseEnvironment>/bin`；guard 前置 `sudo`/`su`/`pkexec`/`doas` shim 与 `bash` 符号链接；有临时包时经 `nix shell <base> <packages> --command setpriv ...`，否则直接 `setpriv --no-new-privs`；用户命令只作为 `$1` 传入，不拼接进 shell 源；`shellHook` 在命令前执行；`DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR` 由 host 注入。
+- `/clear` 后调用 `ctx.shellHosts.disposeSession(previousId)` 删除旧 session sandbox；启动时校验 default host 必须存在。
+- Prompt：`nokoribi:hosts` 说明默认 host、sandbox/local 差异、路径、cp/rsync、sandbox 禁 sudo。
+- 测试：`pnpm test` 24 文件/193 测试；`pnpm test:process` 24 场景（M1 8 + M2 11 + M3 5）；`pnpm check` 通过。
+- 手工真实 Nix：`buildEnv { bash coreutils }` 下验证 cwd/`DSH_SANDBOX_DIR`、workspace→sandbox `cp`、sudo shim、`sandbox_packages add nixpkgs#hello` 后执行 `hello`、reset 清包；V6 计时见 15。
+
+### 明确偏差/边界
+
+- `ctx.shell` 保持 sessionless；default host 为 sandbox 时 `ctx.shell.execute` 拒绝。rc.3 没有第一方执行消费者依赖它（D134）。
+- 不采用上游 `dsh-tool-bash` 的前台超时自动转后台；只有显式 `run_in_background` 注册 job（D135）。
+- `baseEnvironment` 必须是绝对 Nix buildEnv store path；为空时 daemon 仍可启动但 sandbox 命令返回未配置错误。M6 负责构建；无 Nix 的开发环境可设 `NOKORIBI_DEFAULT_HOST=local:workspace`。
+- `nix shell` 仅用于临时包；base-only 命令直接走受限 PATH，避免每条命令的 Nix eval 成本。`sandbox_packages add` 用 `nix shell ... --command <bash> -c true` 预验证。
+- `setpriv` 从 PATH 解析或由配置覆盖；缺失时命令报错。M6 的 system/buildEnv 必须提供 util-linux。
+- sandbox 不是强制隔离（D48）：同用户绝对路径仍可访问；PATH guard 只是可用性保护，`no_new_privs` 才是提权兜底。
+- TTL 回收/重置会清空临时目录与临时包；重要产物必须写回 workspace。

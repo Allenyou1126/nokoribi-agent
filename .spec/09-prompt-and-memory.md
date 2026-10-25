@@ -36,6 +36,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 
 - 具体 order 数值实现时按 DSH 第一方段落的实际顺序调整，保证不覆盖内置身份/工具引导（除非明确替换身份句）。
 - M2 已实现 `nokoribi:safety`（order 8000）与更新后的 `nokoribi:interaction`；`/permission` 只读，审批/提问由系统单独展示。
+- M3 已实现 `nokoribi:hosts`（order 3000，由 `@nokoribi/shell-bash/tool` 注册）：默认 host、sandbox/local 差异、`DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR`、cp/rsync、sandbox 禁 sudo、host 发现指引。
 - 上述段落内容保持稳定，避免每轮变化破坏 KV cache。
 
 ### 动态 runtime context

@@ -118,6 +118,9 @@ services.nokoribi-agent = {
 - 模型 ID 由用户填写；实现前用 API key 查目录确认图像支持（D16/D69）。
 - `models.subagents` 是主 agent 可选的模型白名单；主 agent 自行选择。
 - reviewer 两档只配 `review.fast`/`review.strong`（D85）。
+- M3 的 sandbox provider 需要绝对 Nix `buildEnv` store path（`sandbox.packages` 构造）；module 在 M6 生成并写入 `baseEnvironment`。`shellHook` 原样传入；`idleTtlMinutes` 映射 `NOKORIBI_SANDBOX_TTL_MS`。
+- `hosts.local.extraPackages` 用 `lib.makeBinPath` 生成 PATH 目录列表；`sandbox` 的 base PATH 由 buildEnv 的 `bin` 提供。
+- sandbox 的 no_new_privs wrapper 需要 `setpriv`（util-linux）与 `nix`；M6 必须确保二者在 system/buildEnv 中可达，必要时通过 `noNewPrivilegesCommand` / `nixBinary` 覆盖绝对路径。
 - 没有 token 预算、没有 heartbeat、没有 web-debug 选项。
 
 ## 12.5 生成的运行时配置
