@@ -57,7 +57,8 @@
         "@nokoribi/prompt": "workspace:*",
         "@nokoribi/reviewer": "workspace:*",
         "@nokoribi/shell-bash": "workspace:*",
-        "@nokoribi/shell-host-local": "workspace:*"
+        "@nokoribi/shell-host-local": "workspace:*",
+        "@nokoribi/shell-host-sandbox": "workspace:*"
     },
     "dsh": {
         "bundle": {

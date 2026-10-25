@@ -157,12 +157,31 @@
       - id: nokoribi-shell-router
         name: "@nokoribi/shell-bash"
         config:
-            defaultHost: local:workspace
+            defaultHost: !!js process.env.NOKORIBI_DEFAULT_HOST ?? 'sandbox:default'
 
       - id: nokoribi-shell-host-local
         name: "@nokoribi/shell-host-local"
         config:
             workspace: !!js process.env.NOKORIBI_WORKSPACE ?? dshHomePath('workspace')
+            extraPackages: !!js (process.env.NOKORIBI_LOCAL_EXTRA_PATH ?? '').split(':').filter(Boolean)
+
+      - id: nokoribi-shell-host-sandbox
+        name: "@nokoribi/shell-host-sandbox"
+        config:
+            id: sandbox:default
+            root: !!js dshHomePath('sandboxes')
+            workspace: !!js process.env.NOKORIBI_WORKSPACE ?? dshHomePath('workspace')
+            baseEnvironment: !!js process.env.NOKORIBI_SANDBOX_BASE_ENV ?? ''
+            shellHook: !!js process.env.NOKORIBI_SANDBOX_SHELL_HOOK ?? ''
+            idleTtlMs: !!js Number(process.env.NOKORIBI_SANDBOX_TTL_MS ?? 1800000)
+            sweepIntervalMs: !!js Number(process.env.NOKORIBI_SANDBOX_SWEEP_MS ?? 60000)
+            allowRuntimePackages: !!js (process.env.NOKORIBI_SANDBOX_ALLOW_RUNTIME_PACKAGES ?? 'true') !== 'false'
+            nixBinary: !!js process.env.NOKORIBI_SANDBOX_NIX ?? 'nix'
+            nixTimeoutMs: !!js Number(process.env.NOKORIBI_SANDBOX_NIX_TIMEOUT_MS ?? 120000)
+            noNewPrivilegesCommand: !!js process.env.NOKORIBI_SANDBOX_SETPRIV ?? ''
+
+      - id: nokoribi-tool-bash-hosted
+        name: "@nokoribi/shell-bash/tool"
 
       - id: permission-presets
         name: "@deepseek-ai/dsh-permission-presets"

@@ -29,6 +29,7 @@
         "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
         "@deepseek-ai/schemastery": "3.18.5",
         "@nokoribi/channel-core": "workspace:*",
-        "@nokoribi/shared": "workspace:*"
+        "@nokoribi/shared": "workspace:*",
+        "@nokoribi/shell-bash": "workspace:*"
     }
 }

@@ -6,7 +6,6 @@ import type {
     ShellExecSpec,
     ShellExecution,
     ShellExecutor,
-    ShellRunResult,
 } from "@deepseek-ai/dsh-shell";
 
 import { ShellHostRegistry } from "./hosts.js";
@@ -21,10 +20,14 @@ export interface ShellRouterConfig extends BashConfig {
 /**
  * The composition's only `ctx.shell` provider.
  *
- * It extends the local bash executor so the default local host owns real
- * execution, and it provides `ctx.shellHosts` for host discovery and future
- * host routing (D24). `sandboxMode` reports `danger-full-access` because the
- * real security gate is Auto review, not a DSH permission sandbox (07.11).
+ * It extends the local bash executor so host providers can reuse real
+ * execution mechanics, and it provides `ctx.shellHosts` for host discovery and
+ * routing (D24). `sandboxMode` reports `danger-full-access` because the real
+ * security gate is Auto review, not a DSH permission sandbox (07.11).
+ *
+ * The `ctx.shell` façade is intentionally sessionless. A local default host
+ * can serve it; a sandbox default host cannot, because sandbox execution is
+ * bound to an agent session. Model-facing tools always use `ctx.shellHosts`.
  */
 export class ShellRouter extends LocalBashExecutor {
     private readonly hosts: ShellHostRegistry;
@@ -38,7 +41,7 @@ export class ShellRouter extends LocalBashExecutor {
         super(ctx, config);
         this.hosts = new ShellHostRegistry(ctx, {
             defaultHost: config.defaultHost,
-            runLocal: (request) => this.runLocal(request),
+            spawnBash: (request) => this.spawnBashInternal(request),
         });
     }
 
@@ -64,27 +67,44 @@ export class ShellRouter extends LocalBashExecutor {
     }
 
     /**
-     * Execute one resolved spec on the local executor.
-     * @param spec - resolved spec from {@link resolve}.
+     * Serve the sessionless `ctx.shell` façade.
+     *
+     * A local default host can execute without a session. A sandbox default
+     * host cannot be bound safely here, so this fails closed instead of
+     * silently executing on the host; model tools use `ctx.shellHosts`.
+     * @param spec - resolved local spec from {@link resolve}.
      * @returns the prepared execution handle.
-     * @throws when the configured default host is not registered.
+     * @throws when the default host needs a session or is not local.
      */
     override async execute(spec: ShellExecSpec): Promise<ShellExecution> {
-        this.hosts.requireDefaultHost();
-        return super.execute(spec);
+        const host = this.hosts.requireDefaultHost();
+        if (host.kind !== "local") {
+            throw new Error(
+                `ctx.shell cannot execute the default "${host.id}" host ` +
+                    "without a session; use the bash tool (host-aware) " +
+                    "or select a local default host"
+            );
+        }
+        const providerId = host.id;
+        const request: ShellHostExecRequest = {
+            command: spec.command,
+            workdir: spec.workdir,
+            timeoutMs: spec.timeoutMs,
+            onExpiry: spec.onExpiry,
+            ...(spec.signal === undefined ? {} : { signal: spec.signal }),
+            ...(spec.env === undefined ? {} : { env: spec.env }),
+            ...(spec.dshEnv === undefined ? {} : { dshEnv: spec.dshEnv }),
+        };
+        if (this.hosts.hasStart(providerId)) {
+            return await this.hosts.start(request, providerId);
+        }
+        return await super.execute(spec);
     }
 
-    /** Run one host request through the inherited local bash capability. */
-    private async runLocal(
-        request: ShellHostExecRequest
-    ): Promise<ShellRunResult> {
-        const spec = super.resolve({
-            command: request.command,
-            workdir: request.workdir,
-            timeoutMs: request.timeoutMs,
-            signal: request.signal,
-        });
-        const execution = await super.execute(spec);
-        return execution.result();
+    /** Resolve and spawn an explicit argv/environment through the executor. */
+    private async spawnBashInternal(
+        request: ShellExecRequest
+    ): Promise<ShellExecution> {
+        return await super.execute(super.resolve(request));
     }
 }

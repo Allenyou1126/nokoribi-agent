@@ -1,5 +1,5 @@
 import { Context } from "@deepseek-ai/cordis";
-import type { ShellRunResult } from "@deepseek-ai/dsh-shell";
+import type { ShellExecution, ShellRunResult } from "@deepseek-ai/dsh-shell";
 import { describe, expect, it } from "vitest";
 
 import { ShellHostRegistry } from "../src/hosts.js";
@@ -8,6 +8,44 @@ import type {
     ShellHostExecRequest,
     ShellHostProvider,
 } from "../src/hosts.js";
+
+function runResult(text = "", exitCode = 0): ShellRunResult {
+    return {
+        exitCode,
+        signal: null,
+        timedOut: false,
+        aborted: false,
+        timeoutMs: 1000,
+        stdout: { text, truncated: false },
+        stderr: { text: "", truncated: false },
+    };
+}
+
+function reader(text: string) {
+    return {
+        readFrom: (fromByte: number) => ({
+            text: text.slice(fromByte),
+            nextOffset: text.length,
+            lossy: false,
+        }),
+    };
+}
+
+function execution(text = ""): ShellExecution {
+    return {
+        status: "completed",
+        exitCode: 0,
+        signal: null,
+        done: Promise.resolve(),
+        observed: {
+            stdout: reader(text),
+            stderr: reader(""),
+        },
+        readOutput: () => ({ delta: text, lossy: false }),
+        kill: () => false,
+        result: async () => runResult(text),
+    };
+}
 
 function localProvider(
     overrides: Partial<ShellHostProvider> = {}
@@ -22,6 +60,7 @@ function localProvider(
             sandbox: false,
             workdir: "local",
         },
+        run: async (request) => runResult(request.command),
         ...overrides,
     };
 }
@@ -35,10 +74,12 @@ function sandboxProvider(
         title: "Sandbox",
         description: "干净环境",
         capabilities: {
-            background: false,
+            background: true,
             sandbox: false,
             workdir: "local",
         },
+        run: async (request) => runResult(request.command),
+        start: async (request) => execution(request.command),
         ...overrides,
     };
 }
@@ -47,18 +88,6 @@ function withCapabilities(capabilities: unknown): ShellHostProvider {
     return {
         ...localProvider(),
         capabilities: capabilities as ShellHostCapabilities,
-    };
-}
-
-function runResult(text = ""): ShellRunResult {
-    return {
-        exitCode: 0,
-        signal: null,
-        timedOut: false,
-        aborted: false,
-        timeoutMs: 1000,
-        stdout: { text, truncated: false },
-        stderr: { text: "", truncated: false },
     };
 }
 
@@ -137,7 +166,7 @@ describe("ShellHostRegistry", () => {
         ).toThrow(/id prefix/);
     });
 
-    it("rejects invalid capabilities and empty metadata", () => {
+    it("rejects invalid capabilities, empty metadata, and missing start", () => {
         const registry = new ShellHostRegistry(new Context(), {
             defaultHost: "local:workspace",
         });
@@ -165,6 +194,17 @@ describe("ShellHostRegistry", () => {
         expect(() =>
             registry.register(localProvider({ description: "" }))
         ).toThrow(/non-empty description/);
+        expect(() =>
+            registry.register(
+                localProvider({
+                    capabilities: {
+                        background: true,
+                        sandbox: false,
+                        workdir: "local",
+                    },
+                })
+            )
+        ).toThrow(/does not implement start/);
     });
 
     it("requires the default host to exist", () => {
@@ -197,47 +237,134 @@ describe("ShellHostRegistry", () => {
         expect(result.stdout.text).toBe("sandbox output");
     });
 
-    it("falls back to the router local runner for local hosts", async () => {
-        const requests: ShellHostExecRequest[] = [];
+    it("falls back to the start handle for foreground execution", async () => {
         const registry = new ShellHostRegistry(new Context(), {
-            defaultHost: "local:workspace",
-            runLocal: async (request) => {
-                requests.push(request);
-                return runResult(request.command);
-            },
+            defaultHost: "sandbox:default",
         });
-        registry.register(localProvider({ defaultWorkdir: "/srv/workspace" }));
+        registry.register(
+            sandboxProvider({
+                run: undefined,
+                start: async () => execution("from start"),
+            })
+        );
         const result = await registry.execute({ command: "echo hi" });
-        expect(result.stdout.text).toBe("echo hi");
-        expect(requests).toEqual([
-            { command: "echo hi", workdir: "/srv/workspace" },
-        ]);
+        expect(result.stdout.text).toBe("from start");
     });
 
-    it("keeps an explicit request workdir over the host default", async () => {
-        const requests: ShellHostExecRequest[] = [];
+    it("starts a background handle through the provider", async () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "sandbox:default",
+        });
+        registry.register(sandboxProvider());
+        const handle = await registry.start({ command: "sleep 1" });
+        expect(handle.status).toBe("completed");
+    });
+
+    it("rejects start for providers without background support", async () => {
         const registry = new ShellHostRegistry(new Context(), {
             defaultHost: "local:workspace",
-            runLocal: async (request) => {
-                requests.push(request);
-                return runResult();
+        });
+        registry.register(localProvider());
+        expect(registry.hasStart("local:workspace")).toBe(false);
+        await expect(registry.start({ command: "ls" })).rejects.toThrow(
+            /does not support background jobs/
+        );
+    });
+
+    it("delegates spawnBash to the router callback", async () => {
+        const requests: string[] = [];
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+            spawnBash: async (request) => {
+                requests.push(request.command);
+                return execution(request.command);
             },
         });
-        registry.register(localProvider({ defaultWorkdir: "/srv/workspace" }));
-        await registry.execute({ command: "ls", workdir: "/tmp" });
-        expect(requests[0]?.workdir).toBe("/tmp");
+        const handle = await registry.spawnBash({ command: "echo spawn" });
+        expect(requests).toEqual(["echo spawn"]);
+        expect(handle.status).toBe("completed");
+    });
+
+    it("fails loud when no bash spawner is installed", async () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+        });
+        await expect(registry.spawnBash({ command: "ls" })).rejects.toThrow(
+            /did not install a bash spawner/
+        );
     });
 
     it("rejects unknown hosts and hosts without an executor", async () => {
         const registry = new ShellHostRegistry(new Context(), {
             defaultHost: "local:workspace",
         });
-        registry.register(localProvider());
+        registry.register(localProvider({ run: undefined }));
         await expect(
             registry.execute({ command: "ls" }, "sandbox:default")
         ).rejects.toThrow(/unknown shell host "sandbox:default"/);
         await expect(registry.execute({ command: "ls" })).rejects.toThrow(
             /does not implement execution/
         );
+    });
+
+    it("forwards reset, status, and per-session disposal", async () => {
+        const calls: string[] = [];
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "sandbox:default",
+        });
+        registry.register(
+            sandboxProvider({
+                reset: async (sessionId) => {
+                    calls.push(`reset:${sessionId}`);
+                },
+                status: async (sessionId) => ({ sessionId }),
+                disposeSession: async (sessionId) => {
+                    calls.push(`dispose:${sessionId}`);
+                },
+            })
+        );
+        await registry.reset("sandbox:default", "main-1");
+        await expect(
+            registry.status("sandbox:default", "main-1")
+        ).resolves.toEqual({ sessionId: "main-1" });
+        await registry.disposeSession("main-1");
+        expect(calls).toEqual(["reset:main-1", "dispose:main-1"]);
+    });
+
+    it("aggregates per-session disposal failures after every provider", async () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "sandbox:default",
+        });
+        const calls: string[] = [];
+        registry.register({
+            ...localProvider({ id: "sandbox:other", kind: "sandbox" }),
+            disposeSession: async () => {
+                calls.push("sandbox");
+                throw new Error("sandbox failed");
+            },
+        });
+        registry.register({
+            ...localProvider({ id: "local:other" }),
+            disposeSession: async () => {
+                calls.push("local");
+            },
+        });
+        await expect(registry.disposeSession("main-1")).rejects.toThrow(
+            /sandbox failed/
+        );
+        expect(calls).toEqual(["sandbox", "local"]);
+    });
+
+    it("rejects reset/status for hosts that do not provide them", async () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+        });
+        registry.register(localProvider());
+        await expect(
+            registry.reset("local:workspace", "main-1")
+        ).rejects.toThrow(/does not support reset/);
+        await expect(
+            registry.status("local:workspace", "main-1")
+        ).rejects.toThrow(/does not expose status/);
     });
 });

@@ -94,6 +94,7 @@ export class Daemon {
                 this.paths.lockPath,
                 this.config.version
             );
+            this.ctx.shellHosts.requireDefaultHost();
             await this.ctx.channels.initialize();
             await this.recover();
         } catch (error) {
@@ -505,6 +506,16 @@ export class Daemon {
                 session: previousId ?? "-",
                 error: errorMessage(error),
             });
+        }
+        if (previousId !== null) {
+            try {
+                await this.ctx.shellHosts.disposeSession(previousId);
+            } catch (error) {
+                this.logger.error("failed to dispose previous sandbox", {
+                    session: previousId,
+                    error: errorMessage(error),
+                });
+            }
         }
         this.logger.info("main session cleared", {
             previous: previousId ?? "-",

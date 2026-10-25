@@ -1,6 +1,12 @@
 import { Service } from "@deepseek-ai/cordis";
 import type { Context } from "@deepseek-ai/cordis";
-import type { ShellRunResult } from "@deepseek-ai/dsh-shell";
+import type {
+    DshEnvironment,
+    ShellExecRequest,
+    ShellExecution,
+    ShellExpiryPolicy,
+    ShellRunResult,
+} from "@deepseek-ai/dsh-shell";
 
 /** Host families accepted by the router (07.2). */
 export type ShellHostKind = "local" | "sandbox" | "ssh" | "client";
@@ -15,7 +21,7 @@ export const SHELL_HOST_KINDS: readonly ShellHostKind[] = [
 
 /** Capabilities a host advertises to the model-facing tool layer. */
 export interface ShellHostCapabilities {
-    /** Whether `run_in_background` is supported; M1 hosts report false. */
+    /** Whether `run_in_background` is supported. */
     readonly background: boolean;
     /** DSH permission-sandbox semantics; every v1 host reports false. */
     readonly sandbox: false;
@@ -31,21 +37,37 @@ export interface ShellHostExecRequest {
     readonly workdir?: string | undefined;
     /** Timeout override in milliseconds; the executor caps it. */
     readonly timeoutMs?: number | undefined;
+    /** Deadline policy at expiry; sandbox background calls use `none`. */
+    readonly onExpiry?: ShellExpiryPolicy | undefined;
     /** Cancellation signal owned by the caller. */
     readonly signal?: AbortSignal | undefined;
+    /** Ordinary environment entries the host may extend (for example PATH). */
+    readonly env?: Readonly<Record<string, string>> | undefined;
+    /** Managed `DSH_*` facts; hosts may add their own keys. */
+    readonly dshEnv?: DshEnvironment | undefined;
+    /** Owning session used by per-session hosts such as sandbox. */
+    readonly sessionId?: string | undefined;
+    /** Whether the caller asked for a background job. */
+    readonly runInBackground?: boolean | undefined;
 }
 
-/** Execute one request on a host; used by future model-facing tools. */
+/** Execute one request on a host; used by the registry's foreground path. */
 export type ShellHostRunner = (
     request: ShellHostExecRequest
 ) => Promise<ShellRunResult>;
 
+/** Start one request on a host; the handle is the background caller's view. */
+export type ShellHostStarter = (
+    request: ShellHostExecRequest
+) => Promise<ShellExecution>;
+
 /**
- * A host provider registered with the router (07.2, M1 subset).
+ * A host provider registered with the router (07.2).
  *
- * The v1 protocol keeps metadata and execution together. A local provider may
- * omit `run`; the router then serves it through its inherited local bash
- * capability, which keeps the local host on one shared executor.
+ * Providers own execution for their environment. The router supplies
+ * {@link ShellHostRegistry.spawnBash} so both built-in providers can reuse the
+ * inherited local bash mechanics (deadlines, bounded output, spill files,
+ * cancellation) with their own argv and environment.
  */
 export interface ShellHostProvider {
     /** Full host id, `<kind>:<instance>`. */
@@ -58,14 +80,23 @@ export interface ShellHostProvider {
     readonly description: string;
     /** Advertised capabilities. */
     readonly capabilities: ShellHostCapabilities;
-    /** Host-specific execution; local hosts may omit it. */
+    /** Foreground execution; at least one of `run`/`start` is required. */
     readonly run?: ShellHostRunner | undefined;
+    /** Background-capable execution; required when `background` is true. */
+    readonly start?: ShellHostStarter | undefined;
+    /** Reset a per-session host instance (sandbox). */
+    readonly reset?: ((sessionId: string) => Promise<void>) | undefined;
+    /** Inspect a per-session host instance (sandbox). */
+    readonly status?: ((sessionId: string) => Promise<unknown>) | undefined;
+    /** Release all resources of one session (for `/clear` and goal archive). */
+    readonly disposeSession?:
+        | ((sessionId: string) => Promise<void>)
+        | undefined;
     /**
      * Default working directory when a request omits one.
      *
-     * The router applies it to the local execution a host routes to; it is
-     * deliberately absent from {@link ShellHostInfo} so discovery output stays
-     * short.
+     * The router applies it to local execution; it is deliberately absent from
+     * {@link ShellHostInfo} so discovery output stays short.
      */
     readonly defaultWorkdir?: string | undefined;
 }
@@ -83,8 +114,13 @@ export interface ShellHostInfo {
 export interface ShellHostRegistryOptions {
     /** Host id used when a caller does not name one. */
     readonly defaultHost: string;
-    /** Fallback runner for local providers that do not implement `run`. */
-    readonly runLocal?: ShellHostRunner | undefined;
+    /**
+     * The router's bash mechanics, used by host providers to spawn their own
+     * argv/environment with DSH-consistent limits and output handling.
+     */
+    readonly spawnBash?:
+        | ((request: ShellExecRequest) => Promise<ShellExecution>)
+        | undefined;
 }
 
 declare module "@deepseek-ai/cordis" {
@@ -152,30 +188,36 @@ function presentHost(provider: ShellHostProvider): ShellHostInfo {
     };
 }
 
+function describeIds(ids: readonly string[]): string {
+    return ids.length === 0 ? "none" : ids.join(", ");
+}
+
 /**
  * Registry (`ctx.shellHosts`) of executable shell hosts.
  *
  * The router owns this service and is the only `ctx.shell` provider (D24):
- * hosts register metadata here, model-facing tools select a host, and the
- * router executes the default local host through its inherited bash
- * capability. The registry validates id uniqueness, the `<kind>:` prefix, and
- * that the configured default host exists before a caller can use it.
+ * hosts register execution here, model-facing tools select a host, and the
+ * router supplies the shared bash mechanics through {@link spawnBash}. The
+ * registry validates id uniqueness, the `<kind>:` prefix, and that the
+ * configured default host exists before a caller can use it.
  */
 export class ShellHostRegistry extends Service {
     private readonly hosts: Map<string, ShellHostProvider> = new Map();
     private readonly defaultHostId: string;
-    private readonly runLocal: ShellHostRunner | undefined;
+    private readonly bashSpawner:
+        | ((request: ShellExecRequest) => Promise<ShellExecution>)
+        | undefined;
 
     /**
      * Create and install the `ctx.shellHosts` service.
      * @param ctx - Cordis context that owns the service.
-     * @param options - default host id and the local fallback runner.
+     * @param options - default host id and the router bash spawner.
      */
     constructor(ctx: Context, options: ShellHostRegistryOptions) {
         super(ctx, "shellHosts");
         hostKindOfId(options.defaultHost);
         this.defaultHostId = options.defaultHost;
-        this.runLocal = options.runLocal;
+        this.bashSpawner = options.spawnBash;
     }
 
     /** Host id used when a caller does not name one. */
@@ -186,7 +228,7 @@ export class ShellHostRegistry extends Service {
     /**
      * Register one host provider. The registration is disposed with the
      * calling plugin fiber when the returned disposer is not invoked.
-     * @param provider - host metadata, capabilities, and optional runner.
+     * @param provider - host metadata, capabilities, and execution.
      * @returns the exact disposer that unregisters the provider.
      */
     register(provider: ShellHostProvider): () => void {
@@ -201,6 +243,12 @@ export class ShellHostRegistry extends Service {
         requireText(provider.id, "title", provider.title);
         requireText(provider.id, "description", provider.description);
         validateCapabilities(provider.id, provider.capabilities);
+        if (provider.capabilities.background && provider.start === undefined) {
+            throw new Error(
+                `shell host "${provider.id}" declares background support ` +
+                    "but does not implement start()"
+            );
+        }
         if (this.hosts.has(provider.id)) {
             throw new Error(
                 `duplicate shell host id "${provider.id}"; ` +
@@ -254,41 +302,134 @@ export class ShellHostRegistry extends Service {
 
     /**
      * Resolve and execute one request on a host.
-     *
-     * M1 only supplies the local host, so the router's inherited local bash
-     * capability is the runner; a provider that implements `run` owns its
-     * execution instead (the seam the sandbox/SSH hosts will use).
      * @param request - the host-agnostic execution request.
      * @param hostId - target host; the default host when omitted.
      * @returns the executor's foreground result.
-     * @throws when the host is unknown or cannot execute yet.
+     * @throws when the host is unknown or cannot execute.
      */
     async execute(
         request: ShellHostExecRequest,
         hostId?: string
     ): Promise<ShellRunResult> {
+        const provider = this.requireProvider(hostId);
+        if (provider.run !== undefined) return await provider.run(request);
+        if (provider.start !== undefined) {
+            return await (await provider.start(request)).result();
+        }
+        throw new Error(
+            `shell host "${provider.id}" does not implement execution`
+        );
+    }
+
+    /**
+     * Resolve and start one request on a host without waiting for completion.
+     * @param request - the host-agnostic execution request.
+     * @param hostId - target host; the default host when omitted.
+     * @returns the live execution handle.
+     * @throws when the host is unknown or does not support background work.
+     */
+    async start(
+        request: ShellHostExecRequest,
+        hostId?: string
+    ): Promise<ShellExecution> {
+        const provider = this.requireProvider(hostId);
+        if (provider.start === undefined) {
+            throw new Error(
+                `shell host "${provider.id}" does not support background jobs`
+            );
+        }
+        return await provider.start(request);
+    }
+
+    /**
+     * Spawn arbitrary bash mechanics through the router. Host providers use
+     * this to keep DSH deadlines, bounded output, spill files, and cancellation
+     * semantics while replacing argv and environment for their environment.
+     * @param request - fully resolved caller request.
+     * @returns the live execution handle.
+     * @throws when the router did not install a bash spawner.
+     */
+    async spawnBash(request: ShellExecRequest): Promise<ShellExecution> {
+        if (this.bashSpawner === undefined) {
+            throw new Error(
+                "shell router did not install a bash spawner; " +
+                    "host providers cannot execute"
+            );
+        }
+        return await this.bashSpawner(request);
+    }
+
+    /**
+     * Whether one host implements background execution.
+     * @param hostId - target host id.
+     * @returns true when `start()` is available.
+     */
+    hasStart(hostId: string): boolean {
+        return this.hosts.get(hostId)?.start !== undefined;
+    }
+
+    /**
+     * Reset one per-session host instance.
+     * @param hostId - target host.
+     * @param sessionId - owning session.
+     */
+    async reset(hostId: string, sessionId: string): Promise<void> {
+        const provider = this.hosts.get(hostId);
+        if (provider?.reset === undefined) {
+            throw new Error(`shell host "${hostId}" does not support reset`);
+        }
+        await provider.reset(sessionId);
+    }
+
+    /**
+     * Inspect one per-session host instance.
+     * @param hostId - target host.
+     * @param sessionId - owning session.
+     * @returns the provider-owned status value.
+     */
+    async status(hostId: string, sessionId: string): Promise<unknown> {
+        const provider = this.hosts.get(hostId);
+        if (provider?.status === undefined) {
+            throw new Error(`shell host "${hostId}" does not expose status`);
+        }
+        return await provider.status(sessionId);
+    }
+
+    /**
+     * Release one session across every host that owns per-session resources.
+     * Used by `/clear` and goal archive; failures are aggregated after every
+     * provider had a chance to clean up.
+     * @param sessionId - session being released.
+     */
+    async disposeSession(sessionId: string): Promise<void> {
+        const failures: unknown[] = [];
+        for (const provider of this.hosts.values()) {
+            if (provider.disposeSession === undefined) continue;
+            try {
+                await provider.disposeSession(sessionId);
+            } catch (error) {
+                failures.push(error);
+            }
+        }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+            throw new AggregateError(
+                failures,
+                `failed to dispose shell host sessions for "${sessionId}"`
+            );
+        }
+    }
+
+    private requireProvider(hostId?: string): ShellHostProvider {
         const target = hostId ?? this.requireDefaultHost().id;
         const provider = this.hosts.get(target);
         if (provider === undefined) {
+            const registered = this.list().map((host) => host.id);
             throw new Error(
                 `unknown shell host "${target}" (registered: ` +
-                    `${describeIds(this.list().map((host) => host.id))})`
+                    `${describeIds(registered)})`
             );
         }
-        if (provider.run !== undefined) return provider.run(request);
-        if (provider.kind === "local" && this.runLocal !== undefined) {
-            return this.runLocal({
-                ...request,
-                workdir: request.workdir ?? provider.defaultWorkdir,
-            });
-        }
-        throw new Error(
-            `shell host "${provider.id}" does not implement execution; ` +
-                "M1 only routes the local host through the router"
-        );
+        return provider;
     }
-}
-
-function describeIds(ids: readonly string[]): string {
-    return ids.length === 0 ? "none" : ids.join(", ");
 }

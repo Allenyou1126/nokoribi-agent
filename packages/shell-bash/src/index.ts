@@ -11,6 +11,7 @@ import type {
     ShellHostProvider,
     ShellHostRegistryOptions,
     ShellHostRunner,
+    ShellHostStarter,
 } from "./hosts.js";
 import { ShellRouter } from "./router.js";
 import type { ShellRouterConfig } from "./router.js";
@@ -24,6 +25,7 @@ export type {
     ShellHostProvider,
     ShellHostRegistryOptions,
     ShellHostRunner,
+    ShellHostStarter,
 };
 export { ShellRouter };
 export type { ShellRouterConfig };
@@ -34,8 +36,8 @@ export const name: string = "shell-router";
 /** The inherited local bash capability needs the subprocess seam. */
 export const inject: string[] = ["subprocess"];
 
-/** M1 registers only the persistent local workspace host. */
-export const DEFAULT_HOST: string = "local:workspace";
+/** M3 default host: the clean disposable sandbox (D49). */
+export const DEFAULT_HOST: string = "sandbox:default";
 
 type ObjectSchema = ReturnType<typeof Schema.object>;
 

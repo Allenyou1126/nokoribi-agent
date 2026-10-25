@@ -1,5 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
 import type { Volatile } from "@deepseek-ai/cordis";
+import type { ShellExecution } from "@deepseek-ai/dsh-shell";
 import { describe, expect, it } from "vitest";
 
 import * as routerPlugin from "../src/index.js";
@@ -49,16 +50,40 @@ function createFixture(
 }
 
 function registerLocal(ctx: Context): () => void {
+    const start = async (request: {
+        command: string;
+        workdir?: string | undefined;
+        timeoutMs?: number | undefined;
+        onExpiry?: "kill" | "none" | undefined;
+        signal?: AbortSignal | undefined;
+        env?: Readonly<Record<string, string>> | undefined;
+    }): Promise<ShellExecution> =>
+        await ctx.shellHosts.spawnBash({
+            command: request.command,
+            ...(request.workdir === undefined
+                ? {}
+                : { workdir: request.workdir }),
+            ...(request.timeoutMs === undefined
+                ? {}
+                : { timeoutMs: request.timeoutMs }),
+            ...(request.onExpiry === undefined
+                ? {}
+                : { onExpiry: request.onExpiry }),
+            ...(request.signal === undefined ? {} : { signal: request.signal }),
+            ...(request.env === undefined ? {} : { env: request.env }),
+        });
     return ctx.shellHosts.register({
         id: "local:workspace",
         kind: "local",
         title: "Local workspace",
         description: "主机环境",
         capabilities: {
-            background: false,
+            background: true,
             sandbox: false,
             workdir: "local",
         },
+        start,
+        run: async (request) => await (await start(request)).result(),
     });
 }
 
@@ -88,12 +113,12 @@ describe("ShellRouter", () => {
         dispose();
     });
 
-    it("executes the local host through the inherited capability", async () => {
+    it("serves ctx.shell through the local default host", async () => {
         const { ctx, subprocess } = createFixture();
         registerLocal(ctx);
-        const result = await ctx.shellHosts.execute({
-            command: "echo hi",
-        });
+        const result = await ctx.shell
+            .execute(ctx.shell.resolve({ command: "echo hi" }))
+            .then((execution) => execution.result());
         expect(result.exitCode).toBe(0);
         expect(result.stdout.text).toBe("hello\n");
         const spawn = subprocess.spawns[0];
@@ -102,18 +127,42 @@ describe("ShellRouter", () => {
         expect(spawn?.cwd).toBe(process.cwd());
     });
 
-    it("requires the default host before direct execute calls", async () => {
-        const { router } = createFixture();
+    it("routes ctx.shellHosts execution through the local provider", async () => {
+        const { ctx, subprocess } = createFixture();
+        registerLocal(ctx);
+        const result = await ctx.shellHosts.execute({
+            command: "echo hi",
+        });
+        expect(result.stdout.text).toBe("hello\n");
+        expect(subprocess.spawns[0]?.argv).toEqual(["bash", "-c", "echo hi"]);
+    });
+
+    it("fails closed for a sandbox default host on the sessionless facade", async () => {
+        const { ctx } = createFixture(
+            routerConfig({ defaultHost: "sandbox:default" })
+        );
+        ctx.shellHosts.register({
+            id: "sandbox:default",
+            kind: "sandbox",
+            title: "Sandbox",
+            description: "干净环境",
+            capabilities: {
+                background: true,
+                sandbox: false,
+                workdir: "local",
+            },
+            start: async () => {
+                throw new Error("not used");
+            },
+        });
         await expect(
-            router.execute({
-                command: "echo hi",
-                workdir: process.cwd(),
-                timeoutMs: 1000,
-                onExpiry: "kill",
-                stdoutMaxBytes: 64_000,
-                sandboxPolicy: undefined,
-            })
-        ).rejects.toThrow(/default shell host/);
+            ctx.shell.execute(
+                ctx.shell.resolve({
+                    command: "echo hi",
+                    workdir: process.cwd(),
+                })
+            )
+        ).rejects.toThrow(/without a session/);
     });
 
     it("rejects unknown hosts on the registry seam", async () => {
@@ -126,7 +175,7 @@ describe("ShellRouter", () => {
 
     it("composes the validated config with bash budgets", () => {
         const parsed = Config({}) as unknown as ShellRouterConfig;
-        expect(parsed.defaultHost).toBe("local:workspace");
+        expect(parsed.defaultHost).toBe("sandbox:default");
         expect(parsed.timeoutMs.get()).toBe(120_000);
         expect(parsed.maxTimeoutMs.get()).toBe(600_000);
         const { router } = createFixture(parsed);
@@ -136,13 +185,13 @@ describe("ShellRouter", () => {
     it("loads as a Cordis plugin over the subprocess seam", async () => {
         expect(routerPlugin.name).toBe("shell-router");
         expect(routerPlugin.inject).toEqual(["subprocess"]);
-        expect(routerPlugin.DEFAULT_HOST).toBe("local:workspace");
+        expect(routerPlugin.DEFAULT_HOST).toBe("sandbox:default");
 
         const ctx = new Context();
         new FakeSubprocess(ctx);
         const fiber = await ctx.plugin(routerPlugin, {});
         expect(ctx.shell.sandboxMode).toBe("danger-full-access");
-        expect(ctx.shellHosts.defaultHost).toBe("local:workspace");
+        expect(ctx.shellHosts.defaultHost).toBe("sandbox:default");
         expect(() => ctx.shell.resolve({ command: "echo hi" })).toThrow(
             /default shell host/
         );
