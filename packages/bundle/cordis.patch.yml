@@ -1,4 +1,4 @@
-# Nokoribi Agent M1 bundle.
+# Nokoribi Agent M1/M2 bundle.
 #
 # This is a complete Cordis tree, not a layer over dsh-base. Rows are loaded in
 # order; `inject` declarations decide activation. Keep row ids stable: the NixOS
@@ -113,6 +113,9 @@
       - id: user-questions
         name: "@deepseek-ai/dsh-user-questions"
 
+      - id: tool-ask-user
+        name: "@deepseek-ai/dsh-tool-ask-user"
+
       - id: tool-todo
         name: "@deepseek-ai/dsh-tool-todo"
         config:
@@ -161,12 +164,38 @@
         config:
             workspace: !!js process.env.NOKORIBI_WORKSPACE ?? dshHomePath('workspace')
 
+      - id: permission-presets
+        name: "@deepseek-ai/dsh-permission-presets"
+        config:
+            presets:
+                danger-full-access:
+                    sandbox: danger-full-access
+                    approval: never
+                    name: danger-full-access
+                    description: Full host access; every tool call is reviewed by Auto review.
+            defaultPreset: danger-full-access
+
+      - id: nokoribi-reviewer
+        name: "@nokoribi/reviewer"
+        config:
+            fast:
+                provider: !!js process.env.NOKORIBI_REVIEW_FAST_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
+                model: !!js process.env.NOKORIBI_REVIEW_FAST_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
+                reasoningEffort: !!js process.env.NOKORIBI_REVIEW_FAST_REASONING_EFFORT ?? ''
+            strong:
+                provider: !!js process.env.NOKORIBI_REVIEW_STRONG_PROVIDER ?? process.env.NOKORIBI_REVIEW_FAST_PROVIDER ?? process.env.NOKORIBI_PROVIDER ?? 'deepseek-official'
+                model: !!js process.env.NOKORIBI_REVIEW_STRONG_MODEL ?? process.env.NOKORIBI_REVIEW_FAST_MODEL ?? process.env.NOKORIBI_MODEL ?? 'deepseek-flash'
+                reasoningEffort: !!js process.env.NOKORIBI_REVIEW_STRONG_REASONING_EFFORT ?? ''
+            timeoutMs: !!js Number(process.env.NOKORIBI_REVIEW_TIMEOUT_MS ?? 30000)
+
       - id: nokoribi-channel-core
         name: "@nokoribi/channel-core"
         config:
             allowedSenders: !!js (process.env.NOKORIBI_ALLOWED_SENDERS ?? 'local-user').split(',')
             allowedChats: !!js (process.env.NOKORIBI_ALLOWED_CHATS ?? 'local').split(',')
             defaultChatId: local
+            approvalTimeoutMs: !!js Number(process.env.NOKORIBI_APPROVAL_TIMEOUT_MS ?? 60000)
+            questionTimeoutMs: !!js Number(process.env.NOKORIBI_QUESTION_TIMEOUT_MS ?? 300000)
 
       - id: nokoribi-channel-local-test
         name: "@nokoribi/channel-local-test"
