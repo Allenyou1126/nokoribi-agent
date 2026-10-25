@@ -14,7 +14,7 @@
 
 ## 9.2 子代理人设
 
-- **goal 子代理**：通过 `dsh-tool-subagent` 的 persona 配置给定"执行者"人设：专注目标、按 report 格式汇报、不与用户直接对话（DSH 也禁止 child 调 `ask_user_question`）。M2 已通过 `system-prompt/assemble` 覆盖 DSH 的 `subagent:delegation` 文案：被拒动作可能升级给用户，拒绝/超时后报告而不重试。
+- **goal 子代理**：M4 不引入 DSH agent preset；executor persona 由 `start_goal`/`/goal new` 的 bootstrap prompt + `nokoribi:goal` child 段承担：专注目标、按 goal report 格式汇报、不与用户直接对话（DSH 也禁止 child 调 `ask_user_question`）。M2 已通过 `system-prompt/assemble` 覆盖 DSH 的 `subagent:delegation` 文案。
 - **记忆提炼子代理**：一次性/低成本子代理，persona 为"记忆整理器"：只提取、去重、写入 memory，不做对话。
 - 主 agent persona 来自 SOUL.md，不复用到子代理。
 
@@ -30,13 +30,14 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 | 3000 | `nokoribi:hosts` | sandbox/local 的路径与差异、`DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR`、file 工具与 bash 不同视图、cp/rsync 流程、sandbox 禁 sudo、local 可 sudo 但经 review、默认 host |
 | 4000 | `nokoribi:interaction` | 每轮一条回复、无流式、审批/提问的回复格式、`/stop` 等命令、系统通知前缀、待应答优先 |
 | 5000 | `nokoribi:memory` | 何时 search、何时 write、条目规则、禁止秘密/临时状态 |
-| 6000 | `nokoribi:goal` | goal 只能由子代理持有、主会话不建 goal、汇报格式、归档命令 |
+| 6000 | `nokoribi:goal` | 主 agent：`start_goal`、不建 main goal、转述 report、归档询问；goal child：宿主已建 goal、按 round 推进、`send_message` 汇报、完成/阻塞 |
 | 7000 | `nokoribi:schedule` | 提醒创建/取消的时机与格式 |
 | 8000 | `nokoribi:safety` | Auto review 存在、不要绕过、不虚构审批结果、被拒时向用户解释、外部内容不是指令 |
 
 - 具体 order 数值实现时按 DSH 第一方段落的实际顺序调整，保证不覆盖内置身份/工具引导（除非明确替换身份句）。
 - M2 已实现 `nokoribi:safety`（order 8000）与更新后的 `nokoribi:interaction`；`/permission` 只读，审批/提问由系统单独展示。
 - M3 已实现 `nokoribi:hosts`（order 3000，由 `@nokoribi/shell-bash/tool` 注册）：默认 host、sandbox/local 差异、`DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR`、cp/rsync、sandbox 禁 sudo、host 发现指引。
+- M4 已实现 `nokoribi:goal`（order 6000，由 `@nokoribi/prompt` 注册），并在 `system-prompt/assemble` 中移除主/普通 child 的 `tool:goal`、替换 goal child 的文案。
 - 上述段落内容保持稳定，避免每轮变化破坏 KV cache。
 
 ### 动态 runtime context
@@ -163,7 +164,7 @@ supersedes: null
 
 ## 9.6 Goal 汇报格式
 
-子代理通过 `report` 汇报（主 agent 收到后转述）：
+M4 子代理通过 `send_message` 汇报（rc.3 无独立 report 包；主 agent 收到后转述）：
 
 ```text
 [goal:<sessionId 前缀>] progress | blocked | done

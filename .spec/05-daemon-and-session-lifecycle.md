@@ -50,7 +50,7 @@
 
 ## 5.3 启动顺序
 
-M1/M2 实现顺序：
+M1–M4 实现顺序：
 
 1. `agent-app` 在插件树就绪后取得单实例锁（O_EXCL + holder pid；stale 锁只接管一次；无法读取的锁 fail closed）；随后校验 default shell host 已注册（`ctx.shellHosts.requireDefaultHost()`），缺失则写 startup-error 并拒绝启动。sandbox 的 `baseEnvironment` 允许暂未配置，执行时返回明确错误。
 2. 读取/校验 `agent-state.json`；损坏则备份并按首次启动处理，记录 `state-corrupt`。
@@ -63,10 +63,10 @@ M1/M2 实现顺序：
    - 创建/恢复后立即 `permissionPresets.set(session, "auto")`，校验 `current()==="auto"`；失败则 startup-error，不降级为无审查。注册只读 `/permission` scoped 命令。
    - 创建/恢复后立即 flush，随后写回 state。
 6. 安装 `session/event` 监听、注册命令、安装 status provider，再 `channels.attachRuntime()`。
-7. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。
-8. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
-9. `channels.drainBuffered()` 放行启动期入站，然后写 `run/ready.json` 并开始正常收发。
-10. goal/schedule 恢复留到 M4/M5。
+7. goal 恢复（M4）：先 `listChildren` 校验 tracked 子代理，再对 active goal 逐个 `sendMessage` 冷恢复、等待 live、`ctx.goals.resume` re-arm；失败保留 tracked 并通知。schedule 恢复留到 M5。
+8. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。
+9. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
+10. `channels.drainBuffered()` 放行启动期入站，然后写 `run/ready.json` 并开始正常收发。
 
 > V4 验证结果（M1）：resume 会恢复 `next-turn` inbox，但**不会自动开启新轮**；下一次用户消息或显式唤醒会带上排队消息。M1 不额外重放，后续里程碑可加系统提示唤醒。
 
@@ -79,7 +79,7 @@ M1/M2 实际流程：
 1. `channels.pause()` 停止接受新入站。
 2. 调用 `channels.abortInteractions("shutdown")`，中止待审批/提问并写入失效提示；outbox 持久化，下次启动继续投递。
 3. 等待当前轮完成至 `shutdownGraceMs`（默认 20s，可配）；超时用 `cancel({ kind:'disposed' })`。
-4. goal 子代理留到 M4。
+4. goal 子代理不在这里逐个清理；由 profile-boot 后续的 context teardown 交给 DSH subagent manager 释放，重启后按 active goal 冷恢复。
 5. `ctx.sessions.flush()`，写 state 并置 `cleanShutdown=true`。
 6. 进程由 vendored profile-boot 的 bounded shutdown 退出；vendored 上限由 `NOKORIBI_SHUTDOWN_TIMEOUT_MS` 控制，默认 30s。M6 的 systemd `TimeoutStopSec` 必须大于它。
 
@@ -93,7 +93,7 @@ M1/M2 实际流程：
 - 队列消息：inbox 通过 `agent/inbox/spliced` 持久化，resume 后应恢复。
   - **待验证**：resume 后 driver 是否会自动处理已有 inbox；若不会，桥接会用自己记录的 ingress 待处理队列重放（同一 messageId 去重）或注入一条系统提示唤醒，二选一在实现时决定。
 - 待审批/提问：进程内 promise 已消失；重启后无法恢复。启动时 `channels.initialize()` 把 outbox 中残留的 pending interaction 标记为失败，`resumeOutbox()` 后发一次“待应答已失效”提示；broker 内存状态为空。
-- goal 子代理：按 state 恢复（见 10.6）；可能多跑一轮（冷恢复需要发送一条"继续"消息）。
+- goal 子代理：M4 按 state 恢复（见 10.6）；`sendMessage` 冷恢复，等待 child live 后重新 arm；失败保留 tracked 并通知。可能多跑一轮。
 - outbox：未发送消息重发；若崩溃前已发送但未标记，可能重复（at-least-once）。
 - sandbox：每个 session 的 sandbox 目录落盘；TTL 计时按 `$DSH_HOME/sandboxes/<sessionId>.json` 的 lastUsed 恢复；重启后首次使用若仍在 TTL 内可复用，过期则回收重建。daemon 关闭只停止 TTL 定时器，不删除目录。
 - 重启通知：只在 `cleanShutdown=false` 或恢复失败时发送，避免每次部署都刷屏。
@@ -104,7 +104,7 @@ M1/M2 实际流程：
 
 流程：
 
-1. 若存在活跃 goal 子代理：`interrupt` 当前轮 →（live 时）`ctx.goals.clear(child)` → `drainContinuableChildren(main, childIds)` 释放；从 `goals[]` 移除并写入归档索引（作为"被 clear 归档"）。
+1. 若存在活跃 goal 子代理：`/clear` 在 dispose 旧 main 前调用 `GoalManager.clearAll()`；对 live child `interrupt` → `ctx.goals.clear` → drain → 归档 `outcome:"cleared"`，从 `goals[]` 移除；失败记录日志但继续新会话。
 2. 若存在待应答：`channels.abortInteractions("clear")` 全部中止并通知用户，同时抑制已排队但未发送的旧提示。
 3. dispose 主 agent handle；旧会话保持在 DSH 会话库中（不删除）。
 4. 生成新的 `mainSessionId`，`ctx.agents.create()` 新会话；写回 state；清空 outbox 中属于旧会话的未发送回复？——**待实现决策**：草案为保留 outbox（已生成的消息仍发给用户）但给旧会话 id 标记；新消息进入新会话。

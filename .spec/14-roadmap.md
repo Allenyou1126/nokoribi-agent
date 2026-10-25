@@ -40,7 +40,7 @@
 - 已验证：消息→回复、去重、`/status`、`/clear`（旧 session 文件保留）、`/stop`、`/steer`/`/queue` 一次性模式、SIGTERM 干净退出、kill -9 后主会话恢复 + outbox 重发 + 崩溃通知、单实例锁、state 损坏备份与通知。
 - 自动化：`pnpm test`（单元/进程内）与 `pnpm test:process`（8 个进程场景）通过；`pnpm check` 通过。
 - M1 偏差：默认 host 当时暂为 `local:workspace`（M3 已切到 `sandbox:default`）；`/steer`/`/queue` 直接完整实现；入站图片仍返回 501（**未分配，M2 不做**）；`--dump-config`、`/compact` 后移；`dsh-scope`/`dsh-atomic-write` 是库不是行。
-- 后续：sandbox host、模型侧 `bash(host)` 已在 M3 实现；goal（M4）；memory/schedule（M5）；图片附件链路（未分配，建议 M5 或后置单独评估）。
+- 后续：sandbox host、模型侧 `bash(host)` 已在 M3 实现；goal 已在 M4 实现；memory/schedule（M5）；图片附件链路（未分配，建议 M5 或后置单独评估）。
 
 ## 14.3 M2 安全闸与审批
 
@@ -75,7 +75,7 @@
 - 已增加 `nokoribi:safety` 提示词、更新 interaction 文案，并通过 `system-prompt/assemble` 修正 child delegation 的旧审批说明。
 - 验证：`pnpm test`（18 文件/144 测试）、`pnpm test:process`（19 场景：M1 8 + M2 11）、`pnpm check` 全部通过。V1/V2 已验证。
 - M2 偏差/边界：图片仍 501（未分配，不在 M2）；`--dump-config` 后移；child question 不桥接（DSH 禁止 child 调 `ask_user_question`，只有 approval 桥接）；child delegation 文案覆盖已有单测，真实 subagent mount 在 M4 再接；reviewer 的 Nix 选项在 M6 接线。
-- 仍待 M3/M4：sandbox host、`bash(host)`；goal 子代理与真实子代理审批全链路。
+- M3 已完成 sandbox host 与 `bash(host)`；M4 已完成 goal 子代理与真实 subagent 工具链。
 
 ## 14.4 M3 shell hosts
 
@@ -118,11 +118,11 @@
 - 手工真实 Nix 验证（M3，2026-10-25）：用 `buildEnv { bash coreutils }` 作为 baseEnvironment，`ShellRouter` + `SandboxHost` 直连 `SubprocessLocal`：cwd 在 sandbox、`DSH_SANDBOX_DIR` 正确、workspace→sandbox `cp` 成功、sudo shim 返回禁用、`sandbox_packages add nixpkgs#hello` 后 `hello` 可执行、reset 清空包且 generation+1。
 - M3 偏差/边界：`ctx.shell` sessionless façade；无前台超时转后台；sandbox 非强制隔离（D48）；`setpriv`/`nix` 由部署提供。
 
-## 14.5 M4 goal 子代理
+## 14.5 M4 goal 子代理（2026-10-25 已实现）
 
 ### 交付物
 
-- 挂载 goal 服务/tool/round-driver、subagent spawn/tool/control/report。
+- 挂载 goal 服务/tool/round-driver、subagent spawn/tool/control；rc.3 无独立 report 包，用 `send_message` + `subagent/end` 结算。
 - goal 跟踪：`goal/changed` + `listChildren`、多 goal、sessionId 前缀 id、state 持久化。
 - 两条创建路径：主 agent 工具；`/goal new` 桥接直接 spawn。
 - `/goal list/status/pause/resume/clear/archive`。
@@ -146,6 +146,14 @@
 
 - 依赖 M1/M2/M3（主会话、审批、sandbox）。
 - 风险：cold resume 时序（sendMessage→live→re-arm）；goal 工具对 main/child 的可见性控制；多 goal 汇报噪声；完成通知重复。
+
+### M4 实现记录（2026-10-25）
+
+- 已挂载 `goal`/`tool-goal`/`goal-round-driver`/`subagent`/`subagent-spawn-in-process`/`tool-subagent`/`tool-subagent-control` 与 `session-query-sqlite`（`openAt:"never"`）；不挂 `dsh-command-goal`。
+- rc.3 的 `create_goal` 只允许根 agent 直接人类输入，因此采用 D136：`start_goal` 工具 + `/goal new` 均由宿主启动 `goal-*` child 并 `ctx.goals.create()`；main 的 goal 工具隐藏；D137 用 `send_message` + `subagent/end` 汇报。
+- GoalManager 支持跟踪、短 id、`/goal list/status/pause/resume/clear/archive`、归档 JSONL、sandbox 删除、`/clear` 清理、SIGKILL 冷恢复；恢复失败保留 tracked 并通知。
+- 验证：`pnpm test` 208 tests、`pnpm test:process` 33 scenarios、`pnpm check` 通过。
+- M4 偏差：D138（per-goal 模型选择后移 M5）；goal child persona 由 prompt 承担；`/goal pause` 对 cold child 报错，先 resume。
 
 ## 14.6 M5 memory + schedule + 提示词收尾
 

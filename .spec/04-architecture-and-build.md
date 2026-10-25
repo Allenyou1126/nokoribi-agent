@@ -91,8 +91,9 @@ nokoribi-agent/
 - `dsh-commands`、`dsh-command-compact`。
 - `dsh-compaction-basic`、`dsh-compaction-tool-result-pruner`、`dsh-token-meter`。
 - `dsh-goal`、`dsh-tool-goal`、`dsh-goal-round-driver`（不挂 `dsh-command-goal`，`/goal` 由我们实现）。
+- `dsh-session-query-sqlite`（`openAt:"never"`，只为 `ctx.subagents.listChildren`）。
 - `dsh-schedule`。
-- `dsh-subagent`、`dsh-subagent-spawn-in-process`、`dsh-tool-subagent`、`dsh-tool-subagent-control`、`dsh-tool-subagent-report`。
+- `dsh-subagent`、`dsh-subagent-spawn-in-process`、`dsh-tool-subagent`、`dsh-tool-subagent-control`。rc.3 没有可用的独立 report 包；汇报用 `send_message` + `subagent/end` 结算。
 - `dsh-permission-presets`、`dsh-working-directory`、patched `experimental-auto-review`。
 - `dsh-tool-todo`、`dsh-tool-present`（present 用于交付物；是否启用可在配置层覆盖）。
 - `dsh-attachment`（能力/类型包）+ `dsh-attachment-local`（存储 provider）；M1 不启用入站图片。
@@ -135,6 +136,7 @@ nokoribi-agent/
 - 每行有稳定 id；Nix overlay 按 id 覆盖。行数/名称以实际 boot 与测试为准。
 - **M2 新增行**：`permission-presets`（仅 `danger-full-access` 预设）、`tool-ask-user`（blocking 模式）、`nokoribi-reviewer`（`@nokoribi/reviewer`，替代上游 auto-review 行）。`channel-core` 配置增加 approval/question 超时；`agent-app` 在创建/恢复主会话后设为 `auto`。
 - **M3 新增/调整行**：`nokoribi-shell-router`（default host 可配）、`nokoribi-shell-host-local`（extraPackages）、`nokoribi-shell-host-sandbox`、`nokoribi-tool-bash-hosted`（`@nokoribi/shell-bash/tool`）。`agent-app` 启动校验 default host；`/clear` 清理 sandbox。多入口包通过 `exports` 子路径加载，进程测试已验证。
+- **M4 新增/调整行**：`session-query`（sqlite，`openAt:"never"`）、`goal`、`subagent`、`subagent-spawn`、`tool-subagent`、`tool-subagent-control`、`tool-goal`、`goal-round-driver`；`agent-app` 新增 `start_goal` 工具、goal tracker/命令/恢复/归档，`/clear` 清理 goals。
 
 ## 4.5 薄启动器
 

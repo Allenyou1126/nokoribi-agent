@@ -99,7 +99,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 | `/queue [文本]` | 带文本：强制 followup；不带文本：下一条强制 followup |
 | `/clear` / `/new` | 新建主会话，旧会话归档；停止并归档 goal 子代理（见 05/10） |
 | `/compact` | 透传 DSH `/compact`（压缩主会话上下文） |
-| `/goal ...` | 桥接自有语义：`new <目标> [--rounds N]`、`list`、`status <前缀>`、`pause <前缀>`、`resume <前缀>`、`clear <前缀>`（停止+自动归档）、`archive <前缀>`（归档已完成 goal） |
+| `/goal ...` | 桥接自有语义：`new <目标> [--rounds N]`（宿主创建 continuable child + goal）、`list`、`status <前缀>`、`pause <前缀>`、`resume <前缀>`、`clear <前缀>`（停止+自动归档）、`archive <前缀>`（归档已完成 goal） |
 | `/permission` | 只报告当前 permission preset（Auto）；任何切换参数返回错误。v1 没有 DSH 沙箱回退，切走会绕过审查（见 08） |
 | 其他已注册 DSH 命令 | 透传 `ctx.commands.execute`；未知命令回错误，不进入模型 |
 
@@ -207,7 +207,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 }
 ```
 
-`seq` 持久化、有界（默认保留最近 1000 条终态记录，pending 不裁剪）；重启后仍可按 seq 取到未过期条目。M1 启动后写 `$DSH_HOME/run/test-channel.json`（host/port/pid），进程测试据此发现端口。
+`seq` 持久化、有界（默认保留最近 1000 条终态记录，pending 不裁剪）；重启后仍可按 seq 取到未过期条目。`nextSeq` 必须与本次返回的 items 对齐（最后一条 seq + 1；无新条目时为请求的 `after`），避免并发 enqueue 导致客户端跳过未读条目。M1 启动后写 `$DSH_HOME/run/test-channel.json`（host/port/pid），进程测试据此发现端口。
 
 ### `GET /v1/status`
 

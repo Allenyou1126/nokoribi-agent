@@ -18,6 +18,8 @@ M2 落点：`tests/process/m2.test.ts` 用脚本化 LLM（按 model/system 路�
 
 M3 落点：`packages/shell-bash/test/` 覆盖 host 协议、router façade、bash(host)、background job、discovery、hosts 提示词；`packages/shell-host-sandbox/test/` 覆盖 command wrapper、meta、TTL/reset、guarded PATH、setpriv/nix 缺失、`sandbox`/`sandbox_packages`；`packages/shell-host-local/test/` 覆盖 extraPackages 与 background；`tests/process/m3.test.ts` 覆盖 local、sandbox、未知 host + discovery、background job、`/clear` 清理。真实 Nix/sudo 为手工/门控集成验收。
 
+M4 落点：`packages/agent-app/test/` 覆盖 goal 命令解析、tracker（sessionId/goalId 分离、短 id、轮次）、归档 JSONL、main 工具限制；`packages/prompt/test/` 覆盖 goal section 与 `tool:goal` 改写；`tests/process/m4.test.ts` 覆盖 `/goal new` 完成/归档、`start_goal`、main 隐藏、pause/resume、SIGKILL 冷恢复、`/clear`、多 goal、恢复失败与 `send_message` 汇报。M4 进程测试用 local host，不依赖 Nix。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站，可脚本化注入消息与失败。

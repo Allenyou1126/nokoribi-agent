@@ -7,7 +7,7 @@
 | 角色 | 配置方式 | 默认/约束 |
 |---|---|---|
 | 主 agent | NixOS module `models.main`（provider/model/reasoningEffort） | **必须支持图像输入**（入站图片直接给模型）；由配置选择 |
-| 子代理（goal/任务） | `models.subagents` 白名单；主 agent 在 spawn 时选择 | 默认 secondary/低成本档；主 agent 决定具体条目 |
+| 子代理（goal/任务） | M4：goal child 固定 `NOKORIBI_GOAL_MODEL`（D138）；M5 再接 `models.subagents` 白名单与主 agent 选择 | 默认 secondary/低成本档；主 agent 决定具体条目 |
 | 记忆提炼子代理 | 配置的 secondary/低成本档 | 一次性、任务结束触发 |
 | reviewer fast | `review.fast` | 日常所有工具调用先过这一档 |
 | reviewer strong | `review.strong` | fast deny/不确定/sudo 动作时复审 |
@@ -15,7 +15,7 @@
 
 - 不再使用"主模型/便宜模型"的全局分层表述；**两个 tier 只属于 reviewer**（D85）。
 - 主模型与 reviewer 模型相互独立；reviewer 不跟主模型绑定（由 vendored auto-review 补丁实现）。
-- 子代理的 provider/model 通过 `dsh-tool-subagent` 的 `modelSelectionSettings`/`agentOptions` 暴露与选择；具体允许集由 Nix 配置。
+- M4 的 goal child 通过宿主 `start_goal`/`/goal new` 启动，`agentOptions` 固定为 `NOKORIBI_GOAL_PROVIDER`/`NOKORIBI_GOAL_MODEL`；generic `subagent` 仍可继承主 agent 路由。per-goal 选择与 Nix allowlist 后移 M5（D138）。
 - 主 agent 的模型切换（DSH 的 session model selection）在 v1 不作为主要交互；IM 未暴露 `/model` 命令。
 
 ## 11.2 图像输入

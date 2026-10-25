@@ -15,43 +15,44 @@
 - goal 子代理是 **continuable subagent**：持久会话、可继续、可中断、可冷恢复。
 - 主会话**禁止**持有 goal（D101）。
 - 短 id 使用 **child sessionId 前缀**（D102），命令用该前缀引用。
-- 两条创建路径都支持（D88）：
-  1. 主 agent 通过通用 `subagent` 工具创建；
+- 两条创建路径都支持（D88，M4 按 D136 调整）：
+  1. 主 agent 通过专用 `start_goal` 工具创建；generic `subagent` 仍用于普通委托；
   2. `/goal new` 命令由桥接直接创建。
 - `/goal` 命令包含创建（D89）。
 - 重启后自动冷恢复并 re-arm（D90）。
 - 完成后保留会话、写归档索引；由主 agent 询问用户，用户命令归档（D94/D98/D100）。
 
-## 10.3 创建路径 A：主 agent 通过 `subagent` 工具
+## 10.3 创建路径 A：主 agent 通过 `start_goal` 工具
 
-- 挂载 `dsh-subagent` + `dsh-subagent-spawn-in-process` + `dsh-tool-subagent`（`backgroundMode: continuable`）+ `dsh-tool-subagent-control` + `dsh-tool-subagent-report`。
-- 用户自然语言描述任务 → 主 agent 判断需要长期目标 → 调 `subagent` 工具，prompt 要求子代理：
-  1. 调用 `create_goal({ objective, maxGoalRounds? })`；
-  2. 开始执行目标；
-  3. 按 report 格式在里程碑/阻塞/完成时汇报。
-- spawn 工具调用与子代理后续工具调用都过 Auto review。
-- 桥接不依赖主 agent 的工具调用细节；通过 `goal/changed` 事件发现该 child 的 goal（见 10.4）。
-- 模型选择：主 agent 从配置的子代理 allowlist 中选（D63）。
+- M4 挂载 `dsh-subagent` + `dsh-subagent-spawn-in-process` + `dsh-tool-subagent` + `dsh-tool-subagent-control`；没有 `backgroundMode` 配置，spawn child 本身就是 continuable activation。
+- 用户自然语言描述长期目标 → 主 agent 调 `start_goal({ objective, description, max_goal_rounds? })`（D136）：
+  1. 工具执行者校验调用者为主 agent；
+  2. 宿主预留 `goal-<uuid>` child id，`ctx.subagents.startActivation()` 启动 child，bootstrap prompt 要求 child 等待首个 `<goal_round>`；
+  3. 宿主立即 `ctx.goals.create(child, ...)`，返回 short id；
+  4. round-driver 自动续跑；child 用 `get_goal`/`update_goal` 控制完成/阻塞。
+- `start_goal` 调用与子代理后续工具调用都过 Auto review。
+- 桥接通过 `goal/changed`、`subagent/start|end` 与 child session 事件跟踪（见 10.5）。
+- 模型选择：M4 固定 `NOKORIBI_GOAL_MODEL`（D138）；per-goal allowlist 后移 M5。
 
 ## 10.4 创建路径 B：`/goal new`
 
-- `/goal new <目标> [--rounds N]` 由桥接在命令处理器中直接调用 `ctx.subagents.startContinuable()`：
-  - provider：`spawn`（进程内）；
-  - parent：主 agent；
-  - initial prompt：要求子代理先 `create_goal` 再执行；包含 report 格式说明；
-  - 模型：配置的默认 goal 子代理档（不经过主 agent 选择；若要主 agent 选模型，用路径 A）。
+- `/goal new <目标> [--rounds N]` 由桥接命令处理器调用与 `start_goal` 相同的 `GoalManager.startGoal()`：
+  - provider：`spawn`（进程内）；parent：主 agent；
+  - 预留 `goal-*` child id；bootstrap prompt 说明宿主创建 goal、等待首个 round；
+  - 宿主调用 `ctx.goals.create()`；模型固定使用 `NOKORIBI_GOAL_MODEL`。
 - 该路径不产生主 agent 模型消息；子代理后续动作仍过 Auto review。
-- 创建成功后返回 child sessionId 前缀，桥接登记到 state 并提示用户。
+- 创建成功后返回短 id、child sessionId 与轮次上限。
 
 ## 10.5 跟踪与识别
 
-- 桥接监听全局 `goal/changed` 事件（`agent` + view）。
-- 校验来源：`ctx.subagents.listChildren(mainSessionId)` 中是否存在该 agent 的 sessionId（direct child）。
-  - 命中 → 登记到 `agent-state.json` 的 `goals[]`（sessionId、goalId、revision、phase、rounds、source）。
+- 桥接监听 `goal/changed`、`subagent/start|end` 与 `session/event`；主会话 goal 单独拦截。
+- 校验来源：`agent.session.header.parentSession === mainSessionId`；启动恢复时用 `ctx.subagents.listChildren(mainSessionId)` 校验。
+  - 命中 → 登记到 `agent-state.json` 的 `goals[]`（sessionId、goalId、revision、phase、rounds、objective、maxGoalRounds、source、label、model）。
   - 未命中（例如主会话里出现 goal）→ 主会话 goal 策略：清掉并提示用户（D101）。
+- goal 轮次通过 child 的 goal-sourced `user/message` 事件更新 `lastKnownRounds`。
 - 不限制数量；同一 child 只有一个 goal（DSH 限制）。
 - 短 id：`sessionId` 前缀（建议 8 字符）；state 中保存映射，`/goal` 命令用前缀查找。
-- 主 agent 的 goal 工具应被隐藏（实现方式：agent 作用域 tool filter / 不向 main 注册 goal 工具；需在 M4 验证 `dsh-tools` 的 agent 限制 API）。
+- 主 agent 的 goal 工具已隐藏（M4：`agentCtx.tools.restrict({deny:[create_goal,get_goal,update_goal]})`；main setup 注册，启动/resume 都生效）。
 - child 的 goal 工具需要可用：由全局 `dsh-tool-goal` 提供，或按 agent 作用域安装；实现需保证 main 不可见、child 可见。
 - 若模型误在 main 创建 goal：桥接检测到后 `ctx.goals.clear(main, ref)` 并通知用户；同时记录日志。
 
@@ -75,7 +76,7 @@
 
 实现注意：
 
-- sendMessage 的 content 是模型可见消息；应尽量短，避免污染上下文。
+- 冷恢复通过 `ctx.subagents.sendMessage(main, childId, [...])`；content 是模型可见消息，应尽量短。
 - child 冷恢复的第一轮会先处理这条消息；随后 round-driver 才会排下一轮；不要在这轮之前重复注入目标。
 - 如果 child 的 goal 是 `active` 但 activation 已 disarm（正常），必须在 child live 后重新 arm。
 - 多个 goal 顺序恢复，避免同时打满；恢复期间入站消息继续缓冲。
@@ -87,7 +88,7 @@
 | `/goal new <目标> [--rounds N]` | 桥接创建 continuable child + 提示其创建 goal；返回短 id |
 | `/goal list` | 列出 tracked goals：短 id、phase、rounds、目标摘要、是否 running |
 | `/goal status <前缀>` | 详情：objective、phase、roundsStarted/max、blocker、child 状态、sandbox 状态 |
-| `/goal pause <前缀>` | 若 live：`ctx.goals.pause(child, ref)`；若 cold：先冷恢复再 pause（实现草案），或提示不可用 |
+| `/goal pause <前缀>` | 若 live：`ctx.goals.pause(child, ref)`；若 cold：返回错误，提示先 `/goal resume`（M4 实现） |
 | `/goal resume <前缀>` | live 且 active/paused → `ctx.goals.resume(child, ref)`；cold → 冷恢复后 arm；blocked/complete 需先 edit/clear（DSH 语义） |
 | `/goal clear <前缀>` | 停止当前轮（`interrupt`）→ live 时 `ctx.goals.clear` → 释放 Activation → 移出 tracked → 自动归档（D99） |
 | `/goal archive <前缀>` | 用户确认归档已完成 goal：释放/确认无 running → 移出 tracked → 写归档索引 → 删除 sandbox → 保留 session 文件（D98/D100） |
@@ -100,7 +101,7 @@
 
 ### 汇报
 
-- 子代理使用 `report`（DSH 工具）向父级发送记录；默认投递是 `parent.steer()`，主 agent 忙碌时在 step 边界收到，空闲时启动新一轮。
+- M4 子代理使用 `send_message` 向直接父级发送记录；主 agent 忙碌时在 step 边界收到，空闲时启动新一轮。`subagent/end` 另发自动结算通知。
 - 格式见 [09.6](09-prompt-and-memory.md#96-goal-汇报格式)。
 - 主 agent 的提示词要求：收到子代理报告时转述为 IM 摘要；不把原始格式直接发用户。
 - 频率：里程碑/阻塞/完成；不要每轮。
@@ -148,7 +149,7 @@
 ## 10.9 Sandbox 与 goal
 
 - sandbox 按 session 独立（D92）：每个 goal child 有自己的 sandbox 目录与 TTL。
-- 归档/`/goal clear` 时删除对应 sandbox（如果存在）。
+- 归档/`/goal clear`/`/clear` 时通过 `ctx.shellHosts.disposeSession(childId)` 删除对应 sandbox（如果存在）。
 - 重启恢复 goal child 时；其 sandbox 若仍在 TTL 内可复用，过期则重建。
 - goal child 默认使用 sandbox host（跟随 defaultHost）；需要持久化 workspace 时可以在任务中显式使用 `local:*`（受 auto-review）。
 
@@ -170,5 +171,18 @@
 - child 崩溃前已接受但未写入日志的消息可能丢失（DSH 限制）。
 - 多个 goal 并行时汇报会增多；主 agent 需要控制转述频率（提示词约束）。
 - goal 完成的通知/转述/系统通知可能重复（主 agent report + 结算通知 + bridge 通知）；稀有，接受。
-- 主 agent 隐藏 goal 工具的实现方式需在 M4 验证（agent-scoped tool filter 或作用域注册）。
+- 主 agent 隐藏 goal 工具已用 agent-scoped `tools.restrict` 验证（M4）。
 - 归档只是隐藏 + 索引；DSH 会话不可删除，磁盘会增长；需要时人工清理（无备份/无 VM 测试）。
+
+
+## 10.12 M4 实现记录（2026-10-25）
+
+- 挂载 `dsh-goal`、`dsh-tool-goal`、`dsh-goal-round-driver`、`dsh-subagent`、`dsh-subagent-spawn-in-process`、`dsh-tool-subagent`、`dsh-tool-subagent-control`、`dsh-session-query-sqlite`（`openAt:"never"`）。不挂 `dsh-command-goal`。
+- 采用 D136：`start_goal` 工具 / `/goal new` → 宿主预留 `goal-*` child id、`startActivation` → `ctx.goals.create()`；main 的 `create_goal/get_goal/update_goal` 通过 agent setup + `ctx.tools.restrict` 隐藏。
+- 采用 D137：child 用 `send_message` 汇报；`subagent/end` 自动结算；无独立 report 包。
+- `GoalManager` 跟踪 `goal/changed`、child goal round、`subagent/end`；支持 `/goal list/status/pause/resume/clear/archive`。
+- 启动恢复：`listChildren` 校验 → active goal `sendMessage` 冷恢复 → 等待 live → `ctx.goals.resume`；失败保留 tracked + ⚠️ 通知。
+- `/clear` 在 dispose 旧 main 前 `clearAll()`：interrupt → clear → drain → 归档 `cleared` → 删除 sandbox；session 保留。
+- 归档索引 `$DSH_HOME/archive/goals.jsonl`；`/goal archive` 只接受 complete。
+- 验证：`pnpm test` 208 tests、`pnpm test:process` 33 scenarios、`pnpm check`；新增 M4 进程场景覆盖 `/goal new` 完成/归档、`start_goal`、main 隐藏、pause/resume、SIGKILL 冷恢复、`/clear`、多 goal、恢复失败、`send_message` 汇报。
+- 偏差：D138（per-goal 模型选择后移 M5）；goal child persona 由 prompt 承担而非 agent preset；`/goal pause` 对 cold child 返回错误（先 resume）。

@@ -92,7 +92,7 @@
 | D94 | goal 结束 | 归档保留会话；主 agent 询问用户；用户命令归档 |
 | D95 | 恢复失败 | 通知用户、保持 tracked、等重试 |
 | D96 | goal 并发上限 | 不限制 |
-| D97 | 模型创建路径 | 通用 `subagent` 工具 + 桥接监控 `goal/changed` |
+| D97 | 模型创建路径 | **被 D136 取代**：rc.3 下改用专用 `start_goal` + 宿主创建 goal |
 | D98 | 归档实现 | 保留 session 文件 + 归档索引（JSONL） |
 | D99 | `/goal clear` | 停止 + 自动归档 |
 | D100 | 归档触发 | 主 agent 提示，用户回复 `/goal archive <前缀>` |
@@ -131,6 +131,9 @@
 | D133 | 测试通道协议 | 长轮询 |
 | D134 | `ctx.shell` 角色 | sessionless façade 仅 local；sandbox default fail closed |
 | D135 | 前台命令超时 | 只返回超时结果，不自动转后台 job |
+| D136 | goal 创建路径（M4） | 专用 `start_goal` 工具 + `/goal new`；宿主 `ctx.goals.create`；取代 D97 |
+| D137 | goal 汇报机制（M4） | `send_message` + `subagent/end` 结算通知；rc.3 无独立 report 包 |
+| D138 | goal 模型选择（M4） | goal child 固定 `NOKORIBI_GOAL_MODEL`；per-goal allowlist 后移 M5 |
 
 ---
 
@@ -258,7 +261,7 @@
 - **D94 goal 结束处理** — 自定义：**保留，但要控制 subagent 数量，转成归档形式仅在 debug 查看；主 agent 在 goal 完成后询问用户是否归档；归档则删除 subagent、保留记录存档**。最终落点见 D98/D100。
 - **D95 恢复失败** — 选择：**通知用户、保持 tracked、等 `/goal resume` 或新消息重试**。
 - **D96 goal 并发上限** — 选择：**不限制**。
-- **D97 模型创建路径** — 选择：**通用 `subagent` 工具 + 桥接监控 `goal/changed`**（不注册专用 `start_goal` 工具）。
+- **D97 模型创建路径** — 选择：**通用 `subagent` 工具 + 桥接监控 `goal/changed`**（不注册专用 `start_goal` 工具）。状态：**被 D136 取代**；rc.3 的 `create_goal` 只允许根 agent 的直接人类输入，delegated child 无法自行创建 goal。
 - **D98 归档实现** — 选择：**保留会话文件 + 归档索引**（DSH 无删除会话 API；debug profile 不存在，归档按 session id 查文件）。
 - **D99 `/goal clear`** — 选择：**停止 + 自动归档**。
 - **D100 归档触发** — 选择：**主 agent 提示 + 用户命令**（`/goal archive <前缀>`；不注册 `archive_goal` 工具）。
@@ -300,6 +303,9 @@
 - **D133 测试通道协议** — 选择：**长轮询**（`GET /v1/outbound?after=seq`）。
 - **D134 `ctx.shell` 角色（M3）** — 自定义：DSH 的 `ctx.shell` 是 sessionless seam，而 sandbox 执行需要 sessionId。选择：`shell-router` 仍是唯一 `ctx.shell` provider；default host 为 `local` 时委托 local provider，default 为 `sandbox` 时 `ctx.shell.execute` 明确 fail closed；模型工具始终走 `ctx.shellHosts`。依据：rc.3 没有第一方执行消费者依赖 `ctx.shell.execute`。
 - **D135 前台超时（M3）** — 选择：只有显式 `run_in_background: true` 才注册 `ctx.jobs`；前台命令超时按 `[timed out]` 返回并结束，不采用上游 `dsh-tool-bash` 的自动转后台。理由：减少 job 生命周期复杂度；需要后台时由模型显式选择。
+- **D136 goal 创建路径（M4）** — 自定义：rc.3 `dsh-tool-goal` 的 `create_goal` 要求根 agent 当前轮的直接人类输入；goal child 是 delegated child，无法自行创建。选择：新增专用 `start_goal` 工具（主 agent 可用）与 `/goal new` 命令，由宿主预留 `goal-*` child id、启动 continuable child 并调用 `ctx.goals.create()`；`subagent` 工具保留给普通委托。状态：取代 D97；D101 不变。
+- **D137 goal 汇报机制（M4）** — 自定义：rc.3 没有可用的独立 `dsh-tool-subagent-report` 包；选择 `send_message`（child → direct parent）+ `subagent/end` 自动结算消息，主 agent 负责转述。
+- **D138 goal 模型选择（M4）** — 自定义：M4 的 goal child 模型由 `NOKORIBI_GOAL_MODEL` 固定（默认跟随主模型）；D63 的“主 agent 从 allowlist 选择 per-goal 模型”后移 M5。
 
 ---
 
@@ -334,3 +340,4 @@
 - D43/D51（commit 基线/覆盖策略）→ D50/D54 无 commit 工具、提示词约束。
 - D73（中等 systemd 硬化）→ D79/D81 为 sudo/local 全权限取消。
 - D11（v1 仅消息闭环）→ D125 六阶段扩展。
+- D97（通用 `subagent` 创建 goal）→ D136（专用 `start_goal` + 宿主创建）。

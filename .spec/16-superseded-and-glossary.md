@@ -18,7 +18,7 @@
 | D64/D83 "主模型/便宜模型"命名与全局分层 | D85 只给 reviewer 两个 tier | 用户澄清：tier 仅用于 review model，不是所有模型分层 |
 | 中间提案：goal 短 id 用 `g1/g2` | D102 sessionId 前缀 | 用户选择 |
 | 中间提案：只允许一个活跃 goal | D93/D96 多个并行、无上限 | 用户选择 |
-| 中间提案：专用 `start_goal` 工具 | D97 通用 `subagent` 工具 + 监控 | 用户选择 |
+| 中间提案：专用 `start_goal` 工具 | D97 通用 `subagent` + 监控 → **D136 专用 `start_goal` + 宿主创建** | rc.3 `create_goal` 仅允许根 agent 直接人类输入；D97 被 D136 取代 |
 | 中间提案：`archive_goal` 工具 | D100 主 agent 提示 + 用户命令 | 用户选择 |
 | 中间提案：test token 随机生成 | D106/D119 固定 token、Nix 明文 | 用户选择 |
 | 中间提案：升级前快照 | D110 直接升级 | 用户选择 |
@@ -139,7 +139,7 @@
 | armed / disarmed | 进程本地的 goal 自动续行开关；session-start 必 disarm |
 | continuable subagent | 持久会话、可继续消息/中断的子代理 |
 | cold resume | 用父级 `sendMessage` 让不驻留的子代理从持久化会话恢复 |
-| report | 子代理→父代理的返回工具（默认 steer 投递） |
+| goal report | M4 用 `send_message` 发给直接父代理；`subagent/end` 另有自动结算通知 |
 | auto-review | 实验性逐工具调用 LLM 审查，属于 Auto 权限预设 |
 | Auto preset | permission preset 的一种：full access + ask，工具调用经 reviewer |
 | reviewer fast/strong | 本项目的两档 review 模型；fast 全审、strong 复审 |
@@ -168,7 +168,13 @@
 | NUR | Nix User Repository；本项目的包由 nur-packages 转发 |
 | thin launcher | 自建薄启动器，vendor profile-boot，不依赖官方 dsh 包 |
 
-## 16.5 文档维护规则
+## 16.5 M4 实现记录
+
+- 采用 D136/D137/D138：`start_goal` + 宿主 `ctx.goals.create`；`send_message` 汇报；goal child 模型固定配置。
+- 增加 `session-query-sqlite`（`openAt:"never"`）供 `ctx.subagents.listChildren` 使用；`tool-goal` / `goal-round-driver` / `subagent` / `tool-subagent` / `tool-subagent-control` 已挂载。
+- 已验证 goal child 在 goal round 期间保持 Activation 到 completion/轮次上限；冷恢复、失败保留、`/clear` 归档与 sandbox 删除均有进程级测试。
+
+## 16.6 文档维护规则
 
 - 新增/修改决定：更新 [03 决策记录](03-decision-log.md)，必要时在本文登记被取代项。
 - 修改任何规格：同步修改对应专题文档与 README 索引。

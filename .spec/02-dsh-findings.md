@@ -80,7 +80,7 @@ Inbox：
 
 - 可继续子代理：保留持久 Session，同一时刻至多一个进程内 Activation；调用方拿到稳定 child id，可 `sendMessage()` 继续对话、`interrupt()` 中断当前轮而不销毁。
 - 冷恢复：**只有父 Agent 用 `sendMessage()` 给 absent 的 direct child 发消息时会从持久化会话冷恢复**；没有"静默恢复"公开 API。
-- `report` 工具（`dsh-tool-subagent-report`）：子代理→父代理的返回通道，默认用 `parent.steer()` 投递；父级必须在注册表中在线；不会自动结束轮次；支持 `quiet`（`inject`）部署策略。
+- `report` 工具（`dsh-tool-subagent-report`）：子代理→父代理的返回通道，默认用 `parent.steer()` 投递；父级必须在注册表中在线；不会自动结束轮次；支持 `quiet`（`inject`）部署策略。**注：这是早期调研版本的事实；rc.3 没有发布可用的独立 report 包，M4 用 `send_message` + 结算通知，见 2.20。**
 - 限制：
   - child→parent 投递要求直接 parent 在线；没有持久 parent mailbox。
   - 驻留 Activation 只在进程内；两个 harness 进程不能共享同一持久存储（需要持久邮箱/租约协议，未提供）。
@@ -281,3 +281,13 @@ Inbox：
 - `setpriv --no-new-privs -- <bash> ...` 在开发机可用；PATH guard 能挡住常见 sudo 调用，绝对路径仍由 no_new_privs 兜底。
 - Cordis loader 能加载包子路径插件（`@nokoribi/shell-bash/tool`）；进程测试已验证。
 - 新 `sandbox` 工具在模型侧可见，Auto review 会审查 `bash`/`sandbox`/`sandbox_packages` 调用；M3 未为这些工具增加硬确认。
+
+## 2.20 M4 实现期验证更新
+
+- rc.3 `dsh-tool-goal` 的 `create_goal` 只接受**根 agent 当前轮的直接人类输入**（`hasDirectHumanInput`）；delegated goal child 调用会被拒绝。M4 因此新增宿主工具 `start_goal`，由桥接调用 `ctx.goals.create(child, ...)`，不依赖 child 的 `create_goal`。
+- `dsh-tool-subagent` 在 rc.3 没有 `backgroundMode` 配置；`spawn` provider 的 `startActivation` 创建 continuable child 并立即返回 child id，`subagent/end` 自动向父级发结算消息。
+- rc.3 没有可用的 `dsh-tool-subagent-report` 包；child→parent 的模型侧汇报改用 `dsh-tool-subagent-control` 的 `send_message`。
+- `ctx.subagents.listChildren()` 需要 `sessionQuery`；挂载 `dsh-session-query-sqlite` 并设置 `openAt:"never"`、`path:":memory:"` 即可使用精确读取与 `observeSession`，不建立全文索引。
+- 探针验证：goal child 的自动 round 会保持 Activation 驻留，直到 goal complete 或到达轮次上限；`startActivation` 可预留 `goal-*` child id，随后宿主 `ctx.goals.create` 正常驱动。
+- `ctx.tools.restrict({ deny: [...] })` 可在 main agent setup 中隐藏 `create_goal/get_goal/update_goal`；`system-prompt/assemble` waterfall 可移除/替换 `tool:goal` 段。
+- 测试通道 `/v1/outbound` 的 `nextSeq` 必须与返回 items 对齐（`lastSeq + 1`，无 items 时保持 `after`）；否则并发 enqueue 会让客户端跳过未见条目。
