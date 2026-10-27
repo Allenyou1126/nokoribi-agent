@@ -343,7 +343,7 @@ channel.qqBot = {
 
 ### 17.10.2 文件级清单
 
-**M7 修改**：`packages/channel-core/src/{contract,service,outbox,format}.ts`、`packages/shared/src/schemas.ts`、`packages/channel-local-test/src/channel.ts`、相关测试；`packages/bundle/cordis.patch.yml`（channel-core 行配置）、`nix/overlay.nix`（channel-core patch）。
+**M7 修改**：`packages/channel-core/src/{contract,service,outbox,format}.ts`、新增 `packages/channel-core/src/routing.ts`、`packages/shared/src/schemas.ts`、`packages/channel-local-test/src/channel.ts`、`packages/agent-app/src/daemon.ts`、相关测试（`packages/channel-core/test/*`、`tests/integration/m7-channel-routing.test.ts`、m2 FakeDriver 签名）；`packages/bundle/cordis.patch.yml`（channel-core 行配置）、`nix/overlay.nix`（channel-core patch）；`vitest.unit.config.ts`/`nix/tests.nix`（flake unit 入口）。
 
 **M8 新增**：`packages/channel-qq-bot/`（index/config/driver/gateway/rest/normalize/errors + test）、`tests/process/support/fake-qq-bot.ts`、`tests/process/m8-qq.test.ts`。
 
@@ -354,7 +354,7 @@ channel.qqBot = {
 ### 17.10.3 门禁
 
 - 每个提交：`pnpm check`；行为变更需测试。
-- M7 完成：`pnpm test`、`nix flake check`，local-test 回归通过。
+- M7 完成：`pnpm test`、`pnpm test:unit`、`pnpm test:process`、`nix flake check`，local-test 回归通过（2026-10-27 已通过）。
 - M8 完成：`pnpm test`、`pnpm test:process`、`nix flake check`、真实 Bot 17.8.2 全清单通过并记录。
 
 ## 17.11 决策与待评审项
