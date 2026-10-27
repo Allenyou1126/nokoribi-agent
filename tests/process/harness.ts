@@ -70,6 +70,8 @@ export interface Status {
     outboxLength: number;
     lastRestartReason: string | null;
     ready: boolean;
+    channels?: readonly unknown[];
+    deferredNotices?: number;
 }
 
 export async function tempHome(): Promise<string> {
