@@ -9,9 +9,11 @@ import {
 
 import type {
     ChannelDriver,
+    ChannelHealth,
     ChannelService,
     DeliveryMode,
     InboundMessage,
+    OutboundContent,
 } from "@nokoribi/channel-core";
 import {
     createLogger,
@@ -112,6 +114,7 @@ async function readJson(
 export class LocalTestChannel implements ChannelDriver {
     readonly id = "local-test";
     readonly capabilities: ChannelDriver["capabilities"];
+    readonly defaultChatId: string;
     private readonly config: LocalTestConfig;
     private readonly channels: ChannelService;
     private readonly logger: Logger;
@@ -122,12 +125,16 @@ export class LocalTestChannel implements ChannelDriver {
     constructor(config: LocalTestConfig, channels: ChannelService) {
         this.config = config;
         this.channels = channels;
+        this.defaultChatId = config.chatId;
         this.logger = createLogger("channel-local-test");
         this.capabilities = {
             markdown: config.markdown,
             maxTextLength: config.maxTextLength,
             inboundImages: false,
             outboundFiles: false,
+            outboundActions: false,
+            inboundActions: false,
+            activeMessages: true,
         };
         this.server = createServer((request, response) => {
             void this.handle(request, response);
@@ -203,7 +210,7 @@ export class LocalTestChannel implements ChannelDriver {
 
     async send(
         chatId: string,
-        content: { kind: "text"; text: string }
+        content: OutboundContent
     ): Promise<{ channelId: string; chatId: string; messageId: string }> {
         if (content.text.length === 0) {
             throw new Error("refusing to send an empty message");
@@ -213,6 +220,11 @@ export class LocalTestChannel implements ChannelDriver {
             chatId,
             messageId: randomUUID(),
         };
+    }
+
+    /** Report the loopback listener state for `/status`. */
+    health(): ChannelHealth {
+        return { state: this.stopped ? "offline" : "online" };
     }
 
     private async handle(

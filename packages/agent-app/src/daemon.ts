@@ -365,6 +365,7 @@ export class Daemon {
         this.registerCommands();
         this.installStatusProvider();
         await this.attachRuntime();
+        this.ctx.channels.restoreActiveChat(this.state?.lastActiveChat ?? null);
         await this.goals.recover();
         await this.ctx.channels.resumeOutbox();
         await this.emitStartupNotice();
@@ -518,6 +519,10 @@ export class Daemon {
                 "session/event",
                 (session: Session, event: SessionEvent) => {
                     if (session.id !== this.mainSessionId) return;
+                    if (event.type === "turn/start") {
+                        this.ctx.channels.noteTurnStart();
+                        return;
+                    }
                     if (event.type === "assistant/message") {
                         const text = assistantText(
                             event.data.message as AssistantMessage
@@ -617,6 +622,7 @@ export class Daemon {
         }
         await this.ctx.channels.abortInteractions("user-stop");
         handle.agent.cancel({ kind: "user" });
+        this.ctx.channels.clearPendingTurnChats();
         this.turnText.clear();
         return { kind: "success", text: "已停止" };
     }
@@ -633,6 +639,12 @@ export class Daemon {
             `goals: ${status.goals.length}`,
             `pendingInteractions: ${status.pendingInteractions}`,
             `outbox: ${status.outboxLength}`,
+            `channels: ${
+                (status.channels ?? [])
+                    .map((channel) => `${channel.id}=${channel.state}`)
+                    .join(",") || "-"
+            }`,
+            `deferredNotices: ${status.deferredNotices ?? 0}`,
             `lastRestart: ${status.lastRestartReason ?? "-"}`,
         ];
         if (rawInput.trim() === "full") {
