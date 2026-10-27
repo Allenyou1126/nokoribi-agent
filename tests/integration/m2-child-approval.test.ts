@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ChannelService, {
     type ChannelDriver,
     type InboundMessage,
+    type OutboundContent,
 } from "../../packages/channel-core/src/index.js";
 import * as reviewer from "../../packages/reviewer/src/index.js";
 
@@ -49,7 +50,7 @@ class FakeDriver implements ChannelDriver {
     async stop(): Promise<void> {}
     async send(
         chatId: string,
-        content: { kind: "text"; text: string }
+        content: OutboundContent
     ): Promise<{ channelId: string; chatId: string; messageId: string }> {
         this.sent.push({ chatId, text: content.text });
         return {
