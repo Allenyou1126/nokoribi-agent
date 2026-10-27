@@ -31,7 +31,7 @@ stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     pnpm build
-    pnpm test -- --exclude 'tests/integration/**'
+    pnpm test:unit
     runHook postBuild
   '';
 

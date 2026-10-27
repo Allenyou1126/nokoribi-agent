@@ -6,6 +6,7 @@
     "scripts": {
         "build": "pnpm -r --filter './packages/*' build",
         "test": "vitest run",
+        "test:unit": "vitest run --config vitest.unit.config.ts",
         "test:process": "pnpm build && vitest run --config vitest.process.config.ts",
         "typecheck": "pnpm build && tsc --noEmit && pnpm -r --filter './packages/*' typecheck",
         "format": "oxfmt .",

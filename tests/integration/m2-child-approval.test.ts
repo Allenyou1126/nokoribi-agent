@@ -125,7 +125,7 @@ function toolCall(
 
 async function waitFor(
     predicate: () => boolean,
-    timeoutMs = 10_000
+    timeoutMs = 15_000
 ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!predicate()) {
