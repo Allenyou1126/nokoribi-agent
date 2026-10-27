@@ -16,6 +16,14 @@ def row(document, row_id):
     return {}
 
 
+def row_index(document, row_id):
+    for index, entry in enumerate(document):
+        if entry.get("id") == row_id:
+            return index
+    fail(f"missing overlay row {row_id}")
+    return -1
+
+
 def main():
     overlay_path, service_path, environment_path = sys.argv[1:4]
     with open(overlay_path, encoding="utf-8") as handle:
@@ -55,6 +63,43 @@ def main():
         fail("test channel token mismatch")
     if channel.get("host") != "127.0.0.1":
         fail("test channel bind mismatch")
+
+    qq_bot = row(overlay, "nokoribi-channel-qq-bot")
+    if qq_bot.get("enabled") is not True:
+        fail("QQ bot channel must be enabled")
+    expected_qq_bot = {
+        "appId": "123456",
+        "clientSecretEnv": "NOKORIBI_QQ_BOT_CLIENT_SECRET",
+        "markdown": "basic",
+        "maxTextLength": 4500,
+        "maxRepliesPerReply": 4,
+        "c2cReplyWindowSeconds": 3600,
+        "groupReplyWindowSeconds": 300,
+        "requestTimeoutMs": 10000,
+        "connectTimeoutMs": 30000,
+        "activeMessageFallback": "auto",
+        "reconnectBaseMs": 1000,
+        "reconnectMaxMs": 60000,
+    }
+    for key, value in expected_qq_bot.items():
+        if qq_bot.get(key) != value:
+            fail(f"QQ bot channel {key} mismatch: {qq_bot.get(key)!r}")
+    if "clientSecret" in qq_bot:
+        fail("QQ bot channel must not contain the client secret")
+    for key in ("apiBaseUrl", "tokenBaseUrl", "gatewayUrl"):
+        if key in qq_bot:
+            fail(f"QQ bot channel must not contain the test override {key}")
+
+    channel_core = row(overlay, "nokoribi-channel-core")
+    if channel_core.get("trustedChannels") != ["qq-bot"]:
+        fail("channel-core trustedChannels mismatch")
+    if channel_core.get("defaultChannelId") != "local-test":
+        fail("channel-core default channel mismatch")
+    core_index = row_index(overlay, "nokoribi-channel-core")
+    local_index = row_index(overlay, "nokoribi-channel-local-test")
+    qq_index = row_index(overlay, "nokoribi-channel-qq-bot")
+    if not core_index < local_index < qq_index:
+        fail("channel rows must be ordered core, local-test, qq-bot")
 
     prompt = row(overlay, "nokoribi-prompt")
     if not prompt.get("soulFile", "").endswith("/share/SOUL.md"):

@@ -53,6 +53,10 @@
                     enable = true;
                     token = "test-token";
                   };
+                  channel.qqBot = {
+                    enable = true;
+                    appId = "123456";
+                  };
                 };
               }
             ];
@@ -74,6 +78,15 @@
             test -x ${package}/bin/node-shim
             ${package}/bin/node-shim -e 'process.exit(0)'
             grep -q 'exec-path-preload.cjs' ${package}/bin/nokoribi-agent
+            # M8: the official QQ SDK protocol layer must resolve from the
+            # production closure, and the runtime needs fetch/WebSocket.
+            # Resolve from the owning workspace package: pnpm links direct
+            # dependencies into each package's node_modules, not the root.
+            (cd ${package}/lib/nokoribi-agent/packages/channel-qq-bot && \
+              ${package}/bin/node-shim --input-type=module \
+                -e 'await import("@tencent-connect/qqbot-nodejs/protocol");')
+            ${package}/bin/node-shim -e 'if (typeof fetch !== "function") process.exit(1)'
+            ${package}/bin/node-shim -e 'if (typeof WebSocket !== "function") process.exit(1)'
             touch $out
           '';
 

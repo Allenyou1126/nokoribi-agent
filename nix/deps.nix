@@ -7,5 +7,5 @@ fetchPnpmDeps {
   inherit (source) pname version src;
   pnpm = pnpm_12;
   fetcherVersion = 4;
-  hash = "sha256-by7QhSQpgQ02KvCC+ZWJgUPkXtkFEn3OzQDxlEUWRiM=";
+  hash = "sha256-Oypjpach7LlhQnkvajtL6sqGSV5pNRHSMC93kz55XgE=";
 }

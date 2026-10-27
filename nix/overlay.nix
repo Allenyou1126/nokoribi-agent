@@ -78,6 +78,22 @@ let
     maxBodyBytes = 1048576;
   };
 
+  channelQqBot = {
+    enabled = cfg.channel.qqBot.enable;
+    appId = cfg.channel.qqBot.appId;
+    clientSecretEnv = cfg.channel.qqBot.clientSecretEnv;
+    markdown = cfg.channel.qqBot.markdown;
+    maxTextLength = cfg.channel.qqBot.maxTextLength;
+    maxRepliesPerReply = cfg.channel.qqBot.maxRepliesPerReply;
+    c2cReplyWindowSeconds = cfg.channel.qqBot.c2cReplyWindowSeconds;
+    groupReplyWindowSeconds = cfg.channel.qqBot.groupReplyWindowSeconds;
+    requestTimeoutMs = cfg.channel.qqBot.requestTimeoutSeconds * 1000;
+    connectTimeoutMs = cfg.channel.qqBot.connectTimeoutSeconds * 1000;
+    activeMessageFallback = cfg.channel.qqBot.activeMessageFallback;
+    reconnectBaseMs = cfg.channel.qqBot.reconnectBaseMs;
+    reconnectMaxMs = cfg.channel.qqBot.reconnectMaxMs;
+  };
+
   patches = [
     {
       id = "nokoribi-agent-app";
@@ -97,8 +113,8 @@ let
         allowedSenders = [ "local-user" ];
         allowedChats = [ "local" ];
         defaultChatId = "local";
-        trustedChannels = [ ];
-        defaultChannelId = "local-test";
+        trustedChannels = lib.optional cfg.channel.qqBot.enable "qq-bot";
+        defaultChannelId = if cfg.channel.localTest.enable then "local-test" else "";
         approvalTimeoutMs = cfg.approval.approvalTimeoutSeconds * 1000;
         questionTimeoutMs = cfg.approval.questionTimeoutSeconds * 1000;
       };
@@ -106,6 +122,10 @@ let
     {
       id = "nokoribi-channel-local-test";
       config = channelLocalTest;
+    }
+    {
+      id = "nokoribi-channel-qq-bot";
+      config = channelQqBot;
     }
     {
       id = "nokoribi-prompt";

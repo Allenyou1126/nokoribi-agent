@@ -328,6 +328,74 @@ in
       };
     };
 
+    channel.qqBot = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Register the QQ official bot channel.";
+      };
+      appId = mkOption {
+        type = types.str;
+        default = "";
+        description = "QQ Bot AppID; non-secret and stored in the Nix store.";
+      };
+      clientSecretEnv = mkOption {
+        type = types.str;
+        default = "NOKORIBI_QQ_BOT_CLIENT_SECRET";
+        description = "Environment variable holding the client secret; the value comes from environmentFile/agenix.";
+      };
+      markdown = mkOption {
+        type = types.enum [ "none" "basic" "full" ];
+        default = "basic";
+        description = "Markdown capability advertised to the model.";
+      };
+      maxTextLength = mkOption {
+        type = types.ints.positive;
+        default = 4500;
+        description = "Per-chunk text limit for outbound replies.";
+      };
+      maxRepliesPerReply = mkOption {
+        type = types.ints.positive;
+        default = 4;
+        description = "Maximum passive replies per inbound message.";
+      };
+      c2cReplyWindowSeconds = mkOption {
+        type = types.ints.positive;
+        default = 3600;
+        description = "Passive reply window for C2C chats.";
+      };
+      groupReplyWindowSeconds = mkOption {
+        type = types.ints.positive;
+        default = 300;
+        description = "Passive reply window for group chats.";
+      };
+      requestTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 10;
+        description = "REST request timeout; the overlay renders it in milliseconds.";
+      };
+      connectTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = "Initial gateway connect wait before background reconnects.";
+      };
+      activeMessageFallback = mkOption {
+        type = types.enum [ "auto" "off" ];
+        default = "auto";
+        description = "Whether to attempt active messages when passive delivery is unavailable.";
+      };
+      reconnectBaseMs = mkOption {
+        type = types.ints.positive;
+        default = 1000;
+        description = "Gateway reconnect backoff base in milliseconds.";
+      };
+      reconnectMaxMs = mkOption {
+        type = types.ints.positive;
+        default = 60000;
+        description = "Gateway reconnect backoff cap in milliseconds.";
+      };
+    };
+
     prompt.soulFile = mkOption {
       type = types.nullOr types.str;
       default = null;
@@ -429,6 +497,23 @@ in
         message = "channel.localTest.bind must be a loopback address.";
       }
       {
+        assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.channel.qqBot.appId != "";
+        message = "channel.qqBot.appId is required when the QQ bot channel is enabled.";
+      }
+      {
+        assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.channel.qqBot.clientSecretEnv != "";
+        message = "channel.qqBot.clientSecretEnv must name the EnvironmentFile variable holding the client secret.";
+      }
+      {
+        assertion = !cfg.enable || !cfg.channel.qqBot.enable
+          || cfg.channel.qqBot.reconnectMaxMs >= cfg.channel.qqBot.reconnectBaseMs;
+        message = "channel.qqBot.reconnectMaxMs must be at least channel.qqBot.reconnectBaseMs.";
+      }
+      {
+        assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.environmentFile != null;
+        message = "channel.qqBot requires services.nokoribi-agent.environmentFile for the client secret.";
+      }
+      {
         assertion = !cfg.enable || routePairOk cfg.review.fast;
         message = "review.fast.provider and review.fast.model must both be set or both be null.";
       }
@@ -466,8 +551,22 @@ in
       "services.nokoribi-agent.sudo.enable grants NOPASSWD: ALL; Auto review is the only boundary."
     ++ lib.optional (cfg.enable && cfg.channel.localTest.enable)
       "The local test-channel token is stored in the Nix store in plain text."
-    ++ lib.optional (cfg.enable && !cfg.channel.localTest.enable)
-      "The local test channel is disabled; the daemon has no user-facing message channel.";
+    ++ lib.optional (cfg.enable && !cfg.channel.localTest.enable && !cfg.channel.qqBot.enable)
+      "The local test channel is disabled and the QQ bot channel is off; the daemon has no user-facing message channel."
+    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable)
+      "channel.qqBot is enabled: any QQ user who can message the bot or @-mention it in a group can drive the agent; platform limits are the only admission boundary and Auto review is the last gate (D152)."
+    ++ lib.optional
+      (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.activeMessageFallback == "auto")
+      "QQ active message push was announced as removed on 2025-04-21 while the API docs still list active quotas; proactive notices may fail and are deferred to the next inbound (D161)."
+    ++ lib.optional
+      (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.markdown != "none")
+      "QQ Markdown rendering of code blocks and tables is undocumented and untested; lower channel.qqBot.markdown to none if replies render badly."
+    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable && !cfg.channel.localTest.enable)
+      "channel.qqBot is the only message channel: there is no local fallback, so proactive notices are attempted, then deferred or dropped."
+    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.localTest.enable)
+      "channel.localTest and channel.qqBot are both enabled; replies and notices are routed per turn across the two channels."
+    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable)
+      "The QQ client secret is read from ${cfg.channel.qqBot.clientSecretEnv}; provide it through environmentFile/agenix, never the Nix store.";
   } // mkIf cfg.enable {
     services.nokoribi-agent._overlayText = overlayText;
 
