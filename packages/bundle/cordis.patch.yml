@@ -288,7 +288,9 @@
             allowedSenders: !!js (process.env.NOKORIBI_ALLOWED_SENDERS ?? 'local-user').split(',')
             allowedChats: !!js (process.env.NOKORIBI_ALLOWED_CHATS ?? 'local').split(',')
             defaultChatId: local
-            trustedChannels: []
+            # YAML plain scalars cannot contain ": ", so the ternary is quoted
+            # to keep the JS expression intact (the !!js tag accepts strings).
+            trustedChannels: !!js "(process.env.NOKORIBI_QQ_BOT_ENABLED ?? 'false') === 'true' ? ['qq-bot'] : []"
             defaultChannelId: local-test
             approvalTimeoutMs: !!js Number(process.env.NOKORIBI_APPROVAL_TIMEOUT_MS ?? 60000)
             questionTimeoutMs: !!js Number(process.env.NOKORIBI_QUESTION_TIMEOUT_MS ?? 300000)
@@ -302,6 +304,28 @@
             senderId: local-user
             chatId: local
             longPollTimeoutMs: 25000
+
+      - id: nokoribi-channel-qq-bot
+        name: "@nokoribi/channel-qq-bot"
+        config:
+            enabled: !!js (process.env.NOKORIBI_QQ_BOT_ENABLED ?? 'false') === 'true'
+            appId: !!js process.env.NOKORIBI_QQ_BOT_APP_ID ?? ''
+            clientSecretEnv: NOKORIBI_QQ_BOT_CLIENT_SECRET
+            markdown: !!js process.env.NOKORIBI_QQ_BOT_MARKDOWN ?? 'basic'
+            maxTextLength: !!js Number(process.env.NOKORIBI_QQ_BOT_MAX_TEXT_LENGTH ?? 4500)
+            maxRepliesPerReply: !!js Number(process.env.NOKORIBI_QQ_BOT_MAX_REPLIES ?? 4)
+            c2cReplyWindowSeconds: !!js Number(process.env.NOKORIBI_QQ_BOT_C2C_WINDOW_SECONDS ?? 3600)
+            groupReplyWindowSeconds: !!js Number(process.env.NOKORIBI_QQ_BOT_GROUP_WINDOW_SECONDS ?? 300)
+            requestTimeoutMs: !!js Number(process.env.NOKORIBI_QQ_BOT_REQUEST_TIMEOUT_MS ?? 10000)
+            connectTimeoutMs: !!js Number(process.env.NOKORIBI_QQ_BOT_CONNECT_TIMEOUT_MS ?? 30000)
+            activeMessageFallback: !!js process.env.NOKORIBI_QQ_BOT_ACTIVE_FALLBACK ?? 'auto'
+            reconnectBaseMs: !!js Number(process.env.NOKORIBI_QQ_BOT_RECONNECT_BASE_MS ?? 1000)
+            reconnectMaxMs: !!js Number(process.env.NOKORIBI_QQ_BOT_RECONNECT_MAX_MS ?? 60000)
+            # Test/fake-server URL overrides. An empty gatewayUrl resolves the
+            # WSS address through GET /gateway; tests may pin a ws:// URL.
+            apiBaseUrl: !!js process.env.NOKORIBI_QQ_BOT_API_BASE ?? 'https://api.bot.qq.com'
+            tokenBaseUrl: !!js process.env.NOKORIBI_QQ_BOT_TOKEN_BASE ?? 'https://api.bot.qq.com'
+            gatewayUrl: !!js process.env.NOKORIBI_QQ_BOT_GATEWAY_URL ?? ''
 
       - id: nokoribi-agent-app
         name: "@nokoribi/agent-app"
