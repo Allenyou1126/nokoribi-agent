@@ -44,6 +44,7 @@ flake outputs：
 - 官方 Node 保留原始二进制；启动 wrapper 用 Nix glibc loader + `lib.makeLibraryPath`（libstdc++/libgcc/glibc）执行它，避免 patchelf 改写导致 segfault，同时不依赖 NixOS 的 `/lib64`。
 - 原生 addon 用 `autoPatchelfHook`；`koffi` 的 musl 预编译文件不用于 NixOS，显式忽略其 musl interpreter 依赖。
 - wrapper 设置 `NODE_ENV=production`，不包含 pnpm/构建工具。
+- **DSH subprocess runner 兼容（D148）**：wrapper 通过 `--require` 预加载 `nix/exec-path-preload.cjs`，并把 `NOKORIBI_NODE_SHIM` 指向包内 `bin/node-shim`（loader + 官方 Node）。`dsh-subprocess-local` 在 Linux 上用 `systemd-run --user --scope` 启动私有 runner，命令取自 `process.execPath`；若该值保持为 loader，runner.js 会被 loader 当作二进制执行并立即失败，所有 `bash(host)` 调用都会报 `subprocess scope exited before its bootstrap consumed the launch request`。修改 wrapper 时必须保留 `--require`、`NOKORIBI_NODE_SHIM` 和 `node-shim`；`nix flake check` 的 package-smoke 有对应断言。
 - store 布局见 04.6；`packages/*/dist`、`SOUL.md`、`templates/`、`vendor/profile-boot/` 与 `node_modules/` 都在发行版内，状态只写 `DSH_HOME`。
 - 任何 native addon（若有）需在 Nix 构建中显式处理；v1 计划不依赖 DSH 的 Landlock/PTY addon（verify）。
 

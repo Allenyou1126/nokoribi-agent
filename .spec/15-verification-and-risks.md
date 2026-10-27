@@ -10,7 +10,7 @@
 | V4 | resume 后 inbox 是否自动处理 | 排队消息持久化，但 driver 是否自动唤醒未确认 | 进程级测试：消息入 inbox 后 kill → 重启 → 是否自动继续 | **已验证（M1）**：resume 会恢复 `next-turn` inbox，但不会自动开启新轮；M1 用“用户下一条消息/显式唤醒”消费，未加 bridge 重放。若 M2 需要立即处理，采用系统提示唤醒或入站队列重放。 |
 | V5 | schedule 工具安装时序 vs 主会话创建 | rc.3 schedule 是 Host-wide；交付依赖 `sessionController`，启动时主会话可能尚未 ready | 启动恢复测试：创建短 remind → SIGKILL → 过期后重启 → 是否交付 | **已验证（M5）**：`tests/process/m5.test.ts` 覆盖到期与 SIGKILL 逾期；最小 `sessionController` 桥在 daemon ready 前阻塞交付。上游无自动重试定时器；失败需后续 wake/restart |
 | V6 | Nix buildEnv + 运行时 `nix shell` 叠加的性能 | sandbox 默认 host，命令延迟影响体验 | 在开发机/目标机实测：首次/缓存后命令延迟；加包耗时 | **M3 已实测（开发机、Nix 缓存命中）**：base-only wrapper 约 4ms/命令，`nix shell nixpkgs#hello` 叠加约 28ms/命令；首次 fetch/realize 另计。M6 已生成更大 buildEnv，目标机复核仍待 12.12 手工。 |
-| V7 | pnpm 依赖在 Nix 固定输出构建中的可行性 | 发行版要可复现、可离线 | 写 package.nix，跑 `nix build` | **M6 已验证**：`fetchPnpmDeps`（fetcherVersion 4）+ `nix build .#default` 成功；运行时使用官方 Node 24.21.0（D145）。升级/DSH bump 时需更新 hash 并复测 native addon。 |
+| V7 | pnpm 依赖在 Nix 固定输出构建中的可行性 | 发行版要可复现、可离线 | 写 package.nix，跑 `nix build` | **M6 已验证**：`fetchPnpmDeps`（fetcherVersion 4）+ `nix build .#default` 成功；运行时使用官方 Node 24.21.0（D145）。升级/DSH bump 时需更新 hash 并复测 native addon。**2026-10-27 目标机复测补充**：D145 wrapper 使 `process.execPath` 指向 loader，DSH subprocess runner 因此无法启动（D148）；已用 `node-shim` + execPath preload 修复，并在目标机验证 native scope 与 daemon 启动。改 wrapper/Node 策略后必须重跑目标机 subprocess 冒烟。 |
 | V8 | 主模型是否有支持图像输入的 API 模型 | 入站图片直接给模型（D16） | 用 API key 查 `dsh-llm-deepseek` 模型目录；实际发图测试 | **仍待验证**：M6 未接图片链路；图片仍 501。无模型则按 D69 明确告知不支持，能力位关闭。 |
 | V9 | 主 agent 隐藏 goal 工具的实现方式 | D101 要求 main 不能建 goal | 阅读 `dsh-tools` 的 agent 限制 API；用 fake agent 测试可见工具 | **已验证（M4）**：main agent setup 用 `agentCtx.tools.restrict({deny:[create_goal,get_goal,update_goal]})`；进程测试确认工具 schema 不含 goal 工具，误建事件仍由 `goal/changed` 清理。 |
 
@@ -50,7 +50,8 @@
 | 冷恢复多一轮/时序不稳 | 中 | goal 重复执行/暂停 | M4 已进程级验证；失败保留 tracked + 通知 + `/goal resume` 重试；多一轮已接受 |
 | nix shell 启动慢 | 中 | sandbox 命令延迟、体验差 | 预构建 buildEnv；临时包才 nix shell；实测调优 |
 | sandbox 依赖缺失（setpriv/nix/baseEnvironment） | 中 | 默认 sandbox host 命令失败 | M3 返回明确错误；M6 部署检查 util-linux/nix/buildEnv；开发可切 local |
-| DSH native addon 与 Node 构建不兼容 | 高 | profile 无法启动 | D145：固定官方 Node 24.21.0，wrapper 经 Nix loader；升级 Node/DSH 时必须重跑 package runtime smoke |
+| DSH native addon 与 Node 构建不兼容 | 高 | profile 无法启动 | D145：固定官方 Node 24.21.0，wrapper 经 Nix loader；D148：execPath shim；升级 Node/DSH 时必须重跑 package runtime smoke 与目标机 subprocess 冒烟 |
+| 官方 Node loader wrapper 改变 `process.execPath` 语义 | 中 | 依赖 execPath 的 DSH runner 静默失败（D148 已出现一次，bash 全挂） | D148 的 `node-shim` + `--require` preload；flake package-smoke 断言；包装/Node 变更时跑目标机 subprocess 冒烟 |
 | NixOS 手工验收未执行 | 中 | 生产行为漏检 | 当前开发机非 NixOS；12.12 必须目标机执行，M6 不宣称完成 |
 | 主模型无图像能力 | 中 | 入站图片不可用 | 查目录；无模型则明确不支持（D69） |
 | prompt injection（网页/工具结果） | 高 | 诱导危险动作 | reviewer 把外部内容视为 fact；系统提示词；残余风险接受 |

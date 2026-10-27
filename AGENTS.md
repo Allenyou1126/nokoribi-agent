@@ -9,7 +9,7 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 - M3 的默认 shell host 是 `sandbox:default`；sandbox 需要绝对 Nix buildEnv（`NOKORIBI_SANDBOX_BASE_ENV`）与 `setpriv`。无 Nix 的开发环境用 `NOKORIBI_DEFAULT_HOST=local:workspace`。实现细节与偏差见 [.spec/07](.spec/07-shell-hosts-and-sandbox.md) 7.12。
 - M4 的 goal child 由宿主创建（`start_goal` / `/goal new`，D136），main 隐藏 goal 工具；M5 起 goal 默认模型由 `NOKORIBI_GOAL_MODEL` 提供，可通过 `NOKORIBI_GOAL_MODELS` allowlist 在 `start_goal`/`/goal new --model` 中选择（D138/D141）。实现细节见 [.spec/10](.spec/10-goals-and-schedule.md) 10.13。
 - M5 的 memory 是**主动检索**（`memory` 工具），不会自动注入到会话；automatic injection 后移（D143）。默认 workspace 下的 sandbox 与 schedule 需要 daemon 常驻。实现细节见 [.spec/09](.spec/09-prompt-and-memory.md) 9.5 与 [.spec/10](.spec/10-goals-and-schedule.md) 10.13。
-- M6 的 Nix 包保留官方 Node 24.21.0 运行时（D145），wrapper 经 Nix glibc loader 启动；不要把它换回 nixpkgs Node，否则 `node-addon-require-builtin` 会让 daemon 启动失败。NixOS module 选项与手工清单见 [.spec/12](.spec/12-nixos-deployment.md)。
+- M6 的 Nix 包保留官方 Node 24.21.0 运行时（D145），wrapper 经 Nix glibc loader 启动；不要把它换回 nixpkgs Node，否则 `node-addon-require-builtin` 会让 daemon 启动失败。wrapper 同时用 `--require` 预加载 `nix/exec-path-preload.cjs` 并把 `process.execPath` 指向 `bin/node-shim`（D148）；否则 DSH subprocess runner 会拿 loader 执行 runner.js，所有 `bash(host)` 调用报 `subprocess scope exited before its bootstrap consumed the launch request`。NixOS module 选项与手工清单见 [.spec/12](.spec/12-nixos-deployment.md)。
 - `pnpm check` 会先构建 workspace 包（类型检查依赖各包 `dist/*.d.ts`），然后运行 tsc/oxlint/oxfmt；`nix flake check` 额外跑 package/unit/module-eval。当前开发机是 Arch，不能执行 NixOS 12.12 手工清单。
 - 决策以 [.spec/03-decision-log.md](.spec/03-decision-log.md) 为准；被取代/撤销的决定登记在 [.spec/16-superseded-and-glossary.md](.spec/16-superseded-and-glossary.md)。
 - 实现偏离规格时必须同步更新规格与决策记录，不能只改代码。

@@ -224,6 +224,14 @@
 - 手工验收：当前开发机是 Arch Linux，未执行 NixOS `nixos-rebuild` 与 12.12 清单；该部分必须在目标 NixOS 主机执行并记录。M6 因此只能标记“代码实现完成、手工验收待执行”。
 - 偏差/边界：D144（systemd-notify helper）、D145（official Node）、D146（module 选项口径）、D147（验收边界）；DSH 仍固定 0.2.1-rc.3，本轮不执行真实版本 bump。
 
+### M6 目标机临时部署记录（2026-10-27）
+
+- 在 hkg-dog-darell（NixOS 26.05、x86_64）以用户态临时部署：GitHub 私有仓库 + `git clone`/`git pull`（未用 scp/rsync 传项目文件），`nix build .#default` 成功，构建产物与开发机同一 store 路径；未安装 systemd unit、未改系统配置。
+- 3 轮测试对话暴露目标机阻塞缺陷：`bash(host)` 对 `local:workspace` 与 `sandbox:default` 均 100% 失败，报 `subprocess scope exited before its bootstrap consumed the launch request`；模型调用的 `read`/状态通道正常。用户 journal 显示 systemd-run scope 实际执行的是 `ld-linux runner.js`，loader 报 invalid ELF header——即 D145 wrapper 使 `process.execPath` 指向 loader，与 DSH subprocess runner 不兼容。
+- 已按 D148 修复：新增 `bin/node-shim` 与 `--require` execPath preload；在目标机用真实内核/用户 systemd 复现问题并验证修复（subprocess native scope 启动成功、daemon 启动与 native addon 检查正常）。临时 fallback 方案（去掉 `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` 强制无 scope）未采用。
+- 本次仅覆盖：拉取/构建、daemon 启动、测试通道 `/v1/status`、真实模型对话、bash 缺陷复现与修复验证。12.12 清单其余项（审批、sandbox 生命周期、goal、memory、schedule、watchdog、重启恢复、升级演练）仍未在目标机执行。
+- 附带观察：shutdown 时偶发 `shutdown flush failed ... flush on a closed handle`；本次数据未丢（`cleanShutdown=true`、session JSONL 完整），作为后续清理项记录。
+
 ## 14.8 后置（v1 之外）
 
 - **M7 SSH host**：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。

@@ -143,6 +143,7 @@
 | D145 | Nix 运行时（M6） | DSH 的 `node-addon-require-builtin` 只匹配官方 Node；包内保留官方 Node 24.21.0，wrapper 经 Nix glibc loader 启动；构建仍用 nixpkgs Node/pnpm |
 | D146 | NixOS 配置映射（M6） | 纯 Nix 生成完整 Cordis overlay；`goal.allowedModels`/显式 memory 路由；不提供 `models.subagents`、`memory.enable`、`schedule.enable`、SSH 开关 |
 | D147 | M6 验收边界（M6） | 本地 `nix build`/`nix flake check` + NixOS 12.12 手工；不伪造 DSH bump；watchdog 用手工 SIGSTOP 验证 |
+| D148 | Nix subprocess runner（M6 修正） | DSH runner 用 `process.execPath`；loader wrapper 下该值是 loader，目标机 `bash` 全失败；wrapper 换用 `bin/node-shim` + `--require` preload 覆盖 execPath，保留 native containment |
 
 ---
 
@@ -324,6 +325,7 @@
 - **D145 Nix 运行时（M6）** — 自定义：`@deepseek-ai/dsh-app-boot` 依赖的 `node-addon-require-builtin` 会检查官方 Node 的代码布局；nixpkgs 构建的 Node 和 patchelf 改写后的官方 Node 都会失败。发行版包保留官方 Node 24.21.0 二进制（x86_64/aarch64），wrapper 用 Nix glibc loader + Nix libstdc++ 启动；构建阶段仍使用 nixpkgs Node/pnpm。这样 native addon、NixOS 运行时和 Nix store 都自洽。
 - **D146 NixOS 配置映射（M6）** — 自定义：module 生成完整 `cordis.patch.yml` overlay，不依赖运行时环境变量覆盖。选项按实现口径：`models.main`、`review.fast/strong`、`goal.{provider,model,allowedModels,maxRounds}`、`memory.{provider,model,curator}`、`hosts.*`、`channel.localTest.*`、`prompt.*`。不提供 `models.subagents`、`memory.enable`、`schedule.enable` 或可启用的 SSH host；memory/schedule 始终挂载，memory 只关闭提炼，SSH 留给 M7。
 - **D147 M6 验收边界（M6）** — 自定义：本地门禁为 `nix build`、`nix run --version`、`nix flake check`；NixOS 12.12 清单必须在目标机执行并记录。watchdog 手工用 `kill -STOP` 验证，不引入应用内测试钩子。当前 DSH 固定 0.2.1-rc.3，无新版本可 bump；真正的 DSH bump + reviewer vendor 更新留待后续升级提交，M6 只演练同版本重构建/重启恢复。
+- **D148 Nix subprocess runner（M6 修正 D145）** — 自定义（2026-10-27 目标机实测）：DSH `dsh-subprocess-local` 在 Linux 上用 `systemd-run --user --scope` 启动私有 runner，命令是 `[process.execPath, runner.js]`。D145 的 loader wrapper 使 `process.execPath` 等于 Nix glibc loader，systemd-run 拿 loader 执行 `runner.js` 报 invalid ELF header，runner 在消费 launch request 前退出，因此所有 `bash(host)` 调用 100% 失败（`subprocess scope exited before its bootstrap consumed the launch request`；hkg-dog-darell 会话日志与用户 journal 可复现）。修复：发行版新增 `bin/node-shim`（loader + 官方 Node 的可执行 shim）与 `nix/exec-path-preload.cjs`；wrapper 通过 `--require` 预加载，并把 `NOKORIBI_NODE_SHIM` 指向 shim，preload 仅在该变量存在时覆盖 `process.execPath`。不把 `--require` 放进 `NODE_OPTIONS`，避免泄漏进用户 shell 环境。已验证：目标机 subprocess 层 native scope 启动成功、daemon 启动与 native addon 检查正常；不再需要“去掉 XDG_RUNTIME_DIR/DBUS 强制 fallback”的临时方案。`nix flake check` 的 package-smoke 增加 shim/preload 断言。
 
 ---
 
