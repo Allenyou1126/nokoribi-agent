@@ -1350,7 +1350,9 @@ export class ChannelService extends Service {
                 exhausted,
                 error: error instanceof Error ? error.message : String(error),
             });
-            return item.kind === "reply" ? "failed-reply" : "failed";
+            return item.kind === "reply" && exhausted
+                ? "failed-reply"
+                : "failed";
         }
         const delay = Math.min(
             this.config.outboxMaxDelayMs,
@@ -1407,6 +1409,7 @@ export class ChannelService extends Service {
             await this.notify(
                 `有 ${String(count)} 条消息发送失败，请检查日志。`
             );
+            this.schedule(() => void this.pump(), 0);
         } catch (error) {
             this.logger.error("failed to notify outbox failures", {
                 error: error instanceof Error ? error.message : String(error),
