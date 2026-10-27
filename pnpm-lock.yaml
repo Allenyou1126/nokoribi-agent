@@ -457,6 +457,9 @@ importers:
       '@nokoribi/channel-local-test':
         specifier: workspace:*
         version: link:../channel-local-test
+      '@nokoribi/channel-qq-bot':
+        specifier: workspace:*
+        version: link:../channel-qq-bot
       '@nokoribi/memory':
         specifier: workspace:*
         version: link:../memory
@@ -524,6 +527,24 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/channel-qq-bot:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5
+        version: 4.0.5(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5
+        version: 3.18.5
+      '@nokoribi/channel-core':
+        specifier: workspace:*
+        version: link:../channel-core
+      '@nokoribi/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@tencent-connect/qqbot-nodejs':
+        specifier: 1.0.5
+        version: 1.0.5
+
   packages/launcher:
     dependencies:
       '@deepseek-ai/cordis':
@@ -556,6 +577,9 @@ importers:
       '@nokoribi/channel-local-test':
         specifier: workspace:*
         version: link:../channel-local-test
+      '@nokoribi/channel-qq-bot':
+        specifier: workspace:*
+        version: link:../channel-qq-bot
       '@nokoribi/profile-boot':
         specifier: workspace:*
         version: link:../../vendor/profile-boot
@@ -2438,6 +2462,18 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@tencent-connect/qqbot-nodejs@1.0.5':
+    resolution: {integrity: sha512-OAPGoZTtG3soI79lGNQ4YqdAe9xy+lYatUfzZyBPmjaRjH0uLjFeImffMlGVSmhfaM/wJQSIA2g1uZv3eorTRg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      mpg123-decoder: ^1.0.3
+      silk-wasm: ^3.7.1
+    peerDependenciesMeta:
+      mpg123-decoder:
+        optional: true
+      silk-wasm:
+        optional: true
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -4730,6 +4766,13 @@ snapshots:
   '@rolldown/pluginutils@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@tencent-connect/qqbot-nodejs@1.0.5':
+    dependencies:
+      ws: 8.22.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@types/chai@5.2.3':
     dependencies:

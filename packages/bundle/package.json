@@ -71,6 +71,7 @@
         "@nokoribi/agent-app": "workspace:*",
         "@nokoribi/channel-core": "workspace:*",
         "@nokoribi/channel-local-test": "workspace:*",
+        "@nokoribi/channel-qq-bot": "workspace:*",
         "@nokoribi/memory": "workspace:*",
         "@nokoribi/prompt": "workspace:*",
         "@nokoribi/reviewer": "workspace:*",
