@@ -265,9 +265,9 @@
 - 动作按钮（D163）：只落契约、能力位与 outbox 持久化；M7 没有生产者，deferred 通知/回复丢弃 actions。
 - 未完成/后置：M8 QQ driver、真实平台事实门禁、按钮渲染与 `INTERACTION_CREATE`、图片链路、M6 目标机 12.12 清单。
 
-## 14.9 M8 真实 IM 适配器：QQ 官方 Bot（规格通过，M7 后实现）
+## 14.9 M8 真实 IM 适配器：QQ 官方 Bot（代码已实现，真实验收待执行）
 
-> 状态：**规格已通过（2026-10-27），用户要求暂不启动实现**；M8 依赖 M7。完整规格见 [17](17-qq-official-bot.md)，调研材料见 `.spec/notes/`。
+> 状态：**代码已实现（2026-10-27）**；14 项平台事实门禁、17.8.2 真实 Bot 清单与目标机部署待用户执行。完整规格见 [17](17-qq-official-bot.md)，调研材料见 `.spec/notes/`，门禁记录见 `.spec/notes/qq-fact-gate.md`。
 
 ### 交付物
 
@@ -287,6 +287,14 @@
 - 依赖 M7（core 扩展）以及 M2/M5/M6（审批、schedule、部署）。
 - 最大风险：平台准入/封禁、白名单只有平台边界、主动推送不可用、协议冲突。
 - 后置：图片链路（V8）、C2C `is_wakeup` 召回、按钮审批、群全量消息。
+
+### M8 实现记录（2026-10-27）
+
+- 已实现 `packages/channel-qq-bot`：官方 SDK `./protocol` 的 `TokenManager`/`ApiClient`/`GatewayConnection` 薄封装；C2C/群 @ 归一化；被动优先 + `activeMessageFallback=auto`；错误码分类（含 HTTP 200 body `code`）；长度/Markdown 回退；滑动窗口频控；health。
+- 已实现 NixOS `channel.qqBot.*`（13 选项）、overlay row、`trustedChannels`、bundle/launcher 装配、`.env.example` 与 flake module-eval/package-smoke；`nix/deps.nix` FOD 哈希更新。
+- 已验证：`pnpm check`；`pnpm test` 52 文件/374 测试；`pnpm test:process` 7 文件/52 场景（含 M8 10 场景）；`nix flake check`（package/unit/package-smoke/module-eval）通过；`nix build .#default` 通过。
+- 实现口径（D164）：SDK 只消费 protocol；不暴露 `sandbox`/`platformLimitsOnly`/driver 白名单；active 消息不发送 `msg_seq`；HTTP 200 + body code 显式转错；4009 由 SDK 重新 Identify；零依赖 fake WS/REST；不改 core。
+- 未完成/后置：14 项平台事实门禁、17.8.2 真实 Bot 验收、目标机部署、按钮/`INTERACTION_CREATE`、图片链路、群全量消息、C2C `is_wakeup`。
 
 ## 14.10 后置（v1 之外）
 
@@ -320,7 +328,7 @@
 
 ## 14.12 v1 完成定义
 
-- M1–M6 验收全部通过；`nix flake check` 通过。
+- M1–M8 代码与自动化门禁通过；M6/M8 真实验收（NixOS 12.12、QQ 14 项门禁/17.8.2）执行并记录。
 - 文档（本套）与实现一致；所有偏离回写。
 - 安全检查清单（08）中的已接受风险被再次确认。
 - 手工验收清单（12.12）执行并记录结果。

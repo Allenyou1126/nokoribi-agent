@@ -151,6 +151,8 @@ M1/M2 实际流程：
 
 M7 路由与降级（D159/D161/D162）：通知目标优先 `turnChat ?? lastActiveChat`；同 chat 不可投时回退其他有 `defaultChatId` 的 active-capable driver；都没有时对已知 chat 入 `deferredNotices`，下一次该 chat 入站时以被动回复补投（“⚠️ 补发”）；无任何 chat 可寻址才 warn + drop。`/status` 增加 `channels` 与 `deferredNotices` 便于观察。
 
+M8 QQ driver（2026-10-27 已实现）：`channel-qq-bot` 在 `channel-core` 之后注册；`driver.start()` 最多等首个 READY/RESUMED `connectTimeoutMs`，超时只 warn 并让 `GatewayConnection` 后台重连，**不阻塞 daemon ready**。`stop()` 中止 WS/重连、有界等待并拒绝后续发送（可重试错误让 outbox 保留）；token 只在 SDK 内存缓存，gateway 会话不跨进程持久化（重启重新 Identify）。启动阶段缺 AppID/secret 时 `apply()` fail loud。
+
 ## 5.10 主会话与消息边界
 
 - 主会话 id 稳定；所有 IM 消息都进入同一主会话（单用户单主会话，D08）。

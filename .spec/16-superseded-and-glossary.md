@@ -49,7 +49,7 @@
 - 控制台/fake 作为产品渠道（最终只做本地测试通道用于验收）。
 - 流式输出/编辑消息（用户未选；v1 不做）。
 - 多用户/群聊支持（后置，未设计）。
-- 真实 IM 适配器进 v1（M8 才实现；M7 core 已实现，v1 仍只有本地测试通道）。
+- 真实 IM 适配器进 v1（后置到 M8；M7 core 与 M8 QQ 官方 Bot 代码已实现，真实平台验收待执行）。
 - 直接挂官方 `@tencent-connect/dsh-qqbot` 作为 QQ 适配层（端到端 agent 插件、绕过 `ctx.channels`/审批/outbox；硬依赖 UNLICENSED `qqbot-connector`，peer semver 与 `0.2.1-rc.3` 不匹配）→ M8 自研 driver（D154）。
 - M8 用 WebHook 接入 QQ（需要公网回调/TLS 终止，与当前无入站端口部署冲突）→ 先 WebSocket，WebHook 后置（D150）。
 - heartbeat/定时主动唤醒（不做）。
@@ -157,6 +157,11 @@
 | ChannelDriver | IM/测试通道的适配器接口 |
 | QQ Bot | QQ 开放平台的官方机器人（M8 首个真实 IM 渠道） |
 | openid | QQ 官方 Bot 的伪匿名用户/群标识；按 AppID/群作用域不同 |
+| msg_id | 被动回复引用的入站事件 id；QQ 单聊/群聊各有窗口与次数限制 |
+| msg_seq | 与 `msg_id` 联合的 1 基被动槽位（driver 复用 core `replySeq`）；相同 `msg_id+msg_seq` 重试由平台去重 |
+| chatId 命名空间（QQ） | `c2c:<user_openid>` / `group:<group_openid>`；无状态重启后仍能判断发送端点 |
+| activeMessageFallback | 被动不可用时是否尝试主动消息；`auto` 失败后标记不可用 1h，`off` 直接由 core defer/fail |
+| QQ fact gate | M8 真实接入前的 14 项平台事实实测清单；记录见 `.spec/notes/qq-fact-gate.md` |
 | 被动消息 | 携带事件 `msg_id`（或 `event_id`）的回复；受窗口与次数限制 |
 | 主动消息 | 不携带 `msg_id` 的主动发送；配额受限，且官方已于 2025-04-21 下线 |
 | replySeq | channel-core 为同一被动上下文分配的 `msg_seq`（1..N，持久、重试稳定） |

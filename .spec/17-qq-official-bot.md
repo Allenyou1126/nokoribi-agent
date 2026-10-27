@@ -1,7 +1,7 @@
 # 17 真实 IM 适配器：QQ 官方 Bot
 
-> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（已实现，2026-10-27）**、**M8 = QQ 官方 Bot 适配器（尚未启动）**、M9 = SSH host。
-> 用户已确认：协议层采用官方 SDK（D154）；channel-core 扩展拆成独立里程碑先做（D158）。M7 实现口径见 D162；动作按钮扩展空间见 D163（仅契约/持久化，未实现）。
+> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（已实现，2026-10-27）**、**M8 = QQ 官方 Bot 适配器（代码已实现，2026-10-27；真实平台门禁/验收待执行）**、M9 = SSH host。
+> 用户已确认：协议层采用官方 SDK（D154）；channel-core 扩展拆成独立里程碑先做（D158）。M7 实现口径见 D162；M8 实现口径见 D164；动作按钮扩展空间见 D163（仅契约/持久化，未实现）。
 > 调研材料（工作稿，评审后决定是否入库）：
 > - 平台事实表：[.spec/notes/qq-official-bot-api-facts.md](notes/qq-official-bot-api-facts.md)（807 行，S1–S41 来源）
 > - 代码接口映射：[.spec/notes/channel-qq-mapping.md](notes/channel-qq-mapping.md)（893 行，含 A2 契约草案与文件清单）
@@ -226,28 +226,26 @@ channel.qqBot = {
   enable = false;
   appId = "";                            # 非秘密，入 store/overlay
   clientSecretEnv = "NOKORIBI_QQ_BOT_CLIENT_SECRET";  # 只写变量名，值来自 EnvironmentFile
-  sandbox = false;                       # 沙箱/测试域名（待实测）
   markdown = "basic";                    # none | basic | full
   maxTextLength = 4500;
   maxRepliesPerReply = 4;                # core 预截断
-  replyWindows = { c2cSeconds = 3600; groupSeconds = 300; };  # 可减余量
-  requestTimeoutMs = 10000;
-  connectTimeoutMs = 30000;
+  c2cReplyWindowSeconds = 3600;
+  groupReplyWindowSeconds = 300;
+  requestTimeoutSeconds = 10;
+  connectTimeoutSeconds = 30;
   activeMessageFallback = "auto";        # auto | off
-  reconnect = { baseDelayMs = 1000; maxDelayMs = 60000; };
-  platformLimitsOnly = true;             # D152：module 生成 trustedChannels
-  # 测试/本地覆盖（Nix 不暴露）
-  overloads = { apiBaseUrl = null; tokenBaseUrl = null; gatewayUrl = null; };
+  reconnectBaseMs = 1000;
+  reconnectMaxMs = 60000;
 };
 ```
 
-- 断言（`enable = true` 时）：`appId != ""`；运行期检查 `clientSecretEnv` 指向的环境变量非空（fail loud，不打印值）。
-- 若 `platformLimitsOnly=false`：预留 driver 级 `allowedUsers/allowedGroups`（本里程碑不实现，assertion 提示）。
-- warnings：QQ 平台限制即准入边界（高残余风险）；QQ-only 无主动通知能力；`localTest.enable` 与 `qqBot.enable` 同时启用时使用 per-turn 路由；无 active-capable 渠道时通知会被记录/丢弃。
-- overlay：新增 `nokoribi-channel-qq-bot` patch（写全字段）；`nokoribi-channel-core` patch 增加 `trustedChannels=["qq-bot"]` 与显式 `defaultChannelId`。
+- 与 2026-10-27 初稿的差异（D164）：**不暴露** `sandbox`、`platformLimitsOnly`、`allowedUsers/allowedGroups`。QQ 已不支持沙箱群；D152 不做 driver 白名单，假选项只会误导。测试/联调需要的域名覆盖只放 bundle env（`NOKORIBI_QQ_BOT_API_BASE` / `TOKEN_BASE` / `GATEWAY_URL`），不进 Nix option。选项名用 `maxRepliesPerReply`，窗口/超时用扁平字段；overlay 把秒转成 driver 的毫秒字段。
+- 断言（`enable = true` 时）：`appId != ""`；`clientSecretEnv != ""`；`reconnectMaxMs >= reconnectBaseMs`；`environmentFile != null`（全局断言已有，显式加一条更清晰）。运行期检查 `clientSecretEnv` 指向的环境变量非空（fail loud，不打印值）。
+- warnings：QQ 平台限制即准入边界（高残余风险）；主动推送争议（2025-04-21 横幅 vs 配额表）；Markdown 代码块/表格未实测；QQ-only 无本地回退时通知 defer/drop；`localTest.enable` 与 `qqBot.enable` 同时启用时使用 per-turn 路由；secret 只走 EnvironmentFile/agenix。
+- overlay：新增 `nokoribi-channel-qq-bot` patch（写全字段，不含 secret/测试 URL）；`nokoribi-channel-core` patch 增加 `trustedChannels = lib.optional qqBot.enable "qq-bot"` 与 `defaultChannelId`（localTest 启用时 `local-test`，否则空串回退首个 driver）。
 - 行顺序：`channel-core` → `channel-local-test` → `channel-qq-bot` → `agent-app`（默认渠道由显式配置决定，不依赖行序）。
 - systemd：`clientSecret` 由 `environmentFile` 注入；不写入 store/overlay。`appId` 写入 overlay 行 config。
-- 本地开发：`.env.example` 增加 QQ 变量（enabled/appId/clientSecret/sandbox/markdown/上限/测试域名覆盖）。
+- 本地开发：`.env.example` 增加 QQ 变量（enabled/appId/clientSecret/markdown/上限/窗口/超时/activeFallback/reconnect/测试域名覆盖）。
 
 ### 17.6.2 channel-core 最小扩展（D158，M7 已实现）
 
@@ -334,6 +332,8 @@ channel.qqBot = {
 4. P7d：`pnpm check`、`pnpm test`、`pnpm test:process`、`nix flake check`；文档回写（03/05/06/13/14/15/16）。
 > **状态：M7 已完成（2026-10-27）**。`local-test` 行为保持兼容，多 driver 路由、outbox 新字段、通知 defer 与 actions 契约可用；实现记录见 [14.8](14-roadmap.md)。
 
+> **状态：M8 代码已实现（2026-10-27）**。`channel-qq-bot`、bundle/launcher/NixOS 装配、fake WS/REST 单元/集成/进程测试与自动化门禁已完成；真实平台 14 项门禁与 17.8.2 待执行。实现记录见 17.10.4 与 [14.9](14-roadmap.md)。
+
 **M8（本规格，M7 之后）：QQ 官方 Bot 适配器**
 1. P8a：`channel-qq-bot` 基础：config + 官方 SDK `./protocol` 薄封装（token/REST/WS）+ 单测。
 2. P8b：driver 语义：入站映射/过滤、被动优先/replySeq、错误分类/频控 + 单测。
@@ -345,9 +345,9 @@ channel.qqBot = {
 
 **M7 修改**：`packages/channel-core/src/{contract,service,outbox,format}.ts`、新增 `packages/channel-core/src/routing.ts`、`packages/shared/src/schemas.ts`、`packages/channel-local-test/src/channel.ts`、`packages/agent-app/src/daemon.ts`、相关测试（`packages/channel-core/test/*`、`tests/integration/m7-channel-routing.test.ts`、m2 FakeDriver 签名）；`packages/bundle/cordis.patch.yml`（channel-core 行配置）、`nix/overlay.nix`（channel-core patch）；`vitest.unit.config.ts`/`nix/tests.nix`（flake unit 入口）。
 
-**M8 新增**：`packages/channel-qq-bot/`（index/config/driver/gateway/rest/normalize/errors + test）、`tests/process/support/fake-qq-bot.ts`、`tests/process/m8-qq.test.ts`。
+**M8 新增**：`packages/channel-qq-bot/`（index/config/logger/errors/normalize/transport/rest/gateway/driver/limiter + test）、`packages/channel-qq-bot/scripts/qq-fact-gate.mjs`；`tests/support/fake-ws.ts`、`tests/process/support/fake-qq-bot.ts`、`tests/process/m8-qq.test.ts`、`tests/integration/m8-qq.test.ts`；`.spec/notes/qq-fact-gate.md`。
 
-**M8 修改（必须）**：`packages/bundle/cordis.patch.yml`、`packages/bundle/package.json`、`packages/launcher/package.json`（装配锚点）；`nix/module.nix`、`nix/overlay.nix`、`nix/check-module.py`、`flake.nix`、`nix/deps.nix`（FOD 哈希）、`pnpm-lock.yaml`；`.env.example`、`packages/launcher/src/index.ts`（helpText）；实现后回写 `.spec/03/04/05/06/12/13/14/15/16` 与 `README.md`。
+**M8 修改（已实现）**：`packages/bundle/cordis.patch.yml`、`packages/bundle/package.json`、`packages/launcher/package.json`（装配锚点）；`nix/module.nix`、`nix/overlay.nix`、`nix/check-module.py`、`flake.nix`、`nix/deps.nix`（FOD 哈希）、`pnpm-lock.yaml`；`.env.example`、`packages/launcher/src/index.ts`（helpText）；`.spec/03/04/05/06/12/13/14/15/16` 与 `README.md` 已回写。
 
 **建议**：channel-core `status()` 增加 `channels` health；`format.ts` 前缀预留；daemon 恢复 `lastActiveChat`；outbox 耗尽通知收口。
 
@@ -355,22 +355,33 @@ channel.qqBot = {
 
 - 每个提交：`pnpm check`；行为变更需测试。
 - M7 完成：`pnpm test`、`pnpm test:unit`、`pnpm test:process`、`nix flake check`，local-test 回归通过（2026-10-27 已通过）。
-- M8 完成：`pnpm test`、`pnpm test:process`、`nix flake check`、真实 Bot 17.8.2 全清单通过并记录。
+- M8 代码完成（2026-10-27 已通过）：`pnpm check`；`pnpm test` 52 文件/374 测试；`pnpm test:unit`（flake unit）通过；`pnpm test:process` 7 文件/52 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过；`nix build .#default` 通过。
+- M8 验收完成（待执行）：真实 Bot 14 项平台事实门禁 + 17.8.2 全清单 + 目标机部署通过并记录。未执行前只能称“代码完成”。
+
+### 17.10.4 M8 实现记录（2026-10-27）
+
+- 新增 `packages/channel-qq-bot`：`QqRest` 直接使用 SDK `ApiClient`/`TokenManager`/`MessageApi`（`./protocol`），显式控制 `msg_id`/`msg_seq`（active 不带 `msg_seq`，避免 SDK 自动随机 seq）；`QqGateway` 包装 `GatewayConnection`（`intents=1<<25`、README/事件回调、`connectTimeoutMs` 内等待 READY 后后台重连）；`QqBotDriver` 实现被动优先、窗口/槽位、`activeMessageFallback` 标记、错误映射、长度/Markdown 回退、频控与 health。
+- 入站：仅 `C2C_MESSAGE_CREATE`/`GROUP_AT_MESSAGE_CREATE`；chatId `c2c:<openid>`/`group:<group_openid>`；忽略机器人自身、群全量、附件-only、空文本与互动事件；`receivedAt` 用平台 timestamp。
+- **HTTP 200 业务错误**：SDK `ApiClient` 只在非 2xx 抛错；driver 在 REST 层检查响应体 `code`/`err_code` 并转成 `ApiError`，否则被动过期/主动不可用等错误会被误判为成功。
+- **4009 行为**：SDK 1.0.5 将 4009 视为 `SESSION_TIMEOUT`，清会话并重新 Identify；其它可恢复关闭（如 1000/4008）走 Resume。该偏差记录在事实门禁 notes，真实平台若依赖 4009 resume 需后续评估自研。
+- 测试：`packages/channel-qq-bot/test/` 7 文件/44 测试；`tests/integration/m8-qq.test.ts` 2 测试；`tests/process/m8-qq.test.ts` 10 场景（C2C/群、去重、超窗 active、active 失败 defer+补投、被动过期重试、token 刷新、断线 Resume、SIGTERM、双渠道路由）；fake WS/REST 零新增依赖（`node:http`/`node:crypto`）。
+- 装配：bundle 行默认 disabled；Nix module `channel.qqBot.*`（13 选项）、assertions/warnings、overlay row、`nix/check-module.py`、flake sample/package-smoke、`.env.example`、launcher helpText；`nix/deps.nix` FOD hash 已更新。
+- 已知边界：QQ-only 且无入站上下文时 `defaultTarget` 可能回退到 `qq-bot:local`（core 未改），但该路径只在人工命令/默认目标回退时出现；通知按 D161 defer/drop。真实平台门禁可能要求校准窗口/长度/域名/Markdown。
 
 ## 17.11 决策与待评审项
 
 | ID | 主题 | 决议/建议 | 状态 |
 |---|---|---|---|
 | D149 | 里程碑重排 | **M7 = channel-core IM 基础设施扩展（先做）；M8 = QQ 官方 Bot；M9 = SSH host** | 用户已确认（2026-10-27） |
-| D150 | 平台/传输 | QQ 官方 Bot；M8 用 WebSocket；transport seam 保留，WebHook 后置 | 待评审 |
-| D151 | 发送策略 | 被动优先（core reply context + `replySeq`）+ `activeMessageFallback=auto`（能力门禁、失败可观测） | 待评审 |
+| D150 | 平台/传输 | QQ 官方 Bot；M8 用 WebSocket；transport seam 保留，WebHook 后置 | M8 已实现（2026-10-27）；WS 真实连接待门禁 |
+| D151 | 发送策略 | 被动优先（core reply context + `replySeq`）+ `activeMessageFallback=auto`（能力门禁、失败可观测） | M8 已实现；主动可用性待实测 |
 | D152 | 准入策略 | 只靠平台限制；core `trustedChannels:["qq-bot"]`；不做驱动级白名单 | 已确认（残余风险接受） |
-| D153 | 回复上下文/会话持久化 | 上下文放 core+outbox（A2）；gateway 会话不跨进程持久化 | 待评审 |
+| D153 | 回复上下文/会话持久化 | 上下文放 core+outbox（A2）；gateway 会话不跨进程持久化 | M8 已实现 |
 | D154 | 协议层依赖 | 官方 `@tencent-connect/qqbot-nodejs@1.0.5`（MIT，exact pin），只消费 `./protocol` | 用户已确认 |
-| D155 | 图片链路 | 后置 V8；M8 只忽略附件 | 待评审 |
-| D156 | 密钥与配置 | AppID 入 store；ClientSecret 走 EnvironmentFile/agenix；token 仅内存 | 待评审 |
-| D157 | 验收边界 | fake 自动化 + 真实个人 Bot 手工 + 目标机部署；不做公开/群全量；14 项平台事实门禁 | 待评审 |
+| D155 | 图片链路 | 后置 V8；M8 只忽略附件 | M8 已实现（只忽略） |
+| D156 | 密钥与配置 | AppID 入 store；ClientSecret 走 EnvironmentFile/agenix；token 仅内存 | M8 已实现 |
+| D157 | 验收边界 | fake 自动化 + 真实个人 Bot 手工 + 目标机部署；不做公开/群全量；14 项平台事实门禁 | fake 已通过；真实验收待执行 |
 | D158 | channel-core 最小扩展 | 拆成**独立里程碑 M7** 先做（contract/outbox/错误分类/allowlist/多 driver），独立提交 | 用户已确认（2026-10-27） |
-| D159 | 多 driver 路由与通知降级 | per-turn 路由 + notice active-capable 回退/丢弃 + 缺 driver 短路 + 显式默认渠道 | 待评审 |
-| D160 | 能力位/窗口默认 | `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N | 待评审 |
-| D161 | 提醒/系统通知降级 | **B：active 尝试 + 失败后 defer（下次入站被动补投）**；A/C 不采用 | 用户已确认（2026-10-27） |
+| D159 | 多 driver 路由与通知降级 | per-turn 路由 + notice active-capable 回退/丢弃 + 缺 driver 短路 + 显式默认渠道 | M7 已实现；M8 双渠道进程测试通过 |
+| D160 | 能力位/窗口默认 | `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N | M8 已接入；真实平台校准待门禁 |
+| D161 | 提醒/系统通知降级 | **B：active 尝试 + 失败后 defer（下次入站被动补投）**；A/C 不采用 | 用户已确认（2026-10-27）；M7 core + M8 driver 已实现 |

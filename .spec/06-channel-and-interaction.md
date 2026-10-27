@@ -288,6 +288,8 @@ M8 先接 QQ 官方 Bot，完整规格（平台事实、被动回复策略、配
 - 长消息切分由 core 做，driver 不切；消息按钮/流式/互动回调后置。
 - 私聊单用户 + 群内 @ 提及；群全量消息与多人权限不在 M8 范围。
 
+**M8 实现口径（2026-10-27，D164）**：`packages/channel-qq-bot` 已实现；driver 直接使用 SDK `ApiClient` 发送以精确控制 `msg_id`/`msg_seq`（active 不带 `msg_seq`），REST 层把 HTTP 200 + body `code` 显式转 `ApiError`；`GatewayConnection` 只订阅 `1<<25`，首个 READY 有界等待，后台重连；能力位 `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、`activeMessages` 动态；chatId 为 `c2c:<user_openid>`/`group:<group_openid>`；无 `defaultChatId`（无入站上下文时通知 defer/drop）；`outboundActions/inboundActions=false`，不订阅 `INTERACTION_CREATE`。SDK 1.0.5 对 4009 重新 Identify（不是 Resume），记录在 D164/15.4。
+
 ## 6.10 错误与边界情况
 
 | 情况 | 行为 |

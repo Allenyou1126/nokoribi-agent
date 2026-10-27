@@ -26,7 +26,7 @@ M6 落点：`packages/shared/test/systemd.test.ts` 覆盖 notifier no-op、READY
 
 M7 落点（已实现，2026-10-27）：`packages/channel-core/test/` 的 outbox/format/routing 单测覆盖 reply/actions 持久化、旧文件兼容、`replySeq` 分配、deferred TTL/上限/移除、分段前缀预留与 `maxChunks` 截断、通知目标选择；`tests/integration/m7-channel-routing.test.ts` 用双 FakeDriver + `dsh-agent-loop-testkit` 覆盖 per-turn 路由、`trustedChannels`、notice active 回退/defer 补投、`NonRetryableDeliveryError`、`PassiveReplyExpiredError`、缺 driver、槽位截断、`restoreActiveChat`、health 与 actions；`tests/integration/m2-child-approval.test.ts` 同步新 `send()` 签名。实测：`pnpm test` 44 文件/328 测试；`pnpm test:unit` 42 文件/314 测试；`pnpm test:process` 6 文件/42 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过。
 
-M8 落点（待启动，QQ 官方 Bot，规格见 17）：`packages/channel-qq-bot/test/` 覆盖事件归一化（C2C/群 @、忽略全量事件/附件/机器人消息）、被动优先/`replySeq`/超窗回退、错误码分类、频控与配置。集成测试用 fake WS + fake REST + channel-core + scripted LLM 覆盖审批/命令/去重/超窗；进程级新增 `tests/process/m8-qq.test.ts`（零依赖 fake QQ server：token/发送 HTTP + WS 握手/帧）覆盖启动、消息闭环、重启恢复、outbox 重发、网关断线重连、SIGTERM。真实 Bot 按 17.8.2 手工验收，不进入 flake。
+M8 落点（已实现，2026-10-27）：`packages/channel-qq-bot/test/` 共 7 文件/44 测试，覆盖事件归一化（C2C/群 @、忽略全量事件/附件/机器人消息）、被动优先/`replySeq`/超窗回退、错误码分类、长度/Markdown 回退、频控、token 缓存/401 刷新、gateway Identify/READY/断线/致命关闭与配置。`tests/integration/m8-qq.test.ts` 用 `dsh-agent-loop-testkit` + 真实 driver + fake transport 覆盖 trustedChannels、被动回复、active 关闭时 defer/补投。`tests/process/m8-qq.test.ts`（10 场景，零依赖 fake QQ server：token/发送 HTTP + WS 握手/帧）覆盖启动、C2C/群 @、去重、超窗 active、active 失败 defer、被动过期重试、token 刷新、断线 Resume、SIGTERM 与双渠道路由。实测：`pnpm test` 52 文件/374 测试；`pnpm test:process` 7 文件/52 场景；`nix flake check`（package/unit/package-smoke/module-eval）与 `nix build .#default` 通过。真实 Bot 14 项门禁/17.8.2 仍待手工验收，不进入 flake。
 
 ## 13.2 测试替身
 
@@ -56,7 +56,7 @@ M8 落点（待启动，QQ 官方 Bot，规格见 17）：`packages/channel-qq-b
 | reviewer patch | 两档路由、sudo 启发式、JSON 校验、超时 | 双阶段复审、fail closed、child 审批桥接 | 进程级 allow/deny/超时 |
 | interaction broker | 提示格式、解析、超时、串行、abort | approval/question 端到端、steer 旁路、stop/clear | 重启残留清理 |
 | channel-core M7 | reply context/replySeq、trustedChannels、canDeliver、NonRetryableDeliveryError/PassiveReplyExpiredError、缺 driver 短路、actions 持久化、deferred 上限/TTL | per-turn 多 driver 路由、notice 回退/defer 补投、双 driver 集成、actions 最后一段 | 重启后被动上下文/超窗（进程回归覆盖 outbox 重发） |
-| channel-qq-bot | 事件归一化、被动/主动策略、错误分类、频控、config | fake WS+REST 端到端、审批/命令/去重 | daemon + fake QQ server、重连/重启 |
+| channel-qq-bot（M8） | 事件归一化、被动/主动策略、错误分类、频控、config、gateway/rest | fake WS+REST + core 的 trustedChannels/defer | daemon + fake QQ server、重连/token 刷新/双渠道 |
 | NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12 / 12.13） |
 
 ## 13.4 关键场景
@@ -69,12 +69,12 @@ M8 落点（待启动，QQ 官方 Bot，规格见 17）：`packages/channel-qq-b
 6. **Sandbox**：默认 host 执行；TTL 到期回收；reset 拒绝有后台任务；`sandbox_packages` add 后可执行；sandbox 内 sudo 失败。M3 自动化用 fake baseEnv 覆盖 local/sandbox/background/`/clear`；真实 Nix 按 12.12 手工。
 7. **Memory**：任务结束提炼子代理写入；跨会话 search 命中；forget 归档。
 8. **Schedule**：创建 1 分钟提醒（或 fake clock）→ 到期 follow-up → 主 agent 回复镜像到测试通道。
-9. **QQ Bot（M8）**：fake QQ 网关推 C2C/群 @ 事件 → agent 回复 → REST 收到带 `msg_id/msg_seq` 的被动请求；重复事件去重；被动超窗 → 主动尝试/失败；断线重连后可继续收发；`40054005` 视为成功；文件/群全量/机器人消息被忽略。
+9. **QQ Bot（M8）**：fake QQ 网关推 C2C/群 @ 事件 → agent 回复 → REST 收到带 `msg_id/msg_seq` 的被动请求；重复事件去重；被动超窗 → 主动尝试/失败；active 失败 defer 到下一次入站；被动过期码 → 清 reply 后 active 重试；断线 Resume/重连后可继续收发；token 401 刷新；`40054005` 视为成功；文件/群全量/机器人消息被忽略。
 
 ## 13.5 flake checks
 
 - `checks.<system>.package`：构建发行版（official Node runtime + 生产依赖）。
-- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）。
+- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加 SDK `./protocol` 从生产闭包导入、运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）。
 - `checks.<system>.unit`：`pnpm build` + `pnpm test:unit`；只跑 `packages/*/test`（不含 `tests/integration`，后者在本地 `pnpm test` 运行；M7 起用 `vitest.unit.config.ts` 固定该边界）。
 - `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`（M8 增加 `nokoribi-channel-qq-bot` 行与 `trustedChannels`）。
 - 本地运行：`nix flake check`（当前系统）。NixOS VM 测试不做（D130）；12.12/12.13 手工清单仍必须执行。

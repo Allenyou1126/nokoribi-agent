@@ -118,21 +118,21 @@ services.nokoribi-agent = {
     token = "";                      # 明文进 store（D119）
   };
 
-  # M8 真实 IM（QQ 官方 Bot，规格见 17）
+  # M8 真实 IM（QQ 官方 Bot，规格见 17；实现口径见 D164）
   channel.qqBot = {
     enable = false;
     appId = "";                      # 非秘密，可进 store
     clientSecretEnv = "NOKORIBI_QQ_BOT_CLIENT_SECRET";  # 值走 EnvironmentFile/agenix
-    sandbox = false;                 # 沙箱/测试域名（待实测）
     markdown = "basic";              # none | basic | full
     maxTextLength = 4500;
     maxRepliesPerReply = 4;
-    replyWindows = { c2cSeconds = 3600; groupSeconds = 300; };
-    requestTimeoutMs = 10000;
-    connectTimeoutMs = 30000;
+    c2cReplyWindowSeconds = 3600;
+    groupReplyWindowSeconds = 300;
+    requestTimeoutSeconds = 10;
+    connectTimeoutSeconds = 30;
     activeMessageFallback = "auto";  # auto | off
-    reconnect = { baseDelayMs = 1000; maxDelayMs = 60000; };
-    platformLimitsOnly = true;       # D152：生成 trustedChannels
+    reconnectBaseMs = 1000;
+    reconnectMaxMs = 60000;
   };
 
   prompt = {
@@ -171,9 +171,9 @@ services.nokoribi-agent = {
 - `hosts.sandbox` 自动生成 `buildEnv`（bash/coreutils + 用户包），并注入 `setpriv`、`nix` 绝对路径；运行时包仍可用 `sandbox_packages add nixpkgs#hello`。
 - `hosts.local.enable`/`sandbox.enable` 会真正跳过 host 注册；默认 host 必须启用，否则 eval 断言失败。
 - `channel.localTest.enable = false` 且 `channel.qqBot.enable = false` 时服务没有用户消息入口（headless）；验收必须显式开启至少一个渠道。
-- `channel.qqBot.*` 是 M8 选项（见 [17](17-qq-official-bot.md) 17.6）：ClientSecret 只以环境变量名出现，值由 `environmentFile`/agenix 注入，不写入 store/overlay；启用时 module 给 channel-core 生成 `trustedChannels=["qq-bot"]` 与显式 `defaultChannelId`。
+- `channel.qqBot.*` 是 M8 选项（见 [17](17-qq-official-bot.md) 17.6）：ClientSecret 只以环境变量名出现，值由 `environmentFile`/agenix 注入，不写入 store/overlay；启用时 module 给 channel-core 生成 `trustedChannels=["qq-bot"]` 与显式 `defaultChannelId`（localTest 启用时 `local-test`，否则空串回退首个 driver）。M8 不暴露 `sandbox`/`platformLimitsOnly`/driver 白名单；测试域名覆盖只放 bundle env（D164）。
 - `channel.qqBot` 引入官方 `@tencent-connect/qqbot-nodejs` 依赖（D154）：lockfile 变化后必须更新 `nix/deps.nix` 的 `fetchPnpmDeps` 哈希，否则 `nix build` 失败；`package-smoke` 需断言运行时 `WebSocket`/`fetch` 全局存在。
-- `platformLimitsOnly=false`（driver 级白名单）在 M8 不实现，模块会提示/断言。
+- M8 不实现 driver 级 `allowedUsers/allowedGroups`（D152）；`platformLimitsOnly` 这个假选项已从 module 移除。
 - memory/schedule 行始终挂载；`memory.curator.enable` 只关闭 goal 终态提炼。`schedule.enable`、`models.subagents`、`hosts.ssh.enable` 不是 M6 选项（D146）。
 - `time.zone = null` 时使用系统时区；非 null 时同时写 time-context overlay 与 systemd `TZ`。
 - 没有 token 预算、没有 heartbeat、没有 web-debug 选项。
@@ -183,7 +183,7 @@ services.nokoribi-agent = {
 module 根据选项生成完整的 `cordis.patch.yml`（store 路径）：
 
 - 覆盖 bundle 中 `nokoribi-agent-app`、`nokoribi-reviewer`、`nokoribi-channel-core`、`nokoribi-channel-local-test`、`nokoribi-channel-qq-bot`（M8）、`nokoribi-prompt`、`nokoribi-shell-*`、`nokoribi-memory` 与（时区非 null 时）`time-context` 的完整 config。
-- M7 的 channel-core 行显式写入 `trustedChannels = []` 与 `defaultChannelId = "local-test"`；M8 再按 `channel.qqBot.*` 生成 `trustedChannels`/默认渠道。
+- channel-core 行由 overlay 生成：`trustedChannels = lib.optional qqBot.enable "qq-bot"`；`defaultChannelId` 在 localTest 启用时为 `local-test`，否则空串（回退首个 driver）。
 - Cordis patch 是行 config 的替换而非深合并，因此 overlay 生成器必须写全该行字段。
 - 启动器启动时按 bundle patch → `NOKORIBI_PATCH` overlay 组合；没有运行时 override 文件。
 - 环境变量由 systemd 注入：
@@ -362,7 +362,7 @@ age.secrets.nokoribi-agent-env = {
 
 部署前置：
 
-- QQ 开放平台已创建个人主体机器人，已配置开发体验用户（本人 QQ），已把机器人加入自己的群。
+- QQ 开放平台已创建个人主体机器人，已配置开发体验用户（本人 QQ），已把机器人加入自己的群。M8 代码与 `nix flake check` 已完成（2026-10-27）；14 项平台事实门禁尚未执行，见 `.spec/notes/qq-fact-gate.md`。
 - NixOS module 中 `channel.qqBot.enable = true`、`channel.qqBot.appId = "<APPID>"`；`environmentFile`（agenix）包含 `NOKORIBI_QQ_BOT_CLIENT_SECRET`；`channel.localTest` 可按需保留用于验收注入。
 - SDK 依赖加入后已更新 `nix/deps.nix` 哈希，`nix flake check` 通过。
 

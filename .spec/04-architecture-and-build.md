@@ -35,7 +35,7 @@ nokoribi-agent/
 │  ├─ shell-host-sandbox/     # sandbox host + sandbox/sandbox_packages 工具
 │  ├─ channel-core/           # ChannelDriver 契约、ingress、broker、outbox、delivery
 │  ├─ channel-local-test/     # loopback HTTP + token 测试驱动
-│  ├─ channel-qq-bot/         # M8：QQ 官方 Bot driver（WebSocket 网关 + OpenAPI v2）
+│  ├─ channel-qq-bot/         # M8（已实现）：QQ 官方 Bot driver（WebSocket 网关 + OpenAPI v2）
 │  ├─ memory/                 # memory 工具与文件存储
 │  ├─ prompt/                 # SOUL.md 加载、系统提示词段、AGENTS.md seed
 │  ├─ agent-app/              # daemon、主会话、goal 生命周期、命令、系统通知
@@ -63,7 +63,7 @@ nokoribi-agent/
 | `shell-host-sandbox` | sandbox host provider：profile Nix buildEnv + shellHook、临时目录、TTL、no_new_privs；`sandbox` 与 `sandbox_packages` 工具。 | shared、cordis、`ctx.shellHosts`、`ctx.subprocess`、`dsh-tools` |
 | `channel-core` | driver 注册、ingress 管线（allowlist/去重/命令）、交互 broker、outbox、出站投递、系统通知。 | shared、cordis、`ctx.agents`、`ctx.commands` |
 | `channel-local-test` | 本地测试通道：HTTP server、token、长轮询。 | channel-core contract |
-| `channel-qq-bot` | M8：QQ 官方 Bot driver：WebSocket 网关事件 → `InboundMessage`；被动回复策略；REST 发送；错误分类/频控；SDK protocol 薄封装。 | channel-core contract、shared、官方 `@tencent-connect/qqbot-nodejs`（`./protocol`，D154） |
+| `channel-qq-bot` | M8（已实现）：QQ 官方 Bot driver：WebSocket 网关事件 → `InboundMessage`；被动优先/active 门禁；REST 发送；错误分类/频控；SDK protocol 薄封装。 | channel-core contract、shared、官方 `@tencent-connect/qqbot-nodejs`（`./protocol`，D154） |
 | `memory` | memory 工具（search/read/write/forget）、Markdown 文件存储、检索。 | shared、cordis |
 | `prompt` | SOUL.md 加载、系统提示词 section 注册、AGENTS.md seed 模板。 | shared、cordis、`ctx.systemPrompt` |
 | `agent-app` | daemon 启动、主 agent create/resume、单实例锁、状态文件、goal 跟踪/恢复、`/goal`/`/clear` 等命令、系统通知、提示词/记忆/定时装配。 | shared、prompt、channel-core（契约）、`ctx.*` |
@@ -113,7 +113,7 @@ nokoribi-agent/
 - `nokoribi-tool-bash-hosted`（`@nokoribi/shell-bash/tool`，注册 `bash`/`get_available_shell_host`）
 - `nokoribi-channel-core`
 - `nokoribi-channel-local-test`
-- `nokoribi-channel-qq-bot`（M8）
+- `nokoribi-channel-qq-bot`（M8，已实现）
 - `nokoribi-memory`
 - `nokoribi-prompt`
 - `nokoribi-agent-app`

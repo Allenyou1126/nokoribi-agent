@@ -4,14 +4,15 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 
 ## 当前状态
 
-- M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词收尾）、M6（NixOS 部署闭环）与 M7（channel-core IM 基础设施扩展）的代码已实现；M6 的 NixOS 目标机手工验收仍需执行。代码在 `packages/`，入口是 `packages/launcher`，部署在 `nix/`。
+- M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词收尾）、M6（NixOS 部署闭环）、M7（channel-core IM 基础设施扩展）与 M8（QQ 官方 Bot）的代码已实现；M6 的 NixOS 目标机手工验收、M8 的 14 项平台事实门禁与 17.8.2 真实 Bot/目标机验收仍需执行。代码在 `packages/`，入口是 `packages/launcher`，部署在 `nix/`。
 - M2 的 reviewer 是 `packages/reviewer` 中 vendored 的 rc.3 auto-review；修改 vendor 时同步更新 `PATCHES.md`/`VERSION.md`。
 - M3 的默认 shell host 是 `sandbox:default`；sandbox 需要绝对 Nix buildEnv（`NOKORIBI_SANDBOX_BASE_ENV`）与 `setpriv`。无 Nix 的开发环境用 `NOKORIBI_DEFAULT_HOST=local:workspace`。实现细节与偏差见 [.spec/07](.spec/07-shell-hosts-and-sandbox.md) 7.12。
 - M4 的 goal child 由宿主创建（`start_goal` / `/goal new`，D136），main 隐藏 goal 工具；M5 起 goal 默认模型由 `NOKORIBI_GOAL_MODEL` 提供，可通过 `NOKORIBI_GOAL_MODELS` allowlist 在 `start_goal`/`/goal new --model` 中选择（D138/D141）。实现细节见 [.spec/10](.spec/10-goals-and-schedule.md) 10.13。
 - M5 的 memory 是**主动检索**（`memory` 工具），不会自动注入到会话；automatic injection 后移（D143）。默认 workspace 下的 sandbox 与 schedule 需要 daemon 常驻。实现细节见 [.spec/09](.spec/09-prompt-and-memory.md) 9.5 与 [.spec/10](.spec/10-goals-and-schedule.md) 10.13。
 - M6 的 Nix 包保留官方 Node 24.21.0 运行时（D145），wrapper 经 Nix glibc loader 启动；不要把它换回 nixpkgs Node，否则 `node-addon-require-builtin` 会让 daemon 启动失败。wrapper 同时用 `--require` 预加载 `nix/exec-path-preload.cjs` 并把 `process.execPath` 指向 `bin/node-shim`（D148）；否则 DSH subprocess runner 会拿 loader 执行 runner.js，所有 `bash(host)` 调用报 `subprocess scope exited before its bootstrap consumed the launch request`。NixOS module 选项与手工清单见 [.spec/12](.spec/12-nixos-deployment.md)。
-- **M7（channel-core IM 基础设施扩展）的代码已实现（2026-10-27）**：被动回复上下文（core+outbox）、多 driver 路由、`trustedChannels`、`NonRetryableDeliveryError`/被动过期降级、通知 defer 补投（D161）与动作按钮契约预留（D163，仅契约/持久化，不实现 UI）。实现口径见 [.spec/14](.spec/14-roadmap.md) 14.8 与 [D162/D163](.spec/03-decision-log.md)。**M8（真实 IM：QQ 官方 Bot）规格已通过但尚未启动**，将在 M7 之上实现 `packages/channel-qq-bot`（官方 `@tencent-connect/qqbot-nodejs` 的 `./protocol`，D154）。关键事实：主动消息推送已被官方于 2025-04-21 下线（D161：active 尝试 + 失败 defer）；准入只依赖平台边界（D152，残余风险已接受）；M8 实现前仍需完成平台事实门禁（见规格与 notes）。
-- `pnpm check` 会先构建 workspace 包（类型检查依赖各包 `dist/*.d.ts`），然后运行 tsc/oxlint/oxfmt；`nix flake check` 额外跑 package/unit/module-eval。当前开发机是 Arch，不能执行 NixOS 12.12 手工清单。
+- **M7（channel-core IM 基础设施扩展）的代码已实现（2026-10-27）**：被动回复上下文（core+outbox）、多 driver 路由、`trustedChannels`、`NonRetryableDeliveryError`/被动过期降级、通知 defer 补投（D161）与动作按钮契约预留（D163，仅契约/持久化，不实现 UI）。实现口径见 [.spec/14](.spec/14-roadmap.md) 14.8 与 [D162/D163](.spec/03-decision-log.md)。
+- **M8（真实 IM：QQ 官方 Bot）的代码已实现（2026-10-27）**：`packages/channel-qq-bot`（官方 `@tencent-connect/qqbot-nodejs@1.0.5` 的 `./protocol`，D154），单聊 + 群 @、被动优先 + `activeMessageFallback=auto`、错误分类/频控、`channel.qqBot.*` NixOS 选项、bundle/launcher 装配与 fake WS/REST 进程测试。实现口径见 [.spec/14](.spec/14-roadmap.md) 14.9、[.spec/17](.spec/17-qq-official-bot.md) 17.10.4 与 [D164](.spec/03-decision-log.md)。**真实平台验收尚未执行**：14 项平台事实门禁、17.8.2 真实 Bot 清单与目标机部署需要 AppID/ClientSecret/开发体验用户/自己的群；探针与记录见 [.spec/notes/qq-fact-gate.md](.spec/notes/qq-fact-gate.md)。关键事实：主动推送官方已宣告下线（D161：active 尝试 + 失败 defer）；准入只依赖平台边界（D152，残余风险已接受）。
+- `pnpm check` 会先构建 workspace 包（类型检查依赖各包 `dist/*.d.ts`），然后运行 tsc/oxlint/oxfmt；`nix flake check` 额外跑 package/unit/package-smoke/module-eval。当前开发机是 Arch，不能执行 NixOS 12.12 或 QQ 真实平台验收。
 - 决策以 [.spec/03-decision-log.md](.spec/03-decision-log.md) 为准；被取代/撤销的决定登记在 [.spec/16-superseded-and-glossary.md](.spec/16-superseded-and-glossary.md)。
 - 实现偏离规格时必须同步更新规格与决策记录，不能只改代码。
 
