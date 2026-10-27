@@ -45,7 +45,8 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 - driver 负责平台差异（连接、签名、消息 id、媒体下载、重连）；core 不感知平台。
 - `capabilities` 用于降级：`markdown: 'none'` 时 core 去格式化；`inboundImages: false` 时拒绝/忽略图片并告知；`maxTextLength` 用于分段。
 - v1 的 driver 只需要文本；`outboundFiles` 预留。
-- 真实 IM 适配器（未来）：QQ/Milky、Telegram 等实现此接口；入站需要 sender/chat 白名单；图片下载后再交给 core。
+- 真实 IM 适配器：M8 先接 QQ 官方 Bot（见 [17](17-qq-official-bot.md)）；其他平台后置。
+- **M7 扩展（见 17.6.2，D153/D158/D159）**：`OutboundContent` 增加 `kind/deliveryId/attempt/reply`；`ChannelCapabilities` 增加可选 `activeMessages/maxRepliesPerReply`；`ChannelDriver` 增加可选 `canDeliver()`；channel-core 增加 `trustedChannels`/`defaultChannelId` 与 outbox 持久字段 `replyTo/replyReceivedAt/replySeq`。
 
 ## 6.3 入站处理顺序
 
@@ -166,10 +167,12 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 ### outbox
 
 - 持久化条目：`{seq, channelId, chatId, kind, text, interactionId?, state, attempts, nextAttemptAt, createdAt, sentAt}`，落盘在 `$DSH_HOME/state/outbox.json`（M1）；`nextSeq` 单调，历史保留最近 `outboxHistoryLimit` 条终态记录，pending 不裁剪。
-- 按 seq 全局有序投递；失败指数退避重试；超过最大尝试次数记录错误并丢弃（同时 journald 告警）。
-- **at-least-once**（D132）：发送成功后落盘标记；崩溃可能造成重复发送，接受。
+- **M7 扩展（D153/D158）**：条目增加可选 `replyTo/replyReceivedAt/replySeq`，用于平台被动回复上下文；旧 outbox 文件无这些字段时视为“无被动上下文”。
+- 按 seq 全局有序投递；失败指数退避重试；超过最大尝试次数记录错误并丢弃（同时 journald 告警，并在存在 active-capable 渠道时发系统通知；M7 收口当前“只 log”的偏差）。
+- **at-least-once**（D132）：发送成功后落盘标记；崩溃可能造成重复发送，接受。被动回复以稳定 `(msg_id, msg_seq)` 重试由平台去重（QQ `40054005` 视为成功）。
 - 重启后从持久 outbox 继续；已解决/中止交互的提示跳过：pump 检查 broker terminal 集合，未发送项标记失败；启动时残留 pending interaction 统一标记失败并通知。
-- 多 chat：回复回原 chat；主动通知（系统通知、schedule 回复）发 `lastActiveChat`。
+- 多 chat 路由（M7 修复，D159）：回复回本轮来源 chat（`turnChat`）；系统通知/提醒优先 `turnChat ?? lastActiveChat` 中的 active-capable 渠道，否则选择第一个 active-capable driver；QQ-only 且无入站上下文时按 D161 降级（defer/drop+log）。
+- 缺 driver 的条目不再无限 pending：目标渠道未注册时立即标记 failed 并记录 error。
 
 ## 6.8 本地测试通道 HTTP
 
@@ -226,7 +229,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 }
 ```
 
-`ready` 在 `run/ready.json` 与主会话恢复完成后置 true；启动中返回 `agentStatus:"starting"`。M1 的 `images` 入站返回 501（附件图片链路 M2 启用）。
+`ready` 在 `run/ready.json` 与主会话恢复完成后置 true；启动中返回 `agentStatus:"starting"`。`images` 入站当前未实现（V8 后置；测试通道返回 501）。
 
 ### 其他
 
@@ -235,17 +238,18 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 - 不做附件上传接口（v1 只支持入站图片以 base64 放进 inbound；测试足够）。
 - 测试通道实现为 `channel-local-test` 包，不进入真实 IM 的 driver 列表。
 
-## 6.9 真实 IM 适配器（后置）
+## 6.9 真实 IM 适配器（M8：QQ 官方 Bot）
 
-未来适配器需要实现：
+M8 先接 QQ 官方 Bot，完整规格（平台事实、被动回复策略、配置、安全与验收）见 [17](17-qq-official-bot.md)。通用要求：
 
-- 平台连接与重连（driver 内）。
-- 入站身份与白名单（channelId/chatId/senderId）。
-- 平台 messageId 作为幂等键；重复投递由 core 去重。
-- 图片下载为 bytes；大小限制与 mime 校验。
-- `maxTextLength`、markdown 能力、发送重试/限速。
-- 长消息切分由 core 做，driver 不切。
-- 私聊单用户；群聊/多人不在 v1 范围（若未来支持，需要权限模型重新设计）。
+- 平台连接与重连（driver 内）；M8 使用 WebSocket 网关（D150）。
+- 入站身份与白名单（channelId/chatId/senderId）；M8 按 D152 只依赖平台准入边界。
+- 平台 messageId 作为幂等键；重复投递由 core 去重；chatId 使用 `c2c:`/`group:` 命名空间（D160）。
+- 被动回复：`msg_id + msg_seq` 由 core 的 outbox 上下文承载（D153），超窗按能力回退主动消息（D151）。
+- 图片下载为 bytes；大小限制与 mime 校验——M8 不做，V8 后置（D155）。
+- `maxTextLength`、markdown 能力、发送重试/限速由 driver 能力位与错误分类承担。
+- 长消息切分由 core 做，driver 不切；消息按钮/流式/互动回调后置。
+- 私聊单用户 + 群内 @ 提及；群全量消息与多人权限不在 M8 范围。
 
 ## 6.10 错误与边界情况
 
@@ -256,8 +260,10 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 | 未知 `/` 命令 | 回错误，不进模型 |
 | 命令执行失败 | 回错误文本，不进模型 |
 | agent 不存在/正在 `/clear` | 消息缓冲，新会话 ready 后处理 |
-| driver 断开 | outbox 保留，重连后继续；入站由平台侧重投/driver 处理 |
-| outbox 发送失败超上限 | 日志记录并丢弃，发系统通知（避免无限重试） |
+| driver 断开 | outbox 保留，重连后继续；入站由平台侧重投/driver 处理；QQ 场景按 17.3 重连/失败分类 |
+| 被动回复窗口过期（M8） | 按能力回退主动消息（`auto`）；失败则记录 error，按 D161 降级 |
+| outbox 发送失败超上限 | 日志记录并丢弃；存在 active-capable 渠道时发系统通知（避免无限重试）；QQ-only 无主动能力时只记录/按 D161 |
+| 平台拒绝（永久错误，M8） | driver 抛 `NonRetryableDeliveryError`，core 立即 failed，不重试 |
 | 空 assistant 回复 | 不发消息 |
 | 超长回复 | 分段；每段独立进入 outbox |
 | 审批/提问超时 | 拒绝/工具报错 |

@@ -2,7 +2,7 @@
 
 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下文简称 DSH）的单用户、常驻、长程个人 Agent 的设计文档。
 
-> **状态（2026-10-27）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词与 `/status full`）与 M6（NixOS 部署闭环）的代码已实现；M6 的 NixOS 目标机手工验收清单仍需完整执行并记录。2026-10-27 已在 hkg-dog-darell（NixOS 26.05）做用户态临时部署冒烟：拉取/构建/daemon 启动/测试通道/真实模型对话通过，并发现、修复了 D148（官方 Node wrapper 与 DSH subprocess runner 的兼容缺陷，曾导致 `bash(host)` 全部失败）。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒、`/status full` 与 NixOS module；但 M5 的 memory 只支持主动检索（**不自动注入**），且还没有真实 IM 与生产级验收，**不可用作生产服务**。
+> **状态（2026-10-27）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词与 `/status full`）与 M6（NixOS 部署闭环）的代码已实现；M6 的 NixOS 目标机手工验收清单仍需完整执行并记录。2026-10-27 已在 hkg-dog-darell（NixOS 26.05）做用户态临时部署冒烟：拉取/构建/daemon 启动/测试通道/真实模型对话通过，并发现、修复了 D148（官方 Node wrapper 与 DSH subprocess runner 的兼容缺陷，曾导致 `bash(host)` 全部失败）。**M7（channel-core IM 基础设施扩展）与 M8（真实 IM 适配器：QQ 官方 Bot）的规格已通过（2026-10-27），按用户要求 M7 独立先做、当前暂不启动实现**，见 [17](.spec/17-qq-official-bot.md)。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒、`/status full` 与 NixOS module；但 M5 的 memory 只支持主动检索（**不自动注入**），真实 IM 尚未实现、M6 验收未完成，**不可用作生产服务**。另外，QQ 官方平台已于 2025-04-21 下线主动消息推送，M8 的提醒/通知降级策略待定（D161，推荐 active+defer）。
 >
 > **目标 DSH 版本**：全部 `@deepseek-ai/*` 包固定 `0.2.1-rc.3`，手动整批升级。Nix 包额外保留官方 Node 24.21.0 运行时（D145），以匹配 DSH 的 native addon。
 
@@ -27,9 +27,10 @@
 | [11 模型与成本](.spec/11-models-and-cost.md) | 主/子代理/记忆提炼模型分配、reviewer 双档、图像输入约束、压缩与成本策略 |
 | [12 NixOS 部署](.spec/12-nixos-deployment.md) | flake、NixOS module 选项表、systemd、agenix、sudo、看门狗、状态目录、升级 |
 | [13 测试与运维](.spec/13-testing-and-ops.md) | Vitest 策略、fake driver/LLM、进程级恢复测试、flake checks、日志、`/status`、运维手册 |
-| [14 路线图](.spec/14-roadmap.md) | M1–M6 交付物、依赖、验收标准、后置项 |
+| [14 路线图](.spec/14-roadmap.md) | M1–M6 交付物、M7（channel-core 扩展）、M8（QQ 官方 Bot）、依赖、验收标准、后置项 |
 | [15 待验证项与风险](.spec/15-verification-and-risks.md) | 实现前必须验证的 9 项、风险登记、实现期开放问题、已接受的残余风险 |
 | [16 被取代/否决与术语](.spec/16-superseded-and-glossary.md) | 被撤销或被取代的决策及原因、被否决的方案、术语表 |
+| [17 QQ 官方 Bot（M8）](.spec/17-qq-official-bot.md) | 真实 IM 适配器：规格、平台事实、消息策略、配置、安全、测试与验收（M7 core 扩展为其前置） |
 
 ## 阅读顺序
 
@@ -42,7 +43,7 @@
 
 **做**：thin launcher + 精简 bundle、单主会话持久化、渠道抽象 + 本地测试通道、host router + sandbox/local、auto-review + 审批/提问、memory、schedule、多 goal 子代理、NixOS 部署。
 
-**不做**：真实 IM 适配器、SSH host（后置）、Web UI（含 web-debug）、heartbeat、多人/群聊权限、token 预算、NixOS VM 测试。
+**不做**：真实 IM 适配器（M8 规格已通过：QQ 官方 Bot）、SSH host（M9 后置）、Web UI（含 web-debug）、heartbeat、多人/群聊权限、token 预算、NixOS VM 测试。
 
 ## 开发
 

@@ -23,7 +23,7 @@ DSH 的 `ctx.shell` 是**单 provider** 能力 seam：一个组合只能挂载�
 |---|---|---|
 | `local` | 主机环境（系统 PATH + extraPackages），持久 workspace | 是 |
 | `sandbox` | profile 固定 Nix 环境 + 独立临时目录 | 是（默认） |
-| `ssh` | 远程主机（后置） | 否（M7） |
+| `ssh` | 远程主机（后置；D149 顺延为 M9） | 否（M9） |
 | `client` | 未来客户端执行（预留） | 否 |
 
 实例命名（草案）：`local:workspace`、`sandbox:default`；SSH 未来用 `ssh:devbox` 等逻辑名（不是任意 ssh 目标，见 7.9）。

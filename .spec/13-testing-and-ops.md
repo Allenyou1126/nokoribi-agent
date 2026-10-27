@@ -24,6 +24,8 @@ M5 落点：`packages/memory/test/` 覆盖 frontmatter、检索/排序、upsert/
 
 M6 落点：`packages/shared/test/systemd.test.ts` 覆盖 notifier no-op、READY/WATCHDOG/STOPPING 参数、`WATCHDOG_USEC` 间隔与失败路径；`packages/shared/test/log.test.ts`/`paths.test.ts` 覆盖 `NOKORIBI_LOG_LEVEL`、`homeDir`；`packages/agent-app` 与 bundle 覆盖 `goalDefaultMaxRounds`；`packages/channel-local-test`/`shell-host-*` 覆盖 `enabled`；`tests/process/m6.test.ts` 用临时 fake `systemd-notify` 脚本验证 READY/心跳/STOPPING，并验证默认 goal 轮次。Flake 侧：`package`、`package-smoke`、`unit`、`module-eval`；NixOS 12.12 仍为手工。
 
+M7/M8 落点（QQ 官方 Bot，规格见 17）：channel-core 新增单测覆盖 `ReplyContext`/outbox 新字段（旧文件兼容）、`trustedChannels`、`NonRetryableDeliveryError`、缺 driver 短路、per-turn 多 driver 路由、notice 降级、`canDeliver` fail closed。`packages/channel-qq-bot/test/` 覆盖事件归一化（C2C/群 @、忽略全量事件/附件/机器人消息）、被动优先/`replySeq`/超窗回退、错误码分类、频控与配置。集成测试用 fake WS + fake REST + channel-core + scripted LLM 覆盖审批/命令/去重/超窗；进程级新增 `tests/process/m8-qq.test.ts`（零依赖 fake QQ server：token/发送 HTTP + WS 握手/帧）覆盖启动、消息闭环、重启恢复、outbox 重发、网关断线重连、SIGTERM。真实 Bot 按 17.8.2 手工验收，不进入 flake。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站，可脚本化注入消息与失败。
@@ -51,7 +53,9 @@ M6 落点：`packages/shared/test/systemd.test.ts` 覆盖 notifier no-op、READY
 | sandbox | command wrapper、sidecar、generation、TTL sweep、guard、setpriv/nix 缺失 | `sandbox`/`sandbox_packages`、reset 保护、fake subprocess | 手工 Nix buildEnv：cp/rsync、sudo 失败、TTL/reset |
 | reviewer patch | 两档路由、sudo 启发式、JSON 校验、超时 | 双阶段复审、fail closed、child 审批桥接 | 进程级 allow/deny/超时 |
 | interaction broker | 提示格式、解析、超时、串行、abort | approval/question 端到端、steer 旁路、stop/clear | 重启残留清理 |
-| NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12） |
+| channel-core M7 | reply context/replySeq、trustedChannels、canDeliver、NonRetryableDeliveryError、缺 driver 短路 | per-turn 多 driver 路由、notice 降级 | 重启后被动上下文/超窗 |
+| channel-qq-bot | 事件归一化、被动/主动策略、错误分类、频控、config | fake WS+REST 端到端、审批/命令/去重 | daemon + fake QQ server、重连/重启 |
+| NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12 / 12.13） |
 
 ## 13.4 关键场景
 
@@ -63,14 +67,15 @@ M6 落点：`packages/shared/test/systemd.test.ts` 覆盖 notifier no-op、READY
 6. **Sandbox**：默认 host 执行；TTL 到期回收；reset 拒绝有后台任务；`sandbox_packages` add 后可执行；sandbox 内 sudo 失败。M3 自动化用 fake baseEnv 覆盖 local/sandbox/background/`/clear`；真实 Nix 按 12.12 手工。
 7. **Memory**：任务结束提炼子代理写入；跨会话 search 命中；forget 归档。
 8. **Schedule**：创建 1 分钟提醒（或 fake clock）→ 到期 follow-up → 主 agent 回复镜像到测试通道。
+9. **QQ Bot（M8）**：fake QQ 网关推 C2C/群 @ 事件 → agent 回复 → REST 收到带 `msg_id/msg_seq` 的被动请求；重复事件去重；被动超窗 → 主动尝试/失败；断线重连后可继续收发；`40054005` 视为成功；文件/群全量/机器人消息被忽略。
 
 ## 13.5 flake checks
 
 - `checks.<system>.package`：构建发行版（official Node runtime + 生产依赖）。
-- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局。
+- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）。
 - `checks.<system>.unit`：`pnpm build` + `pnpm test`；在 Nix sandbox 内运行包单元/进程内集成测试。
-- `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`。
-- 本地运行：`nix flake check`（当前系统）。NixOS VM 测试不做（D130）；12.12 手工清单仍必须执行。
+- `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`（M8 增加 `nokoribi-channel-qq-bot` 行与 `trustedChannels`）。
+- 本地运行：`nix flake check`（当前系统）。NixOS VM 测试不做（D130）；12.12/12.13 手工清单仍必须执行。
 
 ## 13.6 日志
 

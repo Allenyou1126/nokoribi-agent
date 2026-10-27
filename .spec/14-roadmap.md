@@ -232,10 +232,55 @@
 - 本次仅覆盖：拉取/构建、daemon 启动、测试通道 `/v1/status`、真实模型对话、bash 缺陷复现与修复验证。12.12 清单其余项（审批、sandbox 生命周期、goal、memory、schedule、watchdog、重启恢复、升级演练）仍未在目标机执行。
 - 附带观察（2026-10-27 已修复）：shutdown 日志偶发 `shutdown flush failed ... flush on a closed handle`。根因是 Cordis 并发 teardown 中 persistence 先关闭写句柄；该后端 `close()` 会先 drain 已路由事件，数据未丢（`cleanShutdown=true`、session JSONL 完整）。daemon 现在把该错误识别为已持久化并降为 debug；m1 进程测试断言干净退出不再出现该错误。
 
-## 14.8 后置（v1 之外）
+## 14.8 M7 channel-core IM 基础设施扩展（规格通过，暂不实现）
 
-- **M7 SSH host**：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。
-- **真实 IM 适配器**：QQ/Milky、Telegram 等实现 ChannelDriver；sender/chat 白名单；图片下载；平台限速/长消息。
+> 状态：**规格已通过（2026-10-27），用户要求暂不启动实现**；按 D149，本项拆为独立里程碑先做，是 M8 的前置。规格要点见 [17](17-qq-official-bot.md) 17.6.2 与 `.spec/notes/channel-qq-mapping.md` §3/§6.2。
+
+### 交付物
+
+- `contract.ts`：`ReplyContext`、`OutboundContent` 扩展（kind/deliveryId/attempt/reply）、`NonRetryableDeliveryError`、capabilities `activeMessages`/`maxRepliesPerReply`、`canDeliver?()`。
+- `service.ts`：`trustedChannels`/`defaultChannelId`、`lastInboundByChat`/`turnChat`、per-turn 多 driver 路由、notice 的 active-capable 回退/丢弃、缺 driver 短路失败、可选 channel health。
+- `outbox.ts` + `shared/src/schemas.ts`：持久化 `replyTo`/`replyReceivedAt`/`replySeq`（旧文件兼容）。
+- `format.ts` 分段前缀预留；`channel-local-test` 适配 + 单测/集成回归。
+- 不引入 QQ 代码、不新增外部依赖。
+
+### 验收
+
+- `pnpm check`、`pnpm test`、`nix flake check` 通过；local-test 既有行为兼容。
+- 新字段/路由/错误语义有单测与集成覆盖；outbox 旧文件可读。
+
+### 依赖/风险
+
+- 依赖 M1–M6 代码基线。
+- 风险：core 契约改动影响本地通道与既有测试；需独立提交、分批评审。
+
+## 14.9 M8 真实 IM 适配器：QQ 官方 Bot（规格通过，M7 后实现）
+
+> 状态：**规格已通过（2026-10-27），用户要求暂不启动实现**；M8 依赖 M7。完整规格见 [17](17-qq-official-bot.md)，调研材料见 `.spec/notes/`。
+
+### 交付物
+
+- `packages/channel-qq-bot`：QQ 官方 Bot driver（官方 `qqbot-nodejs` `./protocol` 传输层，D154）。
+- 单聊 + 群内 @ 提及；文本/Markdown 出站；被动优先 + `activeMessageFallback=auto` 能力门禁。
+- NixOS module `channel.qqBot.*`、overlay 行、EnvironmentFile 密钥、bundle 行、lock/Nix 哈希更新。
+- 自动化测试（fake WS/REST、进程级）+ 真实 Bot 手工验收清单。
+
+### 验收
+
+- 17.8 自动化与真实 Bot 清单通过；目标机部署可用。
+- 实现前完成 17.8/notes 的 14 项平台事实门禁（token 域名、intents、被动窗口、`msg_seq` 幂等、主动可用性、消息上限、群字段、WS 在线要求、附件 URL、重连/关闭码、token 刷新、SDK 版本回归）。
+- 主动推送已下线（2025-04-21）：提醒/系统通知降级策略按 D161（推荐 B：active 尝试 + defer 补投）确认并记录。
+
+### 依赖/风险
+
+- 依赖 M7（core 扩展）以及 M2/M5/M6（审批、schedule、部署）。
+- 最大风险：平台准入/封禁、白名单只有平台边界、主动推送不可用、协议冲突。
+- 后置：图片链路（V8）、C2C `is_wakeup` 召回、按钮审批、群全量消息。
+
+## 14.10 后置（v1 之外）
+
+- **M9 SSH host**（原 M7，因 D149 两次顺延）：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。
+- **真实 IM 适配器（第二平台）**：Telegram/Discord 等其他 `ChannelDriver` 实现；sender/chat 白名单细化；图片下载；平台限速/长消息。
 - **heartbeat/主动唤醒**：当前明确不做。
 - **多人/群聊权限**：需要身份、权限、审计、隔离重新设计。
 - **token 预算插件**：可选未来能力。
@@ -246,7 +291,7 @@
 - **远程文件工具**（read/write/edit 走远程）：未设计。
 - **session search/长期记忆增强**：未纳入。
 
-## 14.9 实现前必须验证（进入 M1 前/早期）
+## 14.11 实现前必须验证（进入 M1 前/早期）
 
 详见 [15 待验证项与风险](15-verification-and-risks.md)。摘要：
 
@@ -261,7 +306,7 @@
 9. 主 agent 隐藏 goal 工具的实现方式。
 10. `/clear` 时 outbox 旧消息处理（文档中标注待实现决策）。
 
-## 14.10 v1 完成定义
+## 14.12 v1 完成定义
 
 - M1–M6 验收全部通过；`nix flake check` 通过。
 - 文档（本套）与实现一致；所有偏离回写。

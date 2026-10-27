@@ -144,6 +144,19 @@
 | D146 | NixOS 配置映射（M6） | 纯 Nix 生成完整 Cordis overlay；`goal.allowedModels`/显式 memory 路由；不提供 `models.subagents`、`memory.enable`、`schedule.enable`、SSH 开关 |
 | D147 | M6 验收边界（M6） | 本地 `nix build`/`nix flake check` + NixOS 12.12 手工；不伪造 DSH bump；watchdog 用手工 SIGSTOP 验证 |
 | D148 | Nix subprocess runner（M6 修正） | DSH runner 用 `process.execPath`；loader wrapper 下该值是 loader，目标机 `bash` 全失败；wrapper 换用 `bin/node-shim` + `--require` preload 覆盖 execPath，保留 native containment |
+| D149 | 里程碑重排（P1） | M7 = channel-core IM 基础设施扩展（先做）；M8 = QQ 官方 Bot；M9 = SSH host |
+| D150 | IM 平台与传输（P1） | QQ 官方 Bot；M8 用 WebSocket 网关，WebHook 后置 |
+| D151 | IM 发送策略（P1） | 被动优先（core reply context）+ `activeMessageFallback=auto`；主动推送官方已下线，不作可靠兜底 |
+| D152 | IM 准入（P1，用户已确认） | 只靠平台限制；`trustedChannels:["qq-bot"]`；不做驱动级白名单/配对 |
+| D153 | 回复上下文/会话（P1） | core+outbox A2 承载被动上下文；gateway 会话不跨进程持久化 |
+| D154 | 协议层依赖（P1，用户已确认） | 官方 `qqbot-nodejs@1.0.5` 的 `./protocol` |
+| D155 | 图片链路（P1） | 后置 V8；M8 只忽略附件 |
+| D156 | IM 密钥与配置（P1） | AppID 入 store；ClientSecret 走 EnvironmentFile；token 仅内存 |
+| D157 | IM 验收边界（P1） | 规格已通过；fake 自动化 + 真实个人 Bot + 目标机；14 项平台事实门禁 |
+| D158 | channel-core 扩展（P1，用户已确认） | 拆成独立里程碑 M7 先做（回复上下文/非重试错误/allowlist/多 driver） |
+| D159 | 多 driver 路由（P1） | per-turn 路由、notice active-capable 降级、缺 driver 短路、显式默认渠道 |
+| D160 | IM 能力位/窗口（P1） | markdown basic、maxTextLength 4500、maxReplies 4、`c2c:`/`group:`、replySeq |
+| D161 | 提醒/通知降级（待确认） | Hermes 参考已调研；A active+重试+log / **B A+defer（推荐）** / C defer 为主或换渠道 |
 
 ---
 
@@ -323,9 +336,29 @@
 - **D143 memory 自动注入后移（M5）** — 自定义：M5 保持“主动检索”而非自动注入；不做会话启动摘要、每轮 pre-step 检索或把 entries 塞进 system prompt。`/clear` 后不会自动带上旧记忆，模型必须调用 `memory search`。后续版本再评估。
 - **D144 systemd 通知（M6）** — 自定义：daemon 在恢复完成、写 ready 文件后，通过 `systemd-notify` 子进程发送 `READY=1`；按 `WATCHDOG_USEC` 的 1/3 周期发送 `WATCHDOG=1`；关闭时发送 `STOPPING=1`。unit 使用 `Type=notify` + `NotifyAccess=all`（helper 是子进程）。Node 24 `dgram` 没有 Unix datagram，故选 helper 而不引入 native addon；`NOTIFY_SOCKET` 缺失时 no-op。
 - **D145 Nix 运行时（M6）** — 自定义：`@deepseek-ai/dsh-app-boot` 依赖的 `node-addon-require-builtin` 会检查官方 Node 的代码布局；nixpkgs 构建的 Node 和 patchelf 改写后的官方 Node 都会失败。发行版包保留官方 Node 24.21.0 二进制（x86_64/aarch64），wrapper 用 Nix glibc loader + Nix libstdc++ 启动；构建阶段仍使用 nixpkgs Node/pnpm。这样 native addon、NixOS 运行时和 Nix store 都自洽。
-- **D146 NixOS 配置映射（M6）** — 自定义：module 生成完整 `cordis.patch.yml` overlay，不依赖运行时环境变量覆盖。选项按实现口径：`models.main`、`review.fast/strong`、`goal.{provider,model,allowedModels,maxRounds}`、`memory.{provider,model,curator}`、`hosts.*`、`channel.localTest.*`、`prompt.*`。不提供 `models.subagents`、`memory.enable`、`schedule.enable` 或可启用的 SSH host；memory/schedule 始终挂载，memory 只关闭提炼，SSH 留给 M7。
+- **D146 NixOS 配置映射（M6）** — 自定义：module 生成完整 `cordis.patch.yml` overlay，不依赖运行时环境变量覆盖。选项按实现口径：`models.main`、`review.fast/strong`、`goal.{provider,model,allowedModels,maxRounds}`、`memory.{provider,model,curator}`、`hosts.*`、`channel.localTest.*`、`prompt.*`。不提供 `models.subagents`、`memory.enable`、`schedule.enable` 或可启用的 SSH host；memory/schedule 始终挂载，memory 只关闭提炼，SSH 留给 M7（现因 D149 顺延为 M8）。
 - **D147 M6 验收边界（M6）** — 自定义：本地门禁为 `nix build`、`nix run --version`、`nix flake check`；NixOS 12.12 清单必须在目标机执行并记录。watchdog 手工用 `kill -STOP` 验证，不引入应用内测试钩子。当前 DSH 固定 0.2.1-rc.3，无新版本可 bump；真正的 DSH bump + reviewer vendor 更新留待后续升级提交，M6 只演练同版本重构建/重启恢复。
 - **D148 Nix subprocess runner（M6 修正 D145）** — 自定义（2026-10-27 目标机实测）：DSH `dsh-subprocess-local` 在 Linux 上用 `systemd-run --user --scope` 启动私有 runner，命令是 `[process.execPath, runner.js]`。D145 的 loader wrapper 使 `process.execPath` 等于 Nix glibc loader，systemd-run 拿 loader 执行 `runner.js` 报 invalid ELF header，runner 在消费 launch request 前退出，因此所有 `bash(host)` 调用 100% 失败（`subprocess scope exited before its bootstrap consumed the launch request`；hkg-dog-darell 会话日志与用户 journal 可复现）。修复：发行版新增 `bin/node-shim`（loader + 官方 Node 的可执行 shim）与 `nix/exec-path-preload.cjs`；wrapper 通过 `--require` 预加载，并把 `NOKORIBI_NODE_SHIM` 指向 shim，preload 仅在该变量存在时覆盖 `process.execPath`。不把 `--require` 放进 `NODE_OPTIONS`，避免泄漏进用户 shell 环境。已验证：目标机 subprocess 层 native scope 启动成功、daemon 启动与 native addon 检查正常；不再需要“去掉 XDG_RUNTIME_DIR/DBUS 强制 fallback”的临时方案。`nix flake check` 的 package-smoke 增加 shim/preload 断言。
+
+---
+
+### 第十一轮：真实 IM 适配器（QQ 官方 Bot，P1 规格评审中）
+
+> 本节为 **P1 规格提案**（2026-10-27），用户评审后转为最终；完整规格见 [17](17-qq-official-bot.md)，调研证据见 `.spec/notes/`。
+
+- **D149 里程碑重排（P1，用户已确认 2026-10-27）** — 用户选择先做真实 IM 适配器，并要求把 channel-core 扩展拆成独立里程碑先做。最终：**M7 = channel-core IM 基础设施扩展**（被动回复上下文 A2、`trustedChannels`、多 driver 路由、非重试错误；独立提交，不引入 QQ 代码）；**M8 = QQ 官方 Bot 适配器**；**M9 = SSH host**（原 M7 顺延）。理由：v1 已有本地测试通道与 NixOS 部署，真实 IM 是“日常可用”的最大缺口；core 扩展是 QQ 适配的可靠前置，SSH host 只是新增 provider。规格已通过，但用户要求**暂不启动实现**。
+- **D150 平台与传输（P1）** — 平台：**QQ 官方 Bot**（用户指定；非 Milky/fraq、非 Telegram）。传输：**WebSocket 网关**（`GET /gateway` → WSS；Identify token `QQBot {AccessToken}`；intents `1<<25`），driver 内保留 transport seam，WebHook 后置（需公网回调/TLS 终止，与当前部署姿态冲突）。备注：GitHub 旧文档副本称 WS 将下线，live 文档仍维护 WS；实现前用真实 Bot 复核。状态：待评审。
+- **D151 发送策略（P1，用户已选方向 + 事实修正）** — 用户选择“被动优先 + 超窗回退主动”。补充：官方发送页横幅称主动推送能力于 2025-04-21 起下线（社区实测 `40034102`），主动回退可能不可用；因此 `activeMessageFallback` 实现为 `auto` 能力门禁（尝试一次，失败标记不可用、可观测），**不作为可靠兜底**。被动基线：单聊 60 分钟/4 次、群聊 5 分钟/5 次。提醒/通知降级见 D161。状态：待评审。
+- **D152 准入策略（P1，用户已确认）** — 只靠平台自身限制（开发体验用户/自己的群/群内 @ 提及），不做驱动级配对/白名单；channel-core 用 `trustedChannels:["qq-bot"]` 跳过静态全局 allowlist；driver 只做平台级最小过滤。残余风险接受：能触达机器人者可驱动全权限 agent，若 `sudo.enable=true` 等价远程 root；建议部署 `sudo.enable=false`、只加可信群。写入 15.3/15.4。
+- **D153 回复上下文与 gateway 会话持久化（P1）** — 被动回复上下文必须放 **channel-core + outbox（A2）**：`OutboundContent.reply{messageId,receivedAt,seq}`、outbox 持久化 `replyTo/replyReceivedAt/replySeq`、`replySeq` 从 1 按 reply 递增；driver 不保存私有回复状态。gateway `session_id/seq` 不跨进程持久化（重启重新 Identify），未发条目按窗口退化/失败。理由：回复在 turn 结束才入 outbox，可能跨秒/分钟、重启、分段与重试；只有 core 知道出站归属哪条入站。状态：待评审。
+- **D154 协议层依赖（P1，用户已确认 2026-10-27）** — 采用官方 `@tencent-connect/qqbot-nodejs@1.0.5`（MIT，exact pin），只消费 `./protocol` 子路径（`TokenManager`/`ApiClient`/`MessageApi`/`GatewayConnection`/`dispatchEvent`/`ApiError`/`routes`），不启用 facade 中间件/业务层；通道语义（去重/审批/outbox/分段/命令）仍由 channel-core + 自研 driver 承担。集成坑：必须显式传 `msg_seq`（SDK 缺省随机生成）、显式配置域名（默认按文档 `api.bot.qq.com`）。依赖成本：`ws@8.22.0` 已在生产闭包，实际新增 1 个包；需更新 lock 与 `nix/deps.nix` FOD 哈希。官方 DSH 插件 `@tencent-connect/dsh-qqbot` 不采用：它是端到端 agent 插件、绕过 `ctx.channels`，且依赖 UNLICENSED connector、peer semver 与 `0.2.1-rc.3` 不匹配。
+- **D155 图片链路后置（P1）** — M7 不做入站图片/附件、出站富媒体/Markdown 图片；能力位 `inboundImages=false`、`outboundFiles=false`；driver 忽略 attachments、只转发文本。V8 单独里程碑。
+- **D156 密钥与配置（P1）** — AppID 为非秘密可入 Nix store/overlay；ClientSecret 只从 EnvironmentFile/agenix 注入的环境变量读取（配置只写变量名）；access_token 仅内存（SDK TokenManager）、不落盘/不上日志；错误日志脱敏（不含 token/正文，只记 bizCode/messageId/chatId）。
+- **D157 验收边界（P1）** — 自动化 fake WS/REST + channel-core + fake LLM 的单元/集成/进程级；真实个人主体 Bot（开发体验用户 + 自己的群）手工清单（17.8.2）；目标机 NixOS 部署验收；不做公开服务/群全量/频道。实现前 14 项平台事实门禁（token 域名、intents 权限、被动窗口、`msg_seq` 幂等、主动可用性、文本/Markdown 上限、群字段、WS 在线要求、附件 URL、重连/关闭码、token 刷新、SDK 版本回归等）。
+- **D158 channel-core 最小扩展（P1，用户已确认 2026-10-27）** — 用户要求拆成**独立里程碑 M7** 先做，作为 M8 的前置：`ReplyContext`/`OutboundContent` 扩展、`NonRetryableDeliveryError`、capabilities `activeMessages`/`maxRepliesPerReply`、`canDeliver?`、outbox 新字段、`trustedChannels`/`defaultChannelId`、错误分类接入、缺 driver 短路、可选 channel health。理由：不改 core 则回复上下文只能放 driver 内存，存在重启失效/错挂消息/seq 不可靠/静默丢回复等问题。M7 不引入 QQ 代码与外部依赖；完成后 local-test 行为保持兼容。
+- **D159 多 driver 路由与通知降级（P1）** — 修复全局 `lastActiveChat`/`defaultChannelId` 串渠道问题：per-turn 来源路由（`turnChat`）、notice 的 active-capable 回退/无渠道丢弃并 warn、交互 `canDeliver` fail closed、缺 driver 条目立即 failed、显式 `defaultChannelId`、允许 local-test + QQ 并存（module warning）。现状在不修复时不应同时启用两渠道。
+- **D160 能力位/窗口默认值（P1）** — `markdown="basic"`、`maxTextLength=4500`（实测上限约 5000）、`maxRepliesPerReply=4`、被动窗口单聊 3600s/群聊 300s（可减余量）、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N；均可配置，真实 Bot 实测后校准。
+- **D161 提醒/系统通知降级（P1，待用户确认）** — 主动推送下线后，无入站上下文的出站（schedule 提醒、系统通知、重启/待应答失效通知）在 QQ-only 部署下无法可靠送达。已调研 Hermes Agent（`NousResearch/hermes-agent`）：其 `QQBOT_HOME_CHANNEL` 只用于选定 cron/通知目标，实际发送仍是不带 `msg_id` 的主动消息（channel/C2C/group 端点 + 有限重试 + 失败记录），**没有 defer/is_wakeup/窗口外兜底**；等价于候选 A。候选：A=`active 尝试 + 重试 + log`（Hermes 同款）；**B=A + `defer`（active 失败后保留到该 chat 下一次入站，以被动回复补投；推荐）**；C=`defer` 为主或依赖其他可主动推送渠道。默认建议 B，待用户拍板。参考：[notes/hermes-agent-qqbot-notes.md](notes/hermes-agent-qqbot-notes.md)。
 
 ---
 
@@ -361,3 +394,4 @@
 - D73（中等 systemd 硬化）→ D79/D81 为 sudo/local 全权限取消。
 - D11（v1 仅消息闭环）→ D125 六阶段扩展。
 - D97（通用 `subagent` 创建 goal）→ D136（专用 `start_goal` + 宿主创建）。
+- D146 的“SSH 留给 M7” → D149 里程碑重排（M7 = channel-core 扩展；M8 = QQ 官方 Bot；M9 = SSH host）。

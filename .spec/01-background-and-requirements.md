@@ -50,7 +50,7 @@
 最终选择：
 
 - 保留"host 路由"设计：`bash` 工具带可选 `host`，host 由插件注册，router 按 `<kind>:<instance>` 路由，并提供 `get_available_shell_host` 发现工具。
-- **v1 先做 `local:*` 与 `sandbox:*`，SSH 推迟到 v1 之后**（M7/后置）。原因是先把 host 维度、工具 schema、执行器接口验证完；SSH 到时只新增一个 host provider，不重做架构。
+- **v1 先做 `local:*` 与 `sandbox:*`，SSH 推迟到 v1 之后**（原 M7，因 D149 顺延为 M9）。原因是先把 host 维度、工具 schema、执行器接口验证完；SSH 到时只新增一个 host provider，不重做架构。
 
 ### R3 IM 沟通与不打断注入
 
@@ -76,8 +76,8 @@ v1（M1–M6）交付：
 
 ## 1.6 非目标与后置项
 
-- 真实 IM 适配器（QQ/Milky、Telegram 等）——后置。
-- SSH host 实现——后置（M7）。
+- 真实 IM 适配器（QQ 官方 Bot）——M8 规格已通过（D149/D150）。
+- SSH host 实现——后置（原 M7，因 D149 顺延为 M9）。
 - Web UI / web-debug profile——最终决定不做。
 - heartbeat / 主动唤醒——不做；主动行为只有 schedule 与 goal。
 - 多人/群聊权限模型——不做，仅单用户白名单。
