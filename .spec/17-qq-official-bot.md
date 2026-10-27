@@ -180,7 +180,7 @@ online → stopping(close ws) → stopped
 - 长任务（群聊 >5 分钟 / 单聊 >60 分钟）后的审批提示/回复可能无法被动送达；交互提示在 `canDeliver=false` 时立即 fail closed（审批 `unavailable`、提问 `NO_PROVIDER`），不再静默等超时。
 - 同 chat 多用户并发 @：回复挂在“最近一条入站”的 msg_id 上；语义上仍是群消息。
 
-### 17.5.3 通知与提醒的降级（D161，Hermes 参考已调研，推荐 B）
+### 17.5.3 通知与提醒的降级（D161 已确认：active + defer）
 
 主动推送下线意味着 **QQ-only 部署下，没有入站上下文的出站（schedule 提醒、系统通知、重启/待应答失效通知）不能保证送达用户**。
 
@@ -191,13 +191,13 @@ Hermes Agent（NousResearch/hermes-agent）的参考实现（详见 [notes](note
 - 没有 defer（等下次入站补投）、没有 `is_wakeup` 召回、也没有针对主动推送下线的专门兜底。
 - 结论：Hermes 的方案等价于我们选项 A（active 尝试 + 重试 + 日志），**不能解决窗口外送达**。
 
-M8 候选（待用户确认）：
+**已确认（D161，2026-10-27）：B = active 尝试 + 失败后 `defer`。**
 
-- **A（Hermes 同款）**：active 尝试 + 退避重试 + 失败记录/告警；不做 defer。最简单；平台下线时提醒丢失。
-- **B（推荐）**：A + `defer`——active 失败后把通知留在 outbox，等该 chat 下一次入站时以被动回复补投（用户下次对话看到“补发提醒”）。core 已有 reply context，增量可控。
-- **C**：defer 为主（不尝试 active，避免无意义失败日志），或依赖其他可主动推送渠道（第二 IM，后置）。
-
-D161 待用户拍板；确认后把决策写入 [03](03-decision-log.md) 与本节。
+- 先按 `activeMessageFallback=auto` 尝试主动消息；成功即正常发送。
+- 若主动失败（或 `activeMessages=false`），把通知保留为 per-chat pending notice，等该 chat 下一次入站时作为被动回复补投（正文加“⚠️ 补发”标记），不丢弃提醒。
+- 主动可用时 defer 不触发；QQ-only 且长期无入站时提醒仍会延迟（平台限制，文档写明）。
+- 实现归属：core 的 notice defer 等待语义放在 M7（D158 扩展的一部分）；QQ driver 的 `activeMessages` 能力门禁放在 M8。
+- 不采用：A（失败即丢失）、C（放弃 active 尝试或换渠道）。
 
 ### 17.5.4 频控与错误分类
 
@@ -259,6 +259,7 @@ channel.qqBot = {
 4. `format.ts`：分段前缀预留（保证 chunk+前缀不超过平台上限）。
 5. 多 driver 路由（D159）：per-turn 来源路由、notice 的 active-capable 回退/丢弃、显式默认渠道、恢复 `lastActiveChat`。
 6. `channel-local-test` 的 `send()` 签名适配；集成测试 FakeDriver 适配。
+7. **notice defer 等待语义（D161）**：无 reply 上下文的 notice/提醒在 active 不可用时保留为 per-chat pending，下一次该 chat 入站时以被动回复补投（带“⚠️ 补发”标记）；提供上限/清理策略，避免无限堆积。
 
 ## 17.7 白名单、安全与合规
 
@@ -300,7 +301,7 @@ channel.qqBot = {
 3. `/status`、`/stop`、`/steer`、`/queue` 行为与本地通道一致。
 4. 触发 Auto review deny → QQ 收到 🔐 审批提示 → 允许后执行 / 拒绝后失败。
 5. 被动回复：单条消息内多次发送 `msg_seq` 递增、无 `40054005`；记录单聊/群聊真实窗口。
-6. **主动消息可用性实测**（最高优先级）：无 `msg_id` 发送，记录 HTTP/err_code（`40034102`/`40034105`/`40054013`），据此确认 `activeMessageFallback` 默认与通知策略（D161）。
+6. **主动消息可用性实测**（最高优先级）：无 `msg_id` 发送，记录 HTTP/err_code（`40034102`/`40034105`/`40054013`），据此校准 `activeMessageFallback` 默认（D161 已确认为 active + defer）。
 7. 重启 daemon：会话/outbox 恢复，网关重连成功。
 8. 长时间运行：token 自动刷新（约 2 小时）后仍可发送。
 9. 断网/恢复：网关重连并继续收发（若平台补发）。
@@ -310,7 +311,7 @@ channel.qqBot = {
 
 | 风险/未决 | 等级 | 缓解 |
 |---|---|---|
-| **主动推送已下线**（2025-04-21），提醒/系统通知无法送达 | 高 | `activeMessageFallback=auto` + 可观测；D161 推荐 B（active + defer）；文档明确限制；后续评估 `is_wakeup`/其他渠道 |
+| **主动推送已下线**（2025-04-21），提醒/系统通知无法送达 | 高 | `activeMessageFallback=auto` + 可观测；D161 已确认 B（active + defer）；文档明确限制；后续评估 `is_wakeup`/其他渠道 |
 | 平台准入/权限（开发体验用户、群关联、公开限制） | 高 | 只用个人主体自测场景；文档写清限制 |
 | 白名单只有平台边界（可被任意群成员/测试用户驱动全权限 agent） | 高 | `sudo.enable=false`、可信群、local-test 验收；残余风险接受 |
 | 协议/文档变动、域名与错误码冲突 | 中高 | 官方 SDK protocol 层 + 集中常量 + fake 集成测试；待实测清单；升级时重跑 |
@@ -372,4 +373,4 @@ channel.qqBot = {
 | D158 | channel-core 最小扩展 | 拆成**独立里程碑 M7** 先做（contract/outbox/错误分类/allowlist/多 driver），独立提交 | 用户已确认（2026-10-27） |
 | D159 | 多 driver 路由与通知降级 | per-turn 路由 + notice active-capable 回退/丢弃 + 缺 driver 短路 + 显式默认渠道 | 待评审 |
 | D160 | 能力位/窗口默认 | `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N | 待评审 |
-| D161 | 提醒/系统通知降级 | Hermes 参考已调研；候选 A（active+重试+log）/ **B（A+defer，推荐）** / C（defer 为主或换渠道） | 待用户确认 |
+| D161 | 提醒/系统通知降级 | **B：active 尝试 + 失败后 defer（下次入站被动补投）**；A/C 不采用 | 用户已确认（2026-10-27） |

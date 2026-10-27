@@ -2,7 +2,7 @@
 
 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下文简称 DSH）的单用户、常驻、长程个人 Agent 的设计文档。
 
-> **状态（2026-10-27）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词与 `/status full`）与 M6（NixOS 部署闭环）的代码已实现；M6 的 NixOS 目标机手工验收清单仍需完整执行并记录。2026-10-27 已在 hkg-dog-darell（NixOS 26.05）做用户态临时部署冒烟：拉取/构建/daemon 启动/测试通道/真实模型对话通过，并发现、修复了 D148（官方 Node wrapper 与 DSH subprocess runner 的兼容缺陷，曾导致 `bash(host)` 全部失败）。**M7（channel-core IM 基础设施扩展）与 M8（真实 IM 适配器：QQ 官方 Bot）的规格已通过（2026-10-27），按用户要求 M7 独立先做、当前暂不启动实现**，见 [17](.spec/17-qq-official-bot.md)。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒、`/status full` 与 NixOS module；但 M5 的 memory 只支持主动检索（**不自动注入**），真实 IM 尚未实现、M6 验收未完成，**不可用作生产服务**。另外，QQ 官方平台已于 2025-04-21 下线主动消息推送，M8 的提醒/通知降级策略待定（D161，推荐 active+defer）。
+> **状态（2026-10-27）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词与 `/status full`）与 M6（NixOS 部署闭环）的代码已实现；M6 的 NixOS 目标机手工验收清单仍需完整执行并记录。2026-10-27 已在 hkg-dog-darell（NixOS 26.05）做用户态临时部署冒烟：拉取/构建/daemon 启动/测试通道/真实模型对话通过，并发现、修复了 D148（官方 Node wrapper 与 DSH subprocess runner 的兼容缺陷，曾导致 `bash(host)` 全部失败）。**M7（channel-core IM 基础设施扩展）与 M8（真实 IM 适配器：QQ 官方 Bot）的规格已通过（2026-10-27），按用户要求 M7 独立先做、当前暂不启动实现**，见 [17](.spec/17-qq-official-bot.md)。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒、`/status full` 与 NixOS module；但 M5 的 memory 只支持主动检索（**不自动注入**），真实 IM 尚未实现、M6 验收未完成，**不可用作生产服务**。另外，QQ 官方平台已于 2025-04-21 下线主动消息推送，M8 的提醒/通知降级策略已定稿（D161：active 尝试 + 失败 defer 到下次入站）。
 >
 > **目标 DSH 版本**：全部 `@deepseek-ai/*` 包固定 `0.2.1-rc.3`，手动整批升级。Nix 包额外保留官方 Node 24.21.0 运行时（D145），以匹配 DSH 的 native addon。
 

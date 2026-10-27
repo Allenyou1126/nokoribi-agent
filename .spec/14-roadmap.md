@@ -242,6 +242,7 @@
 - `service.ts`：`trustedChannels`/`defaultChannelId`、`lastInboundByChat`/`turnChat`、per-turn 多 driver 路由、notice 的 active-capable 回退/丢弃、缺 driver 短路失败、可选 channel health。
 - `outbox.ts` + `shared/src/schemas.ts`：持久化 `replyTo`/`replyReceivedAt`/`replySeq`（旧文件兼容）。
 - `format.ts` 分段前缀预留；`channel-local-test` 适配 + 单测/集成回归。
+- **notice defer 等待语义（D161）**：active 不可用时通知保留为 per-chat pending，下一次入站以被动回复补投（有上限/清理）。
 - 不引入 QQ 代码、不新增外部依赖。
 
 ### 验收
@@ -269,7 +270,7 @@
 
 - 17.8 自动化与真实 Bot 清单通过；目标机部署可用。
 - 实现前完成 17.8/notes 的 14 项平台事实门禁（token 域名、intents、被动窗口、`msg_seq` 幂等、主动可用性、消息上限、群字段、WS 在线要求、附件 URL、重连/关闭码、token 刷新、SDK 版本回归）。
-- 主动推送已下线（2025-04-21）：提醒/系统通知降级策略按 D161（推荐 B：active 尝试 + defer 补投）确认并记录。
+- 主动推送已下线（2025-04-21）：提醒/系统通知按 D161 已确认方案（active 尝试 + 失败 defer 补投）实现。
 
 ### 依赖/风险
 

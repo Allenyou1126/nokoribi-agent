@@ -171,7 +171,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 - 按 seq 全局有序投递；失败指数退避重试；超过最大尝试次数记录错误并丢弃（同时 journald 告警，并在存在 active-capable 渠道时发系统通知；M7 收口当前“只 log”的偏差）。
 - **at-least-once**（D132）：发送成功后落盘标记；崩溃可能造成重复发送，接受。被动回复以稳定 `(msg_id, msg_seq)` 重试由平台去重（QQ `40054005` 视为成功）。
 - 重启后从持久 outbox 继续；已解决/中止交互的提示跳过：pump 检查 broker terminal 集合，未发送项标记失败；启动时残留 pending interaction 统一标记失败并通知。
-- 多 chat 路由（M7 修复，D159）：回复回本轮来源 chat（`turnChat`）；系统通知/提醒优先 `turnChat ?? lastActiveChat` 中的 active-capable 渠道，否则选择第一个 active-capable driver；QQ-only 且无入站上下文时按 D161 降级（defer/drop+log）。
+- 多 chat 路由（M7 修复，D159）：回复回本轮来源 chat（`turnChat`）；系统通知/提醒优先 `turnChat ?? lastActiveChat` 中的 active-capable 渠道，否则选择第一个 active-capable driver；QQ-only 且无入站上下文时按 D161 降级（active 尝试 + 失败 defer 到下次入站）。
 - 缺 driver 的条目不再无限 pending：目标渠道未注册时立即标记 failed 并记录 error。
 
 ## 6.8 本地测试通道 HTTP
@@ -261,8 +261,8 @@ M8 先接 QQ 官方 Bot，完整规格（平台事实、被动回复策略、配
 | 命令执行失败 | 回错误文本，不进模型 |
 | agent 不存在/正在 `/clear` | 消息缓冲，新会话 ready 后处理 |
 | driver 断开 | outbox 保留，重连后继续；入站由平台侧重投/driver 处理；QQ 场景按 17.3 重连/失败分类 |
-| 被动回复窗口过期（M8） | 按能力回退主动消息（`auto`）；失败则记录 error，按 D161 降级 |
-| outbox 发送失败超上限 | 日志记录并丢弃；存在 active-capable 渠道时发系统通知（避免无限重试）；QQ-only 无主动能力时只记录/按 D161 |
+| 被动回复窗口过期（M8） | 按能力回退主动消息（`auto`）；失败则记录 error，按 D161 保留为 pending 并在下次入站补投 |
+| outbox 发送失败超上限 | 日志记录并丢弃；存在 active-capable 渠道时发系统通知（避免无限重试）；QQ-only 无主动能力时按 D161 保留为 pending，下次入站补投 |
 | 平台拒绝（永久错误，M8） | driver 抛 `NonRetryableDeliveryError`，core 立即 failed，不重试 |
 | 空 assistant 回复 | 不发消息 |
 | 超长回复 | 分段；每段独立进入 outbox |

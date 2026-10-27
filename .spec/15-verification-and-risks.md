@@ -64,7 +64,7 @@
 | 测试覆盖不足（无 VM/CI） | 中 | 部署问题漏检 | 手工验收清单；flake checks；用户接受 |
 | 无 web-debug | 低中 | 归档/排查只能看文件 | `/status` + journald + session 文件；用户选择不做 |
 | 测试 token 明文在 store | 低中 | 本地用户可读 | 仅验收期开启；loopback；用户选择（D119） |
-| QQ 主动推送已下线（2025-04-21） | 高 | schedule 提醒、系统通知在 QQ-only 部署无法送达 | `activeMessageFallback=auto` 仅作能力探测；D161 决定 defer/drop；文档明确限制；后续评估 `is_wakeup`/其他渠道 |
+| QQ 主动推送已下线（2025-04-21） | 高 | schedule 提醒、系统通知在 QQ-only 部署无法送达 | `activeMessageFallback=auto` 仅作能力探测；D161 已确认 active 失败后 defer 到下次入站补投；文档明确限制；后续评估 `is_wakeup`/其他渠道 |
 | QQ 平台准入/封禁 | 高 | 个人主体不可公开使用；AI 输出违规可致机器人/账号封禁且不可解封 | 只做个人自测场景、可信群；遵守运营规范；接受风险（D152/D157） |
 | QQ 白名单只有平台边界 | 高 | 任何能私聊/群 @ 机器人者可驱动全权限 agent | `sudo.enable=false`、只加可信群、保留 local-test 验收；残余风险接受（D152） |
 | QQ 协议/文档冲突与漂移 | 中高 | 域名、WS 退役传闻、Markdown、长度上限、错误码不一致 | 实现前 14 项平台事实门禁；域名/窗口配置化；官方 SDK protocol 层；升级回归 |
@@ -88,7 +88,7 @@
 - 发行版运行时依赖官方 Node 二进制（D145）；Node/DSH 升级时必须复测 native addon，且该二进制不受 nixpkgs 补丁覆盖。
 - NixOS 12.12 手工验收尚未在当前 Arch 开发机执行；在目标机记录前不能把 M6 视为生产验收完成。
 - QQ 官方 Bot 的准入边界就是平台限制：任何能被加入开发体验用户或在你群里 @ 机器人的人都能驱动全权限 agent；若 `sudo.enable=true` 等价于远程 root 入口（D152 已接受，建议保持 sudo 关闭、只加可信群）。
-- QQ 官方主动推送已于 2025-04-21 下线：提醒/系统通知在 QQ-only 部署可能无法送达；D161 决定降级策略（defer/drop/其他渠道），不能承诺主动触达。
+- QQ 官方主动推送已于 2025-04-21 下线：提醒/系统通知在 QQ-only 部署可能无法送达；D161 已确认（active 尝试 + 失败 defer 到下次入站补投），仍不能承诺主动触达。
 - QQ 平台可封禁机器人或账号且不支持解封；AI 输出合规由用户与提示词承担，M8 不做内容审核服务。
 - 官方 SDK 引入维护成本：`@tencent-connect/qqbot-nodejs` 版本与协议行为需随平台更新回归；升级时同步 lock 与 `nix/deps.nix` 哈希。
 
@@ -99,4 +99,4 @@
 - 若 V3（goal 冷恢复）不可行：重启后不自动恢复 goal，改为通知用户 `/goal resume`。
 - 若 V7（Nix 固定输出构建）不可行：重新评估薄启动器打包方式（容器/venv 式），但保持版本锁定。
 - 若 M8 真实 Bot 实测 WebSocket 已不可用（平台改为仅 WebHook）：暂停 QQ driver 实现，评估 WebHook + 公网回调/TLS 方案（与当前无入站端口部署冲突）或改选其他平台。
-- 若 M8 实测主动推送完全不可用且 D161 只能选择 drop：在 README/规格中明确“QQ-only 部署不支持定时提醒主动送达”，并评估后续通知渠道（如第二 IM 适配器）。
+- 若 M8 实测主动推送完全不可用：按 D161 的 defer 方案补投，并在 README/规格中写明“提醒时效性受平台限制”；评估后续通知渠道（如第二 IM 适配器）。

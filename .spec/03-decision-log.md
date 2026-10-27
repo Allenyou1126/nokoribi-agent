@@ -156,7 +156,7 @@
 | D158 | channel-core 扩展（P1，用户已确认） | 拆成独立里程碑 M7 先做（回复上下文/非重试错误/allowlist/多 driver） |
 | D159 | 多 driver 路由（P1） | per-turn 路由、notice active-capable 降级、缺 driver 短路、显式默认渠道 |
 | D160 | IM 能力位/窗口（P1） | markdown basic、maxTextLength 4500、maxReplies 4、`c2c:`/`group:`、replySeq |
-| D161 | 提醒/通知降级（待确认） | Hermes 参考已调研；A active+重试+log / **B A+defer（推荐）** / C defer 为主或换渠道 |
+| D161 | 提醒/通知降级（用户已确认） | **B：active 尝试 + 失败后 defer（下次入站以被动回复补投）**；A 丢失风险 / C 换渠道不采用 |
 
 ---
 
@@ -344,11 +344,11 @@
 
 ### 第十一轮：真实 IM 适配器（QQ 官方 Bot，P1 规格评审中）
 
-> 本节为 **P1 规格提案**（2026-10-27），用户评审后转为最终；完整规格见 [17](17-qq-official-bot.md)，调研证据见 `.spec/notes/`。
+> 本节为 **P1 规格决策**：2026-10-27 用户评审通过（实现暂不启动，按 D149 拆分 M7/M8）。完整规格见 [17](17-qq-official-bot.md)，调研证据见 `.spec/notes/`。
 
 - **D149 里程碑重排（P1，用户已确认 2026-10-27）** — 用户选择先做真实 IM 适配器，并要求把 channel-core 扩展拆成独立里程碑先做。最终：**M7 = channel-core IM 基础设施扩展**（被动回复上下文 A2、`trustedChannels`、多 driver 路由、非重试错误；独立提交，不引入 QQ 代码）；**M8 = QQ 官方 Bot 适配器**；**M9 = SSH host**（原 M7 顺延）。理由：v1 已有本地测试通道与 NixOS 部署，真实 IM 是“日常可用”的最大缺口；core 扩展是 QQ 适配的可靠前置，SSH host 只是新增 provider。规格已通过，但用户要求**暂不启动实现**。
 - **D150 平台与传输（P1）** — 平台：**QQ 官方 Bot**（用户指定；非 Milky/fraq、非 Telegram）。传输：**WebSocket 网关**（`GET /gateway` → WSS；Identify token `QQBot {AccessToken}`；intents `1<<25`），driver 内保留 transport seam，WebHook 后置（需公网回调/TLS 终止，与当前部署姿态冲突）。备注：GitHub 旧文档副本称 WS 将下线，live 文档仍维护 WS；实现前用真实 Bot 复核。状态：待评审。
-- **D151 发送策略（P1，用户已选方向 + 事实修正）** — 用户选择“被动优先 + 超窗回退主动”。补充：官方发送页横幅称主动推送能力于 2025-04-21 起下线（社区实测 `40034102`），主动回退可能不可用；因此 `activeMessageFallback` 实现为 `auto` 能力门禁（尝试一次，失败标记不可用、可观测），**不作为可靠兜底**。被动基线：单聊 60 分钟/4 次、群聊 5 分钟/5 次。提醒/通知降级见 D161。状态：待评审。
+- **D151 发送策略（P1，用户已选方向 + 事实修正）** — 用户选择“被动优先 + 超窗回退主动”。补充：官方发送页横幅称主动推送能力于 2025-04-21 起下线（社区实测 `40034102`），主动回退可能不可用；因此 `activeMessageFallback` 实现为 `auto` 能力门禁（尝试一次，失败标记不可用、可观测），**不作为可靠兜底**。被动基线：单聊 60 分钟/4 次、群聊 5 分钟/5 次。提醒/通知降级见 D161。状态：规格已通过（2026-10-27）。
 - **D152 准入策略（P1，用户已确认）** — 只靠平台自身限制（开发体验用户/自己的群/群内 @ 提及），不做驱动级配对/白名单；channel-core 用 `trustedChannels:["qq-bot"]` 跳过静态全局 allowlist；driver 只做平台级最小过滤。残余风险接受：能触达机器人者可驱动全权限 agent，若 `sudo.enable=true` 等价远程 root；建议部署 `sudo.enable=false`、只加可信群。写入 15.3/15.4。
 - **D153 回复上下文与 gateway 会话持久化（P1）** — 被动回复上下文必须放 **channel-core + outbox（A2）**：`OutboundContent.reply{messageId,receivedAt,seq}`、outbox 持久化 `replyTo/replyReceivedAt/replySeq`、`replySeq` 从 1 按 reply 递增；driver 不保存私有回复状态。gateway `session_id/seq` 不跨进程持久化（重启重新 Identify），未发条目按窗口退化/失败。理由：回复在 turn 结束才入 outbox，可能跨秒/分钟、重启、分段与重试；只有 core 知道出站归属哪条入站。状态：待评审。
 - **D154 协议层依赖（P1，用户已确认 2026-10-27）** — 采用官方 `@tencent-connect/qqbot-nodejs@1.0.5`（MIT，exact pin），只消费 `./protocol` 子路径（`TokenManager`/`ApiClient`/`MessageApi`/`GatewayConnection`/`dispatchEvent`/`ApiError`/`routes`），不启用 facade 中间件/业务层；通道语义（去重/审批/outbox/分段/命令）仍由 channel-core + 自研 driver 承担。集成坑：必须显式传 `msg_seq`（SDK 缺省随机生成）、显式配置域名（默认按文档 `api.bot.qq.com`）。依赖成本：`ws@8.22.0` 已在生产闭包，实际新增 1 个包；需更新 lock 与 `nix/deps.nix` FOD 哈希。官方 DSH 插件 `@tencent-connect/dsh-qqbot` 不采用：它是端到端 agent 插件、绕过 `ctx.channels`，且依赖 UNLICENSED connector、peer semver 与 `0.2.1-rc.3` 不匹配。
@@ -358,7 +358,7 @@
 - **D158 channel-core 最小扩展（P1，用户已确认 2026-10-27）** — 用户要求拆成**独立里程碑 M7** 先做，作为 M8 的前置：`ReplyContext`/`OutboundContent` 扩展、`NonRetryableDeliveryError`、capabilities `activeMessages`/`maxRepliesPerReply`、`canDeliver?`、outbox 新字段、`trustedChannels`/`defaultChannelId`、错误分类接入、缺 driver 短路、可选 channel health。理由：不改 core 则回复上下文只能放 driver 内存，存在重启失效/错挂消息/seq 不可靠/静默丢回复等问题。M7 不引入 QQ 代码与外部依赖；完成后 local-test 行为保持兼容。
 - **D159 多 driver 路由与通知降级（P1）** — 修复全局 `lastActiveChat`/`defaultChannelId` 串渠道问题：per-turn 来源路由（`turnChat`）、notice 的 active-capable 回退/无渠道丢弃并 warn、交互 `canDeliver` fail closed、缺 driver 条目立即 failed、显式 `defaultChannelId`、允许 local-test + QQ 并存（module warning）。现状在不修复时不应同时启用两渠道。
 - **D160 能力位/窗口默认值（P1）** — `markdown="basic"`、`maxTextLength=4500`（实测上限约 5000）、`maxRepliesPerReply=4`、被动窗口单聊 3600s/群聊 300s（可减余量）、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N；均可配置，真实 Bot 实测后校准。
-- **D161 提醒/系统通知降级（P1，待用户确认）** — 主动推送下线后，无入站上下文的出站（schedule 提醒、系统通知、重启/待应答失效通知）在 QQ-only 部署下无法可靠送达。已调研 Hermes Agent（`NousResearch/hermes-agent`）：其 `QQBOT_HOME_CHANNEL` 只用于选定 cron/通知目标，实际发送仍是不带 `msg_id` 的主动消息（channel/C2C/group 端点 + 有限重试 + 失败记录），**没有 defer/is_wakeup/窗口外兜底**；等价于候选 A。候选：A=`active 尝试 + 重试 + log`（Hermes 同款）；**B=A + `defer`（active 失败后保留到该 chat 下一次入站，以被动回复补投；推荐）**；C=`defer` 为主或依赖其他可主动推送渠道。默认建议 B，待用户拍板。参考：[notes/hermes-agent-qqbot-notes.md](notes/hermes-agent-qqbot-notes.md)。
+- **D161 提醒/系统通知降级（P1，用户已确认 2026-10-27）** — 主动推送下线后，无入站上下文的出站（schedule 提醒、系统通知、重启/待应答失效通知）在 QQ-only 部署下无法可靠送达。已调研 Hermes Agent（`NousResearch/hermes-agent`）：其 `QQBOT_HOME_CHANNEL` 只用于选定 cron/通知目标，实际发送仍是不带 `msg_id` 的主动消息（channel/C2C/group 端点 + 有限重试 + 失败记录），**没有 defer/is_wakeup/窗口外兜底**；等价于候选 A。用户选择 **B = active 尝试 + 失败后 `defer`**：通知留在 outbox（或 core 的 per-chat pending notice 队列），等该 chat 下一次入站时以被动回复补投（带“⚠️ 补发”标记）；active 可用时 defer 不触发。实现放在 M7 channel-core 扩展（notice defer 等待语义）与 M8 QQ driver 的能力门禁。参考：[notes/hermes-agent-qqbot-notes.md](notes/hermes-agent-qqbot-notes.md)。
 
 ---
 
