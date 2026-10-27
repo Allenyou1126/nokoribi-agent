@@ -68,6 +68,12 @@
             ${package}/bin/nokoribi-agent --help > /dev/null
             test -f ${package}/share/SOUL.md
             test -d ${package}/share/templates
+            # D148: the loader wrapper cannot be process.execPath; the preload
+            # and its runnable Node shim must stay packaged.
+            test -f ${package}/lib/nokoribi-agent/exec-path-preload.cjs
+            test -x ${package}/bin/node-shim
+            ${package}/bin/node-shim -e 'process.exit(0)'
+            grep -q 'exec-path-preload.cjs' ${package}/bin/nokoribi-agent
             touch $out
           '';
 

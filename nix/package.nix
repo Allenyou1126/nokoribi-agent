@@ -111,11 +111,27 @@ stdenv.mkDerivation {
     cp -a SOUL.md $out/share/SOUL.md
     cp -a templates $out/share/templates
 
+    # DSH's subprocess provider re-executes `process.execPath` to start its
+    # private bootstrap. Under the loader wrapper that value is the glibc
+    # loader, which cannot run the JS runner, so every `bash(host)` launch
+    # dies before consuming its launch request (D148). Ship a preload that
+    # points execPath at a runnable Node shim instead.
     mkdir -p $out/bin
+    install -m 644 ${./exec-path-preload.cjs} \
+      $out/lib/nokoribi-agent/exec-path-preload.cjs
+    cat > $out/bin/node-shim <<EOF
+#!${stdenv.shell}
+exec ${loader} --library-path ${nodeLibraries} ${nodeRuntime}/bin/node "\$@"
+EOF
+    chmod 755 $out/bin/node-shim
+
     cat > $out/bin/nokoribi-agent <<EOF
 #!${stdenv.shell}
 export NODE_ENV=production
-exec ${loader} --library-path ${nodeLibraries} ${nodeRuntime}/bin/node "$out/lib/nokoribi-agent/packages/launcher/dist/index.js" "\$@"
+export NOKORIBI_NODE_SHIM="$out/bin/node-shim"
+exec ${loader} --library-path ${nodeLibraries} ${nodeRuntime}/bin/node \
+  --require "$out/lib/nokoribi-agent/exec-path-preload.cjs" \
+  "$out/lib/nokoribi-agent/packages/launcher/dist/index.js" "\$@"
 EOF
     chmod 755 $out/bin/nokoribi-agent
 
