@@ -37,6 +37,9 @@
 13. 真实 IM 适配器的消息长度/markdown 能力参数。
 14. DSH 升级（0.2.1-rc.3 之后）对 session format 与包 API 的影响。
 15. `dsh-tool-subagent` 的 `modelSelectionSettings`：rc.3 要求 scoped preset/composition Context；全局 bundle 行不可用，M5 后移（D141）。per-goal 选择由 `start_goal`/`NOKORIBI_GOAL_MODELS` 承担。
+16. deferred notices 的 reply 边界：M7 对 notice 与“无可用入站上下文”的 reply 做 defer；有上下文但被动过期的长任务回复只做 active 重试，是否也 defer 留给 M8 真实平台实测后决定。
+17. `replySeq` 由 retained outbox history 推导；极端历史裁剪下可能重复 slot，M8 用平台 `40054005` 去重语义收口并实测。
+18. 按钮审批 UX 与 `INTERACTION_CREATE` 的 `event_id` 前缀、`PUT /interactions/{id}` ack 仍在事实门禁中（D163 只预留契约）。
 
 ## 15.3 风险登记
 
@@ -64,11 +67,13 @@
 | 测试覆盖不足（无 VM/CI） | 中 | 部署问题漏检 | 手工验收清单；flake checks；用户接受 |
 | 无 web-debug | 低中 | 归档/排查只能看文件 | `/status` + journald + session 文件；用户选择不做 |
 | 测试 token 明文在 store | 低中 | 本地用户可读 | 仅验收期开启；loopback；用户选择（D119） |
-| QQ 主动推送已下线（2025-04-21） | 高 | schedule 提醒、系统通知在 QQ-only 部署无法送达 | `activeMessageFallback=auto` 仅作能力探测；D161 已确认 active 失败后 defer 到下次入站补投；文档明确限制；后续评估 `is_wakeup`/其他渠道 |
+| QQ 主动推送已下线（2025-04-21） | 高 | schedule 提醒、系统通知在 QQ-only 部署无法送达 | M7 core 已实现 active 尝试 + 失败 defer（D161/D162）；M8 仍需实测主动能力并校准；文档明确“需下次入站才能补投” |
 | QQ 平台准入/封禁 | 高 | 个人主体不可公开使用；AI 输出违规可致机器人/账号封禁且不可解封 | 只做个人自测场景、可信群；遵守运营规范；接受风险（D152/D157） |
 | QQ 白名单只有平台边界 | 高 | 任何能私聊/群 @ 机器人者可驱动全权限 agent | `sudo.enable=false`、只加可信群、保留 local-test 验收；残余风险接受（D152） |
 | QQ 协议/文档冲突与漂移 | 中高 | 域名、WS 退役传闻、Markdown、长度上限、错误码不一致 | 实现前 14 项平台事实门禁；域名/窗口配置化；官方 SDK protocol 层；升级回归 |
-| channel-core 扩展回归 | 中高 | outbox 合同/路由/错误语义变化影响本地通道与既有测试 | 扩展单独提交 + 单测 + local-test 回归；`NonRetryableDeliveryError` 等新增语义默认兼容 |
+| channel-core 扩展回归 | 中高 | outbox 合同/路由/错误语义变化影响本地通道与既有测试 | M7 已通过单测/双 driver 集成与 42 个进程场景回归；local-test 端点不变；后续改动继续跑全量门禁 |
+| deferred 通知延迟/丢弃 | 中 | 长期无入站时提醒只能延迟；TTL/上限会丢最旧；崩溃窗口可能重复补投 | 上限/TTL 可配 + warn；`/status` 展示 deferred 计数；at-least-once 与平台限制写入文档 |
+| reply defer 内容截断 | 低中 | 无上下文回复补投时只保留单段（超长加省略） | 长回复优先走被动；补投正文带“⚠️ 补发”可辨识；后续按 M8 实测调整 |
 | 官方 SDK 新依赖与升级维护 | 中 | `qqbot-nodejs` 1.0.x 演进；Nix FOD 哈希变更 | exact pin 1.0.5；升级 diff CHANGELOG + 真实 Bot 回归；`nix/deps.nix` 同步更新 |
 | 归档不可删除、磁盘增长 | 低 | 长期磁盘占用 | 用户接受；人工清理；memory/session 保留策略未设计 |
 | 审批/提问在纯文本渠道歧义 | 低中 | 误答/超时 | 串行、编号、帮助重提示、超时兜底 |
@@ -88,7 +93,9 @@
 - 发行版运行时依赖官方 Node 二进制（D145）；Node/DSH 升级时必须复测 native addon，且该二进制不受 nixpkgs 补丁覆盖。
 - NixOS 12.12 手工验收尚未在当前 Arch 开发机执行；在目标机记录前不能把 M6 视为生产验收完成。
 - QQ 官方 Bot 的准入边界就是平台限制：任何能被加入开发体验用户或在你群里 @ 机器人的人都能驱动全权限 agent；若 `sudo.enable=true` 等价于远程 root 入口（D152 已接受，建议保持 sudo 关闭、只加可信群）。
-- QQ 官方主动推送已于 2025-04-21 下线：提醒/系统通知在 QQ-only 部署可能无法送达；D161 已确认（active 尝试 + 失败 defer 到下次入站补投），仍不能承诺主动触达。
+- QQ 官方主动推送已于 2025-04-21 下线：提醒/系统通知在 QQ-only 部署可能无法送达；D161/D162 已在 M7 core 实现 active 尝试 + 失败 defer 到下次入站补投，但仍不能承诺主动触达。
+- M7 的 deferred 通知受 TTL/上限约束，长期无入站会丢失最旧项；补投依赖用户下一次发言（平台限制）。
+- M7 的 actions 只是契约与持久化预留，未实现按钮渲染/回调；M8 真实接入时仍需平台事实门禁。
 - QQ 平台可封禁机器人或账号且不支持解封；AI 输出合规由用户与提示词承担，M8 不做内容审核服务。
 - 官方 SDK 引入维护成本：`@tencent-connect/qqbot-nodejs` 版本与协议行为需随平台更新回归；升级时同步 lock 与 `nix/deps.nix` 哈希。
 

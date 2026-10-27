@@ -183,6 +183,7 @@ services.nokoribi-agent = {
 module 根据选项生成完整的 `cordis.patch.yml`（store 路径）：
 
 - 覆盖 bundle 中 `nokoribi-agent-app`、`nokoribi-reviewer`、`nokoribi-channel-core`、`nokoribi-channel-local-test`、`nokoribi-channel-qq-bot`（M8）、`nokoribi-prompt`、`nokoribi-shell-*`、`nokoribi-memory` 与（时区非 null 时）`time-context` 的完整 config。
+- M7 的 channel-core 行显式写入 `trustedChannels = []` 与 `defaultChannelId = "local-test"`；M8 再按 `channel.qqBot.*` 生成 `trustedChannels`/默认渠道。
 - Cordis patch 是行 config 的替换而非深合并，因此 overlay 生成器必须写全该行字段。
 - 启动器启动时按 bundle patch → `NOKORIBI_PATCH` overlay 组合；没有运行时 override 文件。
 - 环境变量由 systemd 注入：

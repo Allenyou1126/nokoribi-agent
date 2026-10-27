@@ -2,7 +2,7 @@
 
 基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下文简称 DSH）的单用户、常驻、长程个人 Agent 的设计文档。
 
-> **状态（2026-10-27）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词与 `/status full`）与 M6（NixOS 部署闭环）的代码已实现；M6 的 NixOS 目标机手工验收清单仍需完整执行并记录。2026-10-27 已在 hkg-dog-darell（NixOS 26.05）做用户态临时部署冒烟：拉取/构建/daemon 启动/测试通道/真实模型对话通过，并发现、修复了 D148（官方 Node wrapper 与 DSH subprocess runner 的兼容缺陷，曾导致 `bash(host)` 全部失败）。**M7（channel-core IM 基础设施扩展）与 M8（真实 IM 适配器：QQ 官方 Bot）的规格已通过（2026-10-27），按用户要求 M7 独立先做、当前暂不启动实现**，见 [17](.spec/17-qq-official-bot.md)。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒、`/status full` 与 NixOS module；但 M5 的 memory 只支持主动检索（**不自动注入**），真实 IM 尚未实现、M6 验收未完成，**不可用作生产服务**。另外，QQ 官方平台已于 2025-04-21 下线主动消息推送，M8 的提醒/通知降级策略已定稿（D161：active 尝试 + 失败 defer 到下次入站）。
+> **状态（2026-10-27）**：M1（骨架与消息闭环）、M2（安全闸与审批）、M3（shell hosts 与 sandbox）、M4（goal 子代理）、M5（memory、schedule、提示词与 `/status full`）、M6（NixOS 部署闭环）与 **M7（channel-core IM 基础设施扩展）** 的代码已实现；M6 的 NixOS 目标机手工验收清单仍需完整执行并记录。2026-10-27 已在 hkg-dog-darell（NixOS 26.05）做用户态临时部署冒烟：拉取/构建/daemon 启动/测试通道/真实模型对话通过，并发现、修复了 D148（官方 Node wrapper 与 DSH subprocess runner 的兼容缺陷，曾导致 `bash(host)` 全部失败）。**M7 已提供被动回复上下文、多 driver 路由、`trustedChannels`、通知 defer 补投（D161）与动作按钮契约预留（D163）；M8（真实 IM 适配器：QQ 官方 Bot）的规格已通过但尚未启动**，见 [17](.spec/17-qq-official-bot.md) 与 [14.8](.spec/14-roadmap.md)。可在本地用测试通道运行，已启用 Auto review、IM 审批/提问、`bash(host)`、disposable sandbox、goal 子代理、memory、定时提醒、`/status full` 与 NixOS module；但 M5 的 memory 只支持主动检索（**不自动注入**），真实 IM 尚未实现、M6 验收未完成，**不可用作生产服务**。另外，QQ 官方平台已于 2025-04-21 下线主动消息推送，M8 的提醒/通知降级策略已定稿（D161：active 尝试 + 失败 defer 到下次入站）。
 >
 > **目标 DSH 版本**：全部 `@deepseek-ai/*` 包固定 `0.2.1-rc.3`，手动整批升级。Nix 包额外保留官方 Node 24.21.0 运行时（D145），以匹配 DSH 的 native addon。
 
@@ -27,7 +27,7 @@
 | [11 模型与成本](.spec/11-models-and-cost.md) | 主/子代理/记忆提炼模型分配、reviewer 双档、图像输入约束、压缩与成本策略 |
 | [12 NixOS 部署](.spec/12-nixos-deployment.md) | flake、NixOS module 选项表、systemd、agenix、sudo、看门狗、状态目录、升级 |
 | [13 测试与运维](.spec/13-testing-and-ops.md) | Vitest 策略、fake driver/LLM、进程级恢复测试、flake checks、日志、`/status`、运维手册 |
-| [14 路线图](.spec/14-roadmap.md) | M1–M6 交付物、M7（channel-core 扩展）、M8（QQ 官方 Bot）、依赖、验收标准、后置项 |
+| [14 路线图](.spec/14-roadmap.md) | M1–M7 交付物、M8（QQ 官方 Bot）待启动、依赖、验收标准、后置项 |
 | [15 待验证项与风险](.spec/15-verification-and-risks.md) | 实现前必须验证的 9 项、风险登记、实现期开放问题、已接受的残余风险 |
 | [16 被取代/否决与术语](.spec/16-superseded-and-glossary.md) | 被撤销或被取代的决策及原因、被否决的方案、术语表 |
 | [17 QQ 官方 Bot（M8）](.spec/17-qq-official-bot.md) | 真实 IM 适配器：规格、平台事实、消息策略、配置、安全、测试与验收（M7 core 扩展为其前置） |
@@ -43,7 +43,7 @@
 
 **做**：thin launcher + 精简 bundle、单主会话持久化、渠道抽象 + 本地测试通道、host router + sandbox/local、auto-review + 审批/提问、memory、schedule、多 goal 子代理、NixOS 部署。
 
-**不做**：真实 IM 适配器（M8 规格已通过：QQ 官方 Bot）、SSH host（M9 后置）、Web UI（含 web-debug）、heartbeat、多人/群聊权限、token 预算、NixOS VM 测试。
+**不做**：真实 IM 适配器（M8 规格已通过但未启动；M7 core 已实现）、SSH host（M9 后置）、Web UI（含 web-debug）、heartbeat、多人/群聊权限、token 预算、NixOS VM 测试。
 
 ## 开发
 
@@ -162,7 +162,7 @@ M6 的包保留官方 Node 24.21.0 二进制，由 wrapper 经 Nix glibc loader 
 
 工具调用会先经过 reviewer。被拒绝时会收到 🔐 提示，回复"允许"或"拒绝"（也可用 1/2）；`ask_user_question` 会发 ❓ 提示。`/permission` 只报告 Auto 预设，v1 不支持切换。reviewer 默认复用主模型；可用 `NOKORIBI_REVIEW_FAST_MODEL` / `NOKORIBI_REVIEW_STRONG_MODEL` 分开配置。
 
-M2 范围见 [14.3](.spec/14-roadmap.md)，M3 实现与已知限制见 [14.4](.spec/14-roadmap.md) 与 [07.12](.spec/07-shell-hosts-and-sandbox.md)，M4 见 [14.5](.spec/14-roadmap.md) 与 [10.12](.spec/10-goals-and-schedule.md)，M5 见 [14.6](.spec/14-roadmap.md)、[10.13](.spec/10-goals-and-schedule.md) 与 [09.5](.spec/09-prompt-and-memory.md)，M6 见 [14.7](.spec/14-roadmap.md) 与 [12](.spec/12-nixos-deployment.md)。图片仍返回 501；`--dump-config` 继续后移。sandbox 是干净/可重置环境，**不是安全隔离边界**；sandbox 内不能 sudo，local 的 sudo 动作仍由 Auto review 审查。M5 的 memory 是主动检索，`/clear` 后不会自动注入旧记忆；定时提醒需要 daemon 常驻。M6 的 NixOS 目标机验收尚未在当前环境执行，不能把本地 `nix flake check` 当作生产验收。
+M2 范围见 [14.3](.spec/14-roadmap.md)，M3 实现与已知限制见 [14.4](.spec/14-roadmap.md) 与 [07.12](.spec/07-shell-hosts-and-sandbox.md)，M4 见 [14.5](.spec/14-roadmap.md) 与 [10.12](.spec/10-goals-and-schedule.md)，M5 见 [14.6](.spec/14-roadmap.md)、[10.13](.spec/10-goals-and-schedule.md) 与 [09.5](.spec/09-prompt-and-memory.md)，M6 见 [14.7](.spec/14-roadmap.md) 与 [12](.spec/12-nixos-deployment.md)，M7 见 [14.8](.spec/14-roadmap.md)、[06](.spec/06-channel-and-interaction.md) 与 [D162/D163](.spec/03-decision-log.md)。图片仍返回 501；`--dump-config` 继续后移。sandbox 是干净/可重置环境，**不是安全隔离边界**；sandbox 内不能 sudo，local 的 sudo 动作仍由 Auto review 审查。M5 的 memory 是主动检索，`/clear` 后不会自动注入旧记忆；定时提醒需要 daemon 常驻。M6 的 NixOS 目标机验收尚未在当前环境执行，不能把本地 `nix flake check` 当作生产验收。
 
 ## 重要约定
 

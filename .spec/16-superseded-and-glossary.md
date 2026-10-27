@@ -49,7 +49,7 @@
 - 控制台/fake 作为产品渠道（最终只做本地测试通道用于验收）。
 - 流式输出/编辑消息（用户未选；v1 不做）。
 - 多用户/群聊支持（后置，未设计）。
-- 真实 IM 适配器进 v1（M8 才实现；v1 只有本地测试通道）。
+- 真实 IM 适配器进 v1（M8 才实现；M7 core 已实现，v1 仍只有本地测试通道）。
 - 直接挂官方 `@tencent-connect/dsh-qqbot` 作为 QQ 适配层（端到端 agent 插件、绕过 `ctx.channels`/审批/outbox；硬依赖 UNLICENSED `qqbot-connector`，peer semver 与 `0.2.1-rc.3` 不匹配）→ M8 自研 driver（D154）。
 - M8 用 WebHook 接入 QQ（需要公网回调/TLS 终止，与当前无入站端口部署冲突）→ 先 WebSocket，WebHook 后置（D150）。
 - heartbeat/定时主动唤醒（不做）。
@@ -160,6 +160,11 @@
 | 被动消息 | 携带事件 `msg_id`（或 `event_id`）的回复；受窗口与次数限制 |
 | 主动消息 | 不携带 `msg_id` 的主动发送；配额受限，且官方已于 2025-04-21 下线 |
 | replySeq | channel-core 为同一被动上下文分配的 `msg_seq`（1..N，持久、重试稳定） |
+| turnChat | 当前轮的来源 chat；回复优先路由到它，避免多 driver 串渠道 |
+| deferred notice | active 不可投时暂存的 per-chat 通知；下一次该 chat 入站以“⚠️ 补发”被动回复补投 |
+| OutboundAction | 平台无关的消息动作按钮描述（D163 预留；M7 不渲染） |
+| InboundAction | driver 归一化的按钮/菜单回调元数据；必须同时提供 text fallback |
+| defaultChatId（driver） | driver 在无入站上下文时可寻址的 chat，用于通知的 active-capable 回退 |
 | trusted channel | channel-core 跳过静态 allowlist、由 driver 自行保证准入的渠道（M8：`qq-bot`） |
 | ingress | 入站处理管线（allowlist/去重/命令/注入） |
 | outbox | 持久化出站队列，at-least-once |

@@ -11,7 +11,7 @@
 
 ## 5.2 状态文件
 
-`$DSH_HOME/state/agent-state.json`（`writeJsonAtomic`，0600）。M1 还持久化 `state/outbox.json`、`state/ingress-seen.json`；`run/agent.lock` 是 O_EXCL 持有的单实例锁，`run/ready.json` / `run/startup-error.json` 供 launcher 与进程测试握手。
+`$DSH_HOME/state/agent-state.json`（`writeJsonAtomic`，0600）。M1 还持久化 `state/outbox.json`、`state/ingress-seen.json`；`run/agent.lock` 是 O_EXCL 持有的单实例锁，`run/ready.json` / `run/startup-error.json` 供 launcher 与进程测试握手。M7 的 outbox 文档新增 `deferredNotices[]` 与每条出站的 `replyTo/replyReceivedAt/replySeq/actions` 可选字段（旧文件兼容），不新增状态文件。
 
 字段草案：
 
@@ -62,11 +62,11 @@ M1–M4 实现顺序：
    - 否则 `ctx.agents.create({ sessionId: "main-"+uuid, meta.cwd=workspace })`。
    - 创建/恢复后立即 `permissionPresets.set(session, "auto")`，校验 `current()==="auto"`；失败则 startup-error，不降级为无审查。注册只读 `/permission` scoped 命令。
    - 创建/恢复后立即 flush，随后写回 state。
-6. 安装 `session/event` 监听、注册命令、安装 status provider，再 `channels.attachRuntime()`。
+6. 安装 `session/event` 监听、注册命令、安装 status provider，再 `channels.attachRuntime()`。M7：attach 后立即用 `state.lastActiveChat` 调 `channels.restoreActiveChat()`；session listener 处理 `turn/start` 时调用 `channels.noteTurnStart()` 提升排队来源 chat。
 7. goal 恢复（M4）：先 `listChildren` 校验 tracked 子代理，再对 active goal 逐个 `sendMessage` 冷恢复、等待 live、`ctx.goals.resume` re-arm；失败保留 tracked 并通知。
 8. schedule 恢复（M5）：上游 `dsh-schedule` 从 `$DSH_HOME/storage/schedule.json` 读取任务；逾期任务通过 `sessionController.resolveAgent()` 等待主会话 ready 后交付。桥接在创建/恢复 main 后 bind，在 `drainBuffered()` 之后 markReady，避免在 session listener 安装前开轮。
-9. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。
-10. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。
+9. `channels.resumeOutbox()` 重发 pending（at-least-once）；若 `initialize()` 清理了上次进程的 pending interaction，发送一次失效通知。M7：该通知按恢复后的 chat/active 能力路由，QQ-only 且无 active 时转 deferred，下次入站补投。
+10. 非 clean/corrupt 时发送重启或状态损坏通知；resume 找不到会话时发送新会话通知。M7：通知目标按 D162 的路由顺序选择，不再依赖全局 `lastActiveChat` 串渠道。
 11. `channels.drainBuffered()` 放行启动期入站；随后 `sessionController.markReady()`、写 `run/ready.json`；若 systemd `NOTIFY_SOCKET` 存在，再发送 `READY=1` 并启动 watchdog（M6，D144）。
 
 > V4 验证结果（M1）：resume 会恢复 `next-turn` inbox，但**不会自动开启新轮**；下一次用户消息或显式唤醒会带上排队消息。M1 不额外重放，后续里程碑可加系统提示唤醒。
@@ -148,6 +148,8 @@ M1/M2 实际流程：
 - 恢复失败（goal 子代理冷恢复失败）。
 
 用户主动 `/stop`、正常 `/clear`、正常每轮回复不产生系统通知。
+
+M7 路由与降级（D159/D161/D162）：通知目标优先 `turnChat ?? lastActiveChat`；同 chat 不可投时回退其他有 `defaultChatId` 的 active-capable driver；都没有时对已知 chat 入 `deferredNotices`，下一次该 chat 入站时以被动回复补投（“⚠️ 补发”）；无任何 chat 可寻址才 warn + drop。`/status` 增加 `channels` 与 `deferredNotices` 便于观察。
 
 ## 5.10 主会话与消息边界
 

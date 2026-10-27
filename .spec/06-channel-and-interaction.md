@@ -10,20 +10,53 @@
 ## 6.2 ChannelDriver 契约
 
 ```ts
+type OutboxKind = 'reply' | 'notice' | 'interaction';
+type OutboundActionKind = 'callback' | 'link' | 'command';
+
+interface OutboundAction {        // D163 预留；M7 不渲染
+  id: string;
+  label: string;
+  kind: OutboundActionKind;
+  payload?: string;
+  url?: string;
+  style?: 'default' | 'primary' | 'danger';
+  disabled?: boolean;
+}
+
+interface ReplyContext { messageId: string; receivedAt: number; seq: number; }
+
+interface OutboundContent {
+  kind: OutboxKind;
+  text: string;
+  deliveryId: number;             // outbox seq，跨重试/重启稳定
+  attempt: number;
+  reply?: ReplyContext;
+  actions?: OutboundAction[];
+}
+
 interface ChannelCapabilities {
   markdown: 'none' | 'basic' | 'full';
-  maxTextLength: number;        // 0 表示不限
+  maxTextLength: number;          // 0 表示不限
   inboundImages: boolean;
-  outboundFiles: boolean;       // v1 暂不实现文件发送
+  outboundFiles: boolean;
+  activeMessages?: boolean;       // 缺省 true
+  maxRepliesPerReply?: number;    // 缺省/0 不限
+  outboundActions?: boolean;      // 缺省 false（D163）
+  inboundActions?: boolean;       // 缺省 false（D163）
 }
 
 interface ChannelDriver {
   readonly id: string;
   readonly capabilities: ChannelCapabilities;
+  readonly defaultChatId?: string; // 无入站上下文时可寻址的 chat
   start(ctx: { onInbound(msg: InboundMessage): void }): Promise<void>;
   stop(): Promise<void>;
-  send(chatId: string, content: { kind: 'text'; text: string }): Promise<SentRef>;
+  send(chatId: string, content: OutboundContent): Promise<SentRef>;
+  canDeliver?(chatId: string, content: Pick<OutboundContent, 'kind' | 'reply'>): boolean;
+  health?(): { state: 'online' | 'connecting' | 'offline'; detail?: string };
 }
+
+interface InboundAction { id: string; payload?: string; messageId?: string; }
 
 interface InboundMessage {
   channelId: string;
@@ -33,6 +66,7 @@ interface InboundMessage {
   text?: string;
   images?: { mime: string; data: Uint8Array }[];
   replyTo?: string;
+  action?: InboundAction;       // 按钮/菜单回调（D163 预留）
   receivedAt: number;
   delivery?: 'steer' | 'followup' | 'interrupt';  // 代码层参数
 }
@@ -43,17 +77,18 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 设计要点：
 
 - driver 负责平台差异（连接、签名、消息 id、媒体下载、重连）；core 不感知平台。
-- `capabilities` 用于降级：`markdown: 'none'` 时 core 去格式化；`inboundImages: false` 时拒绝/忽略图片并告知；`maxTextLength` 用于分段。
+- `capabilities` 用于降级：`markdown: 'none'` 时 core 去格式化；`inboundImages: false` 时拒绝/忽略图片并告知；`maxTextLength` 用于分段；`outboundActions` 决定 core 是否下发 `actions`。
 - v1 的 driver 只需要文本；`outboundFiles` 预留。
 - 真实 IM 适配器：M8 先接 QQ 官方 Bot（见 [17](17-qq-official-bot.md)）；其他平台后置。
-- **M7 扩展（见 17.6.2，D153/D158/D159）**：`OutboundContent` 增加 `kind/deliveryId/attempt/reply`；`ChannelCapabilities` 增加可选 `activeMessages/maxRepliesPerReply`；`ChannelDriver` 增加可选 `canDeliver()`；channel-core 增加 `trustedChannels`/`defaultChannelId` 与 outbox 持久字段 `replyTo/replyReceivedAt/replySeq`。
+- **M7 已实现（D153/D158/D159/D161/D163）**：`OutboundContent` 扩展、`ReplyContext`、`NonRetryableDeliveryError`/`PassiveReplyExpiredError`、capabilities、`canDeliver()`/`health()`/`defaultChatId?`；channel-core 增加 `trustedChannels`/`defaultChannelId`、`turnChat` 路由、通知 defer 与 outbox 持久字段 `replyTo/replyReceivedAt/replySeq`/`actions`/`deferredNotices`。
+- 动作按钮只是扩展空间（6.11）：`actions` 只附在最后一段；不支持 `outboundActions` 的 driver 不会收到；入站 `action` 必须同时带 `text` fallback，M7 不解释 `action`。
 
 ## 6.3 入站处理顺序
 
 严格按以下顺序：
 
 1. **driver 回调**：标准化为 `InboundMessage`。
-2. **allowlist**：单用户白名单（senderId + chatId）；不在白名单的消息只记日志、丢弃。
+2. **allowlist**：单用户白名单（senderId + chatId）；不在白名单的消息只记日志、丢弃。`trustedChannels` 中的渠道跳过该检查（由 driver 依赖平台准入，M7/D152），启动时逐条 warn。
 3. **幂等去重**：以 `channelId + messageId` 为键，持久记录（`$DSH_HOME/state/ingress-seen.json` 或等价有界存储）；重复消息直接忽略。
    - 先记录再注入（避免崩溃后重复处理）；极小窗口内崩溃可能丢弃一条消息，用户可重发。
 4. **命令解析**：以 `/` 开头进入命令分发（见 6.5）。未知命令直接回错误，不进入模型。
@@ -125,6 +160,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 - 待应答期间 `/steer` 不打断待应答：只把文本投递为 steer，审批/提问继续等；真正注入要等轮次恢复（D59）。
 - `/stop`、`/clear`、shutdown 取消轮次时，所有待应答中止并通知；`/clear` 同时尽量抑制未发送的旧提示。
 - 实现补充：非法回复重发帮助文本，但不重置总超时；审批发送失败返回 `unavailable`，提问发送失败返回 `NO_PROVIDER`，都 fail closed。
+- **M7 可投递性预检**：`sendPrompt` 先解析目标 chat，调用 driver `canDeliver(chatId,{kind:'interaction',reply})`；无 driver、不可投或被动槽位耗尽时立即抛错，broker 按上述 fail-closed 路径结算，不再静默等 60s/300s 超时。
 
 ### 子代理审批
 
@@ -167,11 +203,12 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 ### outbox
 
 - 持久化条目：`{seq, channelId, chatId, kind, text, interactionId?, state, attempts, nextAttemptAt, createdAt, sentAt}`，落盘在 `$DSH_HOME/state/outbox.json`（M1）；`nextSeq` 单调，历史保留最近 `outboxHistoryLimit` 条终态记录，pending 不裁剪。
-- **M7 扩展（D153/D158）**：条目增加可选 `replyTo/replyReceivedAt/replySeq`，用于平台被动回复上下文；旧 outbox 文件无这些字段时视为“无被动上下文”。
-- 按 seq 全局有序投递；失败指数退避重试；超过最大尝试次数记录错误并丢弃（同时 journald 告警，并在存在 active-capable 渠道时发系统通知；M7 收口当前“只 log”的偏差）。
-- **at-least-once**（D132）：发送成功后落盘标记；崩溃可能造成重复发送，接受。被动回复以稳定 `(msg_id, msg_seq)` 重试由平台去重（QQ `40054005` 视为成功）。
+- **M7 已实现（D153/D158/D162/D163）**：条目增加可选 `replyTo/replyReceivedAt/replySeq`、`actions`，outbox 文档增加 `deferredNotices[]`；旧 outbox 文件缺字段时视为“无被动上下文/无动作/无延迟通知”。`replySeq` 由 retained items 的 `(channelId,chatId,replyTo)` max+1 推导，重试/重启复用同一值。
+- **actions（D163）**：动作只附在最后一段；`outboundActions !== true` 的 driver 在 enqueue 时剥离并 warn；deferred 通知/回复不保存 actions（回调已过期）；M7 没有生产者。
+- 按 seq 全局有序投递；失败指数退避重试；超过最大尝试次数记录错误并丢弃（同时 journald 告警，并在存在 active-capable 渠道时发系统通知；M7 已收口“只 log”的偏差：reply 耗尽合并发一条通知，notice 失败转 defer 或记录 error）。
+- **at-least-once**（D132）：发送成功后落盘标记；崩溃可能造成重复发送，接受。被动回复以稳定 `(msg_id, msg_seq)` 重试由平台去重（QQ `40054005` 视为成功）。`PassiveReplyExpiredError` 由 driver 抛出时，core 清掉 reply 字段后按主动消息重试一次。
 - 重启后从持久 outbox 继续；已解决/中止交互的提示跳过：pump 检查 broker terminal 集合，未发送项标记失败；启动时残留 pending interaction 统一标记失败并通知。
-- 多 chat 路由（M7 修复，D159）：回复回本轮来源 chat（`turnChat`）；系统通知/提醒优先 `turnChat ?? lastActiveChat` 中的 active-capable 渠道，否则选择第一个 active-capable driver；QQ-only 且无入站上下文时按 D161 降级（active 尝试 + 失败 defer 到下次入站）。
+- 多 chat 路由（M7 已实现，D159/D162）：回复回本轮来源 chat（`turnChat`，运行中显式 followup 由 daemon `turn/start` 提升）；通知/提醒按“同 chat 可投 → 其他有 `defaultChatId` 的 active-capable driver → 同 chat defer → drop”选择；无可用入站上下文的 reply 在 active 失败时也按 D161 defer；交互提示不 defer。
 - 缺 driver 的条目不再无限 pending：目标渠道未注册时立即标记 failed 并记录 error。
 
 ## 6.8 本地测试通道 HTTP
@@ -261,10 +298,20 @@ M8 先接 QQ 官方 Bot，完整规格（平台事实、被动回复策略、配
 | 命令执行失败 | 回错误文本，不进模型 |
 | agent 不存在/正在 `/clear` | 消息缓冲，新会话 ready 后处理 |
 | driver 断开 | outbox 保留，重连后继续；入站由平台侧重投/driver 处理；QQ 场景按 17.3 重连/失败分类 |
-| 被动回复窗口过期（M8） | 按能力回退主动消息（`auto`）；失败则记录 error，按 D161 保留为 pending 并在下次入站补投 |
-| outbox 发送失败超上限 | 日志记录并丢弃；存在 active-capable 渠道时发系统通知（避免无限重试）；QQ-only 无主动能力时按 D161 保留为 pending，下次入站补投 |
-| 平台拒绝（永久错误，M8） | driver 抛 `NonRetryableDeliveryError`，core 立即 failed，不重试 |
+| 被动回复窗口过期（M8） | driver 抛 `PassiveReplyExpiredError`；core 清 reply 后按主动重试一次。仍失败且无上下文时按 D161 defer（notice/reply），有上下文时记 failed（17.5.2 的接受边界） |
+| outbox 发送失败超上限 | 日志记录；reply 耗尽在存在 active-capable 渠道时合并发一条系统通知；可 defer 的 notice/无上下文 reply 转 deferred 队列并在下次入站补投；其余置 failed |
+| 平台拒绝（永久错误，M8） | driver 抛 `NonRetryableDeliveryError`，core 立即 failed，不重试；可 defer 的无上下文 notice/reply 先转 deferred |
+| 按钮/回调入站（D163） | driver 归一化为 `InboundMessage.action` + 必需的 `text` fallback；M7 不解释 action，纯回调无文本仍按 `empty` 丢弃 |
 | 空 assistant 回复 | 不发消息 |
-| 超长回复 | 分段；每段独立进入 outbox |
+| 超长回复 | 分段；每段独立进入 outbox；有被动上下文时按 `maxRepliesPerReply` 截断并加省略标记 |
 | 审批/提问超时 | 拒绝/工具报错 |
 | 多个待应答 | 串行展示 |
+
+## 6.11 动作按钮扩展（D163，M7 只预留）
+
+- 背景：QQ 官方 Bot 支持消息内联键盘（`keyboard`）与 `INTERACTION_CREATE` 回调；其他平台也有 inline button/component。为避免未来接入时迁移 core 契约与 outbox，M7 只定义通用模型与持久化。
+- 出站：`OutboundAction{id,label,kind:'callback'|'link'|'command',payload?,url?,style?,disabled?}`；`OutboundContent.actions` 只下发给 `capabilities.outboundActions===true` 的 driver；同一消息分段时只附在最后一段；无正文时 actions 不单独成消息；`sendReply`/`notify` 预留可选 `actions` 参数（M7 无生产者）。
+- 入站：`InboundAction{id,payload?,messageId?}`；driver 必须同时提供 `text` fallback（按钮 label、命令或“允许/拒绝”），core 的文本管线照常工作；M7 不把 action 路由给 broker，按钮审批属后续增强。
+- 持久化：outbox 条目保存 `actions`（重试/重启保留）；deferred 通知/回复丢弃 actions，补投不带按钮。
+- 平台映射（M8+，不实现）：QQ `keyboard.content.rows[].buttons[]`；`action.type` 0=link、1=callback、2=command；`label` ≤10 字符、`style`、`permission`、`modal`、`event_id` 与 `PUT /interactions/{id}` ack 由 QQ driver/后续里程碑处理；事实见 `.spec/notes/qq-official-bot-api-facts.md` §5.6/§6.5。
+- 明确不做：按钮渲染、`INTERACTION_CREATE` 订阅（intent `1<<26`）、互动回调应答、按钮审批 UX。

@@ -1,7 +1,7 @@
 # 17 真实 IM 适配器：QQ 官方 Bot
 
-> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（先做）**、**M8 = QQ 官方 Bot 适配器**、M9 = SSH host；当前**暂不启动实现**。
-> 用户已确认：协议层采用官方 SDK（D154）；channel-core 扩展拆成独立里程碑先做（D158）；规格通过但暂不实现。
+> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（已实现，2026-10-27）**、**M8 = QQ 官方 Bot 适配器（尚未启动）**、M9 = SSH host。
+> 用户已确认：协议层采用官方 SDK（D154）；channel-core 扩展拆成独立里程碑先做（D158）。M7 实现口径见 D162；动作按钮扩展空间见 D163（仅契约/持久化，未实现）。
 > 调研材料（工作稿，评审后决定是否入库）：
 > - 平台事实表：[.spec/notes/qq-official-bot-api-facts.md](notes/qq-official-bot-api-facts.md)（807 行，S1–S41 来源）
 > - 代码接口映射：[.spec/notes/channel-qq-mapping.md](notes/channel-qq-mapping.md)（893 行，含 A2 契约草案与文件清单）
@@ -28,7 +28,7 @@
 - 群全量消息（`GROUP_MESSAGE_CREATE`，需群主单独授权）；只接 `GROUP_AT_MESSAGE_CREATE`。
 - 频道（guild）/文字子频道、频道私信；多 Bot/多账号；WebHook 接入方式。
 - 入站图片/附件、出站富媒体、Markdown 图片转存（图片链路属 V8，另立里程碑）。
-- 流式消息、消息按钮/内联键盘、指令面板、互动回调（`INTERACTION_CREATE`）。
+- 流式消息、消息按钮/内联键盘、指令面板、互动回调（`INTERACTION_CREATE`）。M8 不实现；M7 已预留通用动作按钮契约与 outbox 持久化（D163），按钮审批/回调应答留待后续增强。
 - 驱动级白名单/配对（D152，用户已决策）。
 - C2C `is_wakeup` 互动召回（作为后续提醒降级通道评估）。
 
@@ -249,7 +249,7 @@ channel.qqBot = {
 - systemd：`clientSecret` 由 `environmentFile` 注入；不写入 store/overlay。`appId` 写入 overlay 行 config。
 - 本地开发：`.env.example` 增加 QQ 变量（enabled/appId/clientSecret/sandbox/markdown/上限/测试域名覆盖）。
 
-### 17.6.2 channel-core 最小扩展（D158，独立里程碑 M7）
+### 17.6.2 channel-core 最小扩展（D158，M7 已实现）
 
 按映射文档 §3/§6.2 落地，单独提交并配单测：
 
@@ -328,11 +328,11 @@ channel.qqBot = {
 ### 17.10.1 里程碑拆分与顺序
 
 **M7（独立里程碑，先做）：channel-core IM 基础设施扩展**
-1. P7a：contract/outbox/service/format/schemas 扩展（reply context、`replySeq`、`NonRetryableDeliveryError`、`canDeliver`、capabilities）；
-2. P7b：`trustedChannels`/`defaultChannelId`、per-turn 多 driver 路由、notice 降级、缺 driver 短路、可选 channel health；
+1. P7a：contract/outbox/service/format/schemas 扩展（reply context、`replySeq`、`NonRetryableDeliveryError`、`canDeliver`、capabilities、actions 扩展空间）；
+2. P7b：`trustedChannels`/`defaultChannelId`、per-turn 多 driver 路由、notice 降级/defer、缺 driver 短路、可选 channel health；
 3. P7c：`channel-local-test` 适配 + channel-core 单测/集成回归；不引入 QQ 代码，不新增外部依赖。
-4. P7d：`pnpm check`、`pnpm test`、`nix flake check`；文档回写（05/06/13 等）。
-> M7 完成后，`local-test` 行为保持兼容，多 driver 路由与 outbox 新字段可用。
+4. P7d：`pnpm check`、`pnpm test`、`pnpm test:process`、`nix flake check`；文档回写（03/05/06/13/14/15/16）。
+> **状态：M7 已完成（2026-10-27）**。`local-test` 行为保持兼容，多 driver 路由、outbox 新字段、通知 defer 与 actions 契约可用；实现记录见 [14.8](14-roadmap.md)。
 
 **M8（本规格，M7 之后）：QQ 官方 Bot 适配器**
 1. P8a：`channel-qq-bot` 基础：config + 官方 SDK `./protocol` 薄封装（token/REST/WS）+ 单测。

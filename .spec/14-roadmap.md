@@ -232,28 +232,38 @@
 - 本次仅覆盖：拉取/构建、daemon 启动、测试通道 `/v1/status`、真实模型对话、bash 缺陷复现与修复验证。12.12 清单其余项（审批、sandbox 生命周期、goal、memory、schedule、watchdog、重启恢复、升级演练）仍未在目标机执行。
 - 附带观察（2026-10-27 已修复）：shutdown 日志偶发 `shutdown flush failed ... flush on a closed handle`。根因是 Cordis 并发 teardown 中 persistence 先关闭写句柄；该后端 `close()` 会先 drain 已路由事件，数据未丢（`cleanShutdown=true`、session JSONL 完整）。daemon 现在把该错误识别为已持久化并降为 debug；m1 进程测试断言干净退出不再出现该错误。
 
-## 14.8 M7 channel-core IM 基础设施扩展（规格通过，暂不实现）
+## 14.8 M7 channel-core IM 基础设施扩展（已实现）
 
-> 状态：**规格已通过（2026-10-27），用户要求暂不启动实现**；按 D149，本项拆为独立里程碑先做，是 M8 的前置。规格要点见 [17](17-qq-official-bot.md) 17.6.2 与 `.spec/notes/channel-qq-mapping.md` §3/§6.2。
+> 状态：**代码已实现（2026-10-27）**；按 D149，本项是 M8 的前置。实现口径见 D162/D163，规格要点见 [17](17-qq-official-bot.md) 17.6.2 与 `.spec/notes/channel-qq-mapping.md` §3/§6.2。
 
 ### 交付物
 
-- `contract.ts`：`ReplyContext`、`OutboundContent` 扩展（kind/deliveryId/attempt/reply）、`NonRetryableDeliveryError`、capabilities `activeMessages`/`maxRepliesPerReply`、`canDeliver?()`。
-- `service.ts`：`trustedChannels`/`defaultChannelId`、`lastInboundByChat`/`turnChat`、per-turn 多 driver 路由、notice 的 active-capable 回退/丢弃、缺 driver 短路失败、可选 channel health。
-- `outbox.ts` + `shared/src/schemas.ts`：持久化 `replyTo`/`replyReceivedAt`/`replySeq`（旧文件兼容）。
-- `format.ts` 分段前缀预留；`channel-local-test` 适配 + 单测/集成回归。
-- **notice defer 等待语义（D161）**：active 不可用时通知保留为 per-chat pending，下一次入站以被动回复补投（有上限/清理）。
+- `contract.ts`：`ReplyContext`、`OutboundContent` 扩展（kind/deliveryId/attempt/reply/actions）、`NonRetryableDeliveryError`、`PassiveReplyExpiredError`、capabilities `activeMessages`/`maxRepliesPerReply`/`outboundActions`/`inboundActions`、`canDeliver?()`/`health?()`/`defaultChatId?`。
+- `service.ts`：`trustedChannels`/`defaultChannelId`、`lastInboundByChat`/`turnChat`/`pendingTurnChats`、per-turn 多 driver 路由、notice 的 active-capable 回退与 defer 补投、缺 driver 短路失败、channel health、`restoreActiveChat`。
+- `outbox.ts` + `shared/src/schemas.ts`：持久化 `replyTo`/`replyReceivedAt`/`replySeq`、`actions` 与 `deferredNotices`（旧文件兼容）。
+- `format.ts` 分段前缀预留、`maxChunks` 截断；`channel-local-test` 适配 + 单测/集成回归。
+- **notice defer 等待语义（D161）**：active 不可用时通知保留为 per-chat pending，下一次入站以被动回复补投（有上限/TTL 清理）。
+- **动作按钮扩展空间（D163）**：通用 `OutboundAction`/`InboundAction`、能力位与 outbox 持久化；只预留，不实现按钮渲染/回调。
 - 不引入 QQ 代码、不新增外部依赖。
 
 ### 验收
 
-- `pnpm check`、`pnpm test`、`nix flake check` 通过；local-test 既有行为兼容。
-- 新字段/路由/错误语义有单测与集成覆盖；outbox 旧文件可读。
+- `pnpm check`、`pnpm test`、`pnpm test:process`、`nix flake check` 通过；local-test 既有行为兼容。
+- 新字段/路由/错误语义/actions 有单测与集成覆盖；outbox 旧文件可读。
 
 ### 依赖/风险
 
 - 依赖 M1–M6 代码基线。
 - 风险：core 契约改动影响本地通道与既有测试；需独立提交、分批评审。
+
+### M7 实现记录（2026-10-27）
+
+- 已实现契约/outbox/format/routing/service 的扩展；新增 `routing.ts` 纯函数与 `deferredNotices` 持久队列（与 outbox 同文档，不新增状态文件）。
+- 已实现 per-turn 路由（`turnChat` + daemon `turn/start` 钩子）、`trustedChannels`、`defaultChannelId`、`restoreActiveChat`、缺 driver 立即 failed、`NonRetryableDeliveryError`/`PassiveReplyExpiredError`、被动槽位截断、通知 active 回退 + defer 补投、outbox 耗尽通知。
+- 已验证：`pnpm check`；`pnpm test` 44 文件/328 测试；`pnpm test:process` 6 文件/42 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过。
+- 实现口径（D162）：defer 覆盖 `kind=notice` 及“无可用入站上下文”的 reply；通知优先同 chat，其次其他 active-capable（`defaultChatId`），再次 defer，最后 drop；`lastActiveChat` 恢复不受 active 能力限制；deferred 补投每条 1 个被动槽位并加“⚠️ 补发”。
+- 动作按钮（D163）：只落契约、能力位与 outbox 持久化；M7 没有生产者，deferred 通知/回复丢弃 actions。
+- 未完成/后置：M8 QQ driver、真实平台事实门禁、按钮渲染与 `INTERACTION_CREATE`、图片链路、M6 目标机 12.12 清单。
 
 ## 14.9 M8 真实 IM 适配器：QQ 官方 Bot（规格通过，M7 后实现）
 
@@ -281,6 +291,7 @@
 ## 14.10 后置（v1 之外）
 
 - **M9 SSH host**（原 M7，因 D149 两次顺延）：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。
+- **交互按钮/动作回调**：M7 已预留 `OutboundAction`/`InboundAction` 契约与 outbox 持久化（D163）；QQ 内联键盘、`INTERACTION_CREATE`、`PUT /interactions/{id}` 应答与按钮审批留给 M8 后置增强。
 - **真实 IM 适配器（第二平台）**：Telegram/Discord 等其他 `ChannelDriver` 实现；sender/chat 白名单细化；图片下载；平台限速/长消息。
 - **heartbeat/主动唤醒**：当前明确不做。
 - **多人/群聊权限**：需要身份、权限、审计、隔离重新设计。
