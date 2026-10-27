@@ -260,7 +260,7 @@
 
 - 已实现契约/outbox/format/routing/service 的扩展；新增 `routing.ts` 纯函数与 `deferredNotices` 持久队列（与 outbox 同文档，不新增状态文件）。
 - 已实现 per-turn 路由（`turnChat` + daemon `turn/start` 钩子）、`trustedChannels`、`defaultChannelId`、`restoreActiveChat`、缺 driver 立即 failed、`NonRetryableDeliveryError`/`PassiveReplyExpiredError`、被动槽位截断、通知 active 回退 + defer 补投、outbox 耗尽通知。
-- 已验证：`pnpm check`；`pnpm test` 44 文件/328 测试；`pnpm test:process` 6 文件/42 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过。
+- 已验证：`pnpm check`；`pnpm test` 44 文件/328 测试；`pnpm test:unit` 42 文件/314 测试；`pnpm test:process` 6 文件/42 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过。flake unit 使用 `pnpm test:unit`，不跑 `tests/integration`。
 - 实现口径（D162）：defer 覆盖 `kind=notice` 及“无可用入站上下文”的 reply；通知优先同 chat，其次其他 active-capable（`defaultChatId`），再次 defer，最后 drop；`lastActiveChat` 恢复不受 active 能力限制；deferred 补投每条 1 个被动槽位并加“⚠️ 补发”。
 - 动作按钮（D163）：只落契约、能力位与 outbox 持久化；M7 没有生产者，deferred 通知/回复丢弃 actions。
 - 未完成/后置：M8 QQ driver、真实平台事实门禁、按钮渲染与 `INTERACTION_CREATE`、图片链路、M6 目标机 12.12 清单。

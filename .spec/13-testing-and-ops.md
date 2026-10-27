@@ -24,7 +24,7 @@ M5 落点：`packages/memory/test/` 覆盖 frontmatter、检索/排序、upsert/
 
 M6 落点：`packages/shared/test/systemd.test.ts` 覆盖 notifier no-op、READY/WATCHDOG/STOPPING 参数、`WATCHDOG_USEC` 间隔与失败路径；`packages/shared/test/log.test.ts`/`paths.test.ts` 覆盖 `NOKORIBI_LOG_LEVEL`、`homeDir`；`packages/agent-app` 与 bundle 覆盖 `goalDefaultMaxRounds`；`packages/channel-local-test`/`shell-host-*` 覆盖 `enabled`；`tests/process/m6.test.ts` 用临时 fake `systemd-notify` 脚本验证 READY/心跳/STOPPING，并验证默认 goal 轮次。Flake 侧：`package`、`package-smoke`、`unit`、`module-eval`；NixOS 12.12 仍为手工。
 
-M7 落点（已实现，2026-10-27）：`packages/channel-core/test/` 的 outbox/format/routing 单测覆盖 reply/actions 持久化、旧文件兼容、`replySeq` 分配、deferred TTL/上限/移除、分段前缀预留与 `maxChunks` 截断、通知目标选择；`tests/integration/m7-channel-routing.test.ts` 用双 FakeDriver + `dsh-agent-loop-testkit` 覆盖 per-turn 路由、`trustedChannels`、notice active 回退/defer 补投、`NonRetryableDeliveryError`、`PassiveReplyExpiredError`、缺 driver、槽位截断、`restoreActiveChat`、health 与 actions；`tests/integration/m2-child-approval.test.ts` 同步新 `send()` 签名。实测：`pnpm test` 44 文件/328 测试；`pnpm test:process` 6 文件/42 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过。
+M7 落点（已实现，2026-10-27）：`packages/channel-core/test/` 的 outbox/format/routing 单测覆盖 reply/actions 持久化、旧文件兼容、`replySeq` 分配、deferred TTL/上限/移除、分段前缀预留与 `maxChunks` 截断、通知目标选择；`tests/integration/m7-channel-routing.test.ts` 用双 FakeDriver + `dsh-agent-loop-testkit` 覆盖 per-turn 路由、`trustedChannels`、notice active 回退/defer 补投、`NonRetryableDeliveryError`、`PassiveReplyExpiredError`、缺 driver、槽位截断、`restoreActiveChat`、health 与 actions；`tests/integration/m2-child-approval.test.ts` 同步新 `send()` 签名。实测：`pnpm test` 44 文件/328 测试；`pnpm test:unit` 42 文件/314 测试；`pnpm test:process` 6 文件/42 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过。
 
 M8 落点（待启动，QQ 官方 Bot，规格见 17）：`packages/channel-qq-bot/test/` 覆盖事件归一化（C2C/群 @、忽略全量事件/附件/机器人消息）、被动优先/`replySeq`/超窗回退、错误码分类、频控与配置。集成测试用 fake WS + fake REST + channel-core + scripted LLM 覆盖审批/命令/去重/超窗；进程级新增 `tests/process/m8-qq.test.ts`（零依赖 fake QQ server：token/发送 HTTP + WS 握手/帧）覆盖启动、消息闭环、重启恢复、outbox 重发、网关断线重连、SIGTERM。真实 Bot 按 17.8.2 手工验收，不进入 flake。
 
@@ -75,7 +75,7 @@ M8 落点（待启动，QQ 官方 Bot，规格见 17）：`packages/channel-qq-b
 
 - `checks.<system>.package`：构建发行版（official Node runtime + 生产依赖）。
 - `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）。
-- `checks.<system>.unit`：`pnpm build` + `pnpm test`；在 Nix sandbox 内运行包单元/进程内集成测试。
+- `checks.<system>.unit`：`pnpm build` + `pnpm test:unit`；只跑 `packages/*/test`（不含 `tests/integration`，后者在本地 `pnpm test` 运行；M7 起用 `vitest.unit.config.ts` 固定该边界）。
 - `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`（M8 增加 `nokoribi-channel-qq-bot` 行与 `trustedChannels`）。
 - 本地运行：`nix flake check`（当前系统）。NixOS VM 测试不做（D130）；12.12/12.13 手工清单仍必须执行。
 

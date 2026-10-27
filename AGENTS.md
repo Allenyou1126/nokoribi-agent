@@ -22,7 +22,7 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 - oxfmt（格式化）、oxlint（lint）、`tsc --noEmit`（类型检查）。
 - 工具配置在根目录 `oxfmt.config.ts`、`oxlint.config.ts`、`tsconfig.json`；不要把配置挪到 CLI flag。
 - 只能通过 `pnpm run <script>` 或 `pnpm <script>` 执行工具，**禁止直接执行 `node_modules` 下的二进制**（如 `./node_modules/.bin/oxlint`）。
-- tsdown 构建、Vitest 测试；`pnpm test:process` 会先构建再跑进程级场景。
+- tsdown 构建、Vitest 测试；`pnpm test:process` 会先构建再跑进程级场景；`pnpm test:unit` 是 flake unit 使用的 package-only 入口。
 - Markdown 文档由人工维护，oxfmt 已忽略 `*.md` 与 `.spec/`。
 
 ## 命令
@@ -34,6 +34,7 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 - `pnpm typecheck` — 先构建 workspace 包，再根与每包 `tsc --noEmit`
 - `pnpm check` — 依次执行 typecheck（含构建）、lint、format:check
 - `pnpm test:process` — 构建后运行进程级场景
+- `pnpm test:unit` — 只运行 `packages/*/test`（flake unit 使用，不含 `tests/integration`）
 - `nix build .#default` — 构建发行版（官方 Node wrapper）
 - `nix run .#default -- --version` — package smoke
 - `nix flake check` — package/unit/module-eval；不能替代 NixOS 12.12 手工清单
