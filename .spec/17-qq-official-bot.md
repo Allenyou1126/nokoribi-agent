@@ -95,7 +95,7 @@
 - 新包 `packages/channel-qq-bot`，注册为 `ctx.channels` 的一个 driver（`id = "qq-bot"`），不占用 `ctx.shell`，不改 host/router/工具。
 - 行装配：`packages/bundle/cordis.patch.yml` 新增 `nokoribi-channel-qq-bot` 行；NixOS module 生成同名 patch。
 - 连接形态：进程内 driver 持有 WebSocket 网关连接；出站走 HTTPS API。**M8 使用 WebSocket**；transport 在 driver 内部抽象（`gateway.ts`），WebHook 后置（D150）。
-- **协议层采用官方 Node SDK** `@tencent-connect/qqbot-nodejs`（MIT，exact pin `1.0.5`），只消费 `./protocol` 子路径（`TokenManager`、`ApiClient`、`MessageApi`、`GatewayConnection`、`dispatchEvent`、`ApiError`、`routes`），**不启用** facade 中间件/业务层（D154，待评审确认）。
+- **协议层采用官方 Node SDK** `@tencent-connect/qqbot-nodejs`（MIT，exact pin `1.0.5`），只消费 `./protocol` 子路径（`TokenManager`、`ApiClient`、`GatewayConnection`、`dispatchEvent`、`ApiError`、`routes`），**不启用** facade 中间件/业务层（D154 已确认）。
   - 理由：SDK 覆盖 token 刷新、WS 生命周期/Resume/关闭码/重连等最难自测部分；不侵入 channel-core 的去重/allowlist/审批/outbox/分段/命令语义。
   - `ws@8.22.0` 已在本仓库生产闭包中（dsh 依赖链），SDK 只新增 1 个包；需更新 `pnpm-lock.yaml` 与 `nix/deps.nix` 的 FOD 哈希。
   - 备选：完全自研薄客户端（约 400–600 行，零新增依赖）；官方 DSH 插件 `@tencent-connect/dsh-qqbot` 是端到端 agent 插件、绕过 `ctx.channels`，不采用（评估见 notes）。
@@ -360,7 +360,7 @@ channel.qqBot = {
 
 ### 17.10.4 M8 实现记录（2026-10-27）
 
-- 新增 `packages/channel-qq-bot`：`QqRest` 直接使用 SDK `ApiClient`/`TokenManager`/`MessageApi`（`./protocol`），显式控制 `msg_id`/`msg_seq`（active 不带 `msg_seq`，避免 SDK 自动随机 seq）；`QqGateway` 包装 `GatewayConnection`（`intents=1<<25`、README/事件回调、`connectTimeoutMs` 内等待 READY 后后台重连）；`QqBotDriver` 实现被动优先、窗口/槽位、`activeMessageFallback` 标记、错误映射、长度/Markdown 回退、频控与 health。
+- 新增 `packages/channel-qq-bot`：`QqRest` 直接使用 SDK `ApiClient`/`TokenManager`（`./protocol`），显式控制 `msg_id`/`msg_seq`（active 不带 `msg_seq`，避免 SDK 自动随机 seq）；`QqGateway` 包装 `GatewayConnection`（`intents=1<<25`、事件回调、`connectTimeoutMs` 内等待 READY 后后台重连）；`QqBotDriver` 实现被动优先、窗口/槽位、`activeMessageFallback` 标记、错误映射、长度/Markdown 回退、频控与 health。
 - 入站：仅 `C2C_MESSAGE_CREATE`/`GROUP_AT_MESSAGE_CREATE`；chatId `c2c:<openid>`/`group:<group_openid>`；忽略机器人自身、群全量、附件-only、空文本与互动事件；`receivedAt` 用平台 timestamp。
 - **HTTP 200 业务错误**：SDK `ApiClient` 只在非 2xx 抛错；driver 在 REST 层检查响应体 `code`/`err_code` 并转成 `ApiError`，否则被动过期/主动不可用等错误会被误判为成功。
 - **4009 行为**：SDK 1.0.5 将 4009 视为 `SESSION_TIMEOUT`，清会话并重新 Identify；其它可恢复关闭（如 1000/4008）走 Resume。该偏差记录在事实门禁 notes，真实平台若依赖 4009 resume 需后续评估自研。
