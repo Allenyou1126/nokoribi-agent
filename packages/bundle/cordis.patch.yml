@@ -288,6 +288,8 @@
             allowedSenders: !!js (process.env.NOKORIBI_ALLOWED_SENDERS ?? 'local-user').split(',')
             allowedChats: !!js (process.env.NOKORIBI_ALLOWED_CHATS ?? 'local').split(',')
             defaultChatId: local
+            trustedChannels: []
+            defaultChannelId: local-test
             approvalTimeoutMs: !!js Number(process.env.NOKORIBI_APPROVAL_TIMEOUT_MS ?? 60000)
             questionTimeoutMs: !!js Number(process.env.NOKORIBI_QUESTION_TIMEOUT_MS ?? 300000)
 

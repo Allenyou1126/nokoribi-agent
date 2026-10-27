@@ -97,6 +97,8 @@ let
         allowedSenders = [ "local-user" ];
         allowedChats = [ "local" ];
         defaultChatId = "local";
+        trustedChannels = [ ];
+        defaultChannelId = "local-test";
         approvalTimeoutMs = cfg.approval.approvalTimeoutSeconds * 1000;
         questionTimeoutMs = cfg.approval.questionTimeoutSeconds * 1000;
       };
