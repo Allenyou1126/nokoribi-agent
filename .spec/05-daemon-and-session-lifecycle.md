@@ -84,6 +84,8 @@ M1/M2 实际流程：
 5. `ctx.sessions.flush()`，写 state 并置 `cleanShutdown=true`。
 6. 进程由 vendored profile-boot 的 bounded shutdown 退出；vendored 上限由 `NOKORIBI_SHUTDOWN_TIMEOUT_MS` 控制，默认 30s。M6 的 systemd `TimeoutStopSec` 必须大于它。
 
+> Cordis 的插件 effect teardown 是并发的，session-persistence 的写句柄 teardown 可能先于第 5 步关闭句柄。该后端 `close()` 会先 drain 已路由事件再释放，因此此时 flush 抛出 `SessionHandleClosedError` 表示“已持久化”，只记 debug，不计为关闭失败；daemon 对 `AggregateError` 中全是该错误的情形做同样处理，m1 进程测试断言干净退出日志不出现 `shutdown flush failed`。
+
 > 关闭时不在 outbox 中的"正在生成的回复"会丢失；若已生成但尚未入队，属于可接受窗口。所有已入 outbox 的消息会重发。
 
 ## 5.5 崩溃恢复

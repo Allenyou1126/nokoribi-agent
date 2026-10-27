@@ -230,7 +230,7 @@
 - 3 轮测试对话暴露目标机阻塞缺陷：`bash(host)` 对 `local:workspace` 与 `sandbox:default` 均 100% 失败，报 `subprocess scope exited before its bootstrap consumed the launch request`；模型调用的 `read`/状态通道正常。用户 journal 显示 systemd-run scope 实际执行的是 `ld-linux runner.js`，loader 报 invalid ELF header——即 D145 wrapper 使 `process.execPath` 指向 loader，与 DSH subprocess runner 不兼容。
 - 已按 D148 修复：新增 `bin/node-shim` 与 `--require` execPath preload；在目标机用真实内核/用户 systemd 复现问题并验证修复（subprocess native scope 启动成功、daemon 启动与 native addon 检查正常）。临时 fallback 方案（去掉 `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` 强制无 scope）未采用。
 - 本次仅覆盖：拉取/构建、daemon 启动、测试通道 `/v1/status`、真实模型对话、bash 缺陷复现与修复验证。12.12 清单其余项（审批、sandbox 生命周期、goal、memory、schedule、watchdog、重启恢复、升级演练）仍未在目标机执行。
-- 附带观察：shutdown 时偶发 `shutdown flush failed ... flush on a closed handle`；本次数据未丢（`cleanShutdown=true`、session JSONL 完整），作为后续清理项记录。
+- 附带观察（2026-10-27 已修复）：shutdown 日志偶发 `shutdown flush failed ... flush on a closed handle`。根因是 Cordis 并发 teardown 中 persistence 先关闭写句柄；该后端 `close()` 会先 drain 已路由事件，数据未丢（`cleanShutdown=true`、session JSONL 完整）。daemon 现在把该错误识别为已持久化并降为 debug；m1 进程测试断言干净退出不再出现该错误。
 
 ## 14.8 后置（v1 之外）
 
