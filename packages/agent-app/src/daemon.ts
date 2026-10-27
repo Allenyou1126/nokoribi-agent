@@ -17,7 +17,10 @@ import {
     type SessionEvent,
     type TurnEndReason,
 } from "@deepseek-ai/dsh-session";
-import { SessionPersistenceNotFoundError } from "@deepseek-ai/dsh-session-persistence";
+import {
+    SessionHandleClosedError,
+    SessionPersistenceNotFoundError,
+} from "@deepseek-ai/dsh-session-persistence";
 import type {} from "@deepseek-ai/dsh-subagent";
 import type {
     FullGoalStatus,
@@ -105,6 +108,24 @@ function isNotFound(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Whether a shutdown flush failed only because persistence teardown already
+ * closed the session handle. Cordis disposes plugin effects concurrently, so
+ * the persistence backend's handle teardown can win the race against this
+ * daemon's shutdown effect. A closed write handle is still safe: the backend's
+ * `close()` drains its routed buffer through still-open storage before
+ * releasing it, so the flush is redundant rather than failed. The backend's
+ * own service-wide `flushAll()` skips the same error for the same reason.
+ */
+function isClosedHandleFlush(error: unknown): boolean {
+    if (error instanceof SessionHandleClosedError) return true;
+    return (
+        error instanceof AggregateError &&
+        error.errors.length > 0 &&
+        error.errors.every((inner) => inner instanceof SessionHandleClosedError)
+    );
 }
 
 function normalizeEffort(value: string | undefined): string | undefined {
@@ -254,9 +275,19 @@ export class Daemon {
                 await this.ctx.sessions.flush(agent.session);
             }
         } catch (error) {
-            this.logger.error("shutdown flush failed", {
-                error: errorMessage(error),
-            });
+            if (isClosedHandleFlush(error)) {
+                // Persistence teardown closed the handle first; its close()
+                // already drained the routed events. Keep this out of the
+                // error log so a clean shutdown is not reported as failed.
+                this.logger.debug(
+                    "shutdown flush skipped: persistence already closed the session handle",
+                    { error: errorMessage(error) }
+                );
+            } else {
+                this.logger.error("shutdown flush failed", {
+                    error: errorMessage(error),
+                });
+            }
         }
         try {
             if (this.state !== undefined) {

@@ -124,6 +124,10 @@ describe("M1 process scenarios", () => {
         expect(exitCode).toBe(0);
         const state = await readState(running.home);
         expect(state.cleanShutdown).toBe(true);
+        // Persistence teardown may close the write handle before this daemon's
+        // shutdown flush; the handle's close() drains routed events first, so
+        // the race must not surface as a "shutdown flush failed" error.
+        expect(running.output()).not.toContain("shutdown flush failed");
 
         const restarted = await startDaemon({
             home: running.home,
