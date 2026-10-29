@@ -95,6 +95,36 @@ let
     reconnectMaxMs = cfg.channel.qqBot.reconnectMaxMs;
   };
 
+  # M10: BashTerminalBackend configuration for every registered shell host.
+  terminalHost = {
+    enabled = cfg.terminal.enable;
+    bashPath = cfg.terminal.bashPath;
+    sendTimeoutMs = cfg.terminal.sendTimeoutSeconds * 1000;
+    rows = cfg.terminal.rows;
+    cols = cfg.terminal.cols;
+    scrollbackLines = cfg.terminal.scrollbackLines;
+  };
+
+  toolTerminal = {
+    enableRunInBackground = true;
+    maxResultBytes = cfg.terminal.maxResultBytes;
+  };
+
+  webConfig = {
+    searchProvider = cfg.web.searchProvider;
+    fetchProvider = cfg.web.fetchProvider;
+  };
+
+  toolWeb = {
+    search = true;
+    fetch = true;
+    searchMaxResults = cfg.web.searchMaxResults;
+    searchMaxQueries = cfg.web.searchMaxQueries;
+    fetchTimeoutMs = cfg.web.fetchTimeoutSeconds * 1000;
+    searchTimeoutMs = cfg.web.searchTimeoutSeconds * 1000;
+    fetchMaxOutputChars = cfg.web.fetchMaxOutputChars;
+  };
+
   patches = [
     {
       id = "nokoribi-agent-app";
@@ -106,6 +136,7 @@ let
         fast = route fastRoute;
         strong = route strongRoute;
         timeoutMs = cfg.review.timeoutMs;
+        exemptTools = cfg.review.exemptTools;
       };
     }
     {
@@ -149,6 +180,7 @@ let
         id = "local:workspace";
         inherit workspace;
         extraPackages = localExtraPackages;
+        terminalBashPath = cfg.terminal.bashPath;
       };
     }
     {
@@ -177,6 +209,86 @@ let
     }
   ];
 
+  # M10 terminal rows (bundle order: sandbox-policy, terminal, nokoribi-terminal-host,
+  # nokoribi-tool-terminal). The terminal row itself needs no config; disabling the
+  # group keeps bash(host) working because only the terminal rows are switched off.
+  terminalPatches =
+    if cfg.terminal.enable then
+      [
+        {
+          id = "sandbox-policy";
+          config = {
+            mode = "danger-full-access";
+            workspaceRoot = workspace;
+          };
+        }
+        {
+          id = "nokoribi-terminal-host";
+          config = terminalHost;
+        }
+        {
+          id = "nokoribi-tool-terminal";
+          config = toolTerminal;
+        }
+      ]
+    else
+      [
+        {
+          id = "sandbox-policy";
+          disabled = true;
+        }
+        {
+          id = "terminal";
+          disabled = true;
+        }
+        {
+          id = "nokoribi-terminal-host";
+          disabled = true;
+        }
+        {
+          id = "nokoribi-tool-terminal";
+          disabled = true;
+        }
+      ];
+
+  # M10 web rows. All providers are mounted when enabled; ctx.web is pinned so a
+  # second provider never makes the choice ambiguous.
+  webPatches =
+    if cfg.web.enable then
+      [
+        {
+          id = "web";
+          config = webConfig;
+        }
+        {
+          id = "tool-web";
+          config = toolWeb;
+        }
+      ]
+    else
+      [
+        {
+          id = "web";
+          disabled = true;
+        }
+        {
+          id = "web-search-deepseek";
+          disabled = true;
+        }
+        {
+          id = "web-fetch-http";
+          disabled = true;
+        }
+        {
+          id = "web-deepseek-api";
+          disabled = true;
+        }
+        {
+          id = "tool-web";
+          disabled = true;
+        }
+      ];
+
   timePatch = lib.optional (timeZone != null) {
     id = "time-context";
     config = {
@@ -185,4 +297,4 @@ let
     };
   };
 in
-patches ++ timePatch
+patches ++ terminalPatches ++ webPatches ++ timePatch

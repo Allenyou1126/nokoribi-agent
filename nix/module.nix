@@ -90,6 +90,8 @@ let
     NOKORIBI_LOG_LEVEL = cfg.log.level;
   } // lib.optionalAttrs (timeZone != null) {
     TZ = timeZone;
+  } // lib.optionalAttrs (cfg.web.deepseekSearchBaseUrl != null) {
+    DEEPSEEK_SEARCH_BASE_URL = cfg.web.deepseekSearchBaseUrl;
   };
 
   routePairOk = route:
@@ -194,6 +196,15 @@ in
       type = types.ints.positive;
       default = 30000;
       description = "Per-reviewer-call deadline in milliseconds.";
+    };
+
+    review.exemptTools = mkOption {
+      type = types.listOf types.str;
+      default = [
+        "web_search"
+        "web_fetch"
+      ];
+      description = "Tool names exempt from Auto review under the danger-full-access preset (D170); the empty list restores full review.";
     };
 
     goal.provider = mkOption {
@@ -398,6 +409,98 @@ in
         type = types.ints.positive;
         default = 60000;
         description = "Gateway reconnect backoff cap in milliseconds.";
+      };
+    };
+
+    terminal = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Register host-aware persistent terminals (M10); false disables the terminal rows in the overlay.";
+      };
+      bashPath = mkOption {
+        type = types.str;
+        default = "bash";
+        description = "Shell used by local:workspace terminals; the sandbox terminal ignores it.";
+      };
+      maxResultBytes = mkOption {
+        type = types.ints.positive;
+        default = 262144;
+        description = "Maximum bytes returned by one terminal read or send.";
+      };
+      sendTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = "Foreground terminal send wait; the overlay renders it in milliseconds.";
+      };
+      rows = mkOption {
+        type = types.ints.positive;
+        default = 40;
+        description = "Initial PTY rows.";
+      };
+      cols = mkOption {
+        type = types.ints.positive;
+        default = 160;
+        description = "Initial PTY columns.";
+      };
+      scrollbackLines = mkOption {
+        type = types.ints.positive;
+        default = 10000;
+        description = "Scrollback lines retained per terminal.";
+      };
+    };
+
+    web = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Register web_search/web_fetch (M10); false disables the web rows in the overlay.";
+      };
+      searchProvider = mkOption {
+        type = types.enum [
+          "deepseek-official"
+          "deepseek-search-api"
+        ];
+        default = "deepseek-official";
+        description = "Pinned ctx.web search provider.";
+      };
+      fetchProvider = mkOption {
+        type = types.enum [
+          "http"
+          "deepseek-fetch-api"
+        ];
+        default = "http";
+        description = "Pinned ctx.web fetch provider.";
+      };
+      deepseekSearchBaseUrl = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "DEEPSEEK_SEARCH_BASE_URL for the DeepSeek search provider; null keeps the provider default.";
+      };
+      searchMaxResults = mkOption {
+        type = types.ints.positive;
+        default = 8;
+        description = "Maximum search results per query.";
+      };
+      searchMaxQueries = mkOption {
+        type = types.ints.positive;
+        default = 4;
+        description = "Maximum queries per web_search call.";
+      };
+      fetchTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = "web_fetch deadline; the overlay renders it in milliseconds.";
+      };
+      searchTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = "web_search deadline; the overlay renders it in milliseconds.";
+      };
+      fetchMaxOutputChars = mkOption {
+        type = types.ints.positive;
+        default = 200000;
+        description = "Maximum characters returned by one fetch.";
       };
     };
 

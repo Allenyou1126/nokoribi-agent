@@ -35,32 +35,63 @@
         let
           package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           python = pkgs.python3.withPackages (packages: [ packages.pyyaml ]);
+          sampleOptions = {
+            services.nokoribi-agent = {
+              enable = true;
+              package = pkgs.hello;
+              environmentFile = "/run/agenix/nokoribi-agent-env";
+              time.zone = "UTC";
+              hosts.default = "local:workspace";
+              goal.allowedModels = [
+                "deepseek-official/alt-model"
+              ];
+              channel.localTest = {
+                enable = true;
+                token = "test-token";
+              };
+              channel.qqBot = {
+                enable = true;
+                appId = "123456";
+              };
+            };
+          };
           sample = nixpkgs.lib.nixosSystem {
             system = pkgs.stdenv.hostPlatform.system;
             modules = [
               self.nixosModules.default
+              sampleOptions
+              {
+                services.nokoribi-agent.web.deepseekSearchBaseUrl =
+                  "https://search.example.invalid/v1";
+              }
+            ];
+          };
+          disabledSample = nixpkgs.lib.nixosSystem {
+            system = pkgs.stdenv.hostPlatform.system;
+            modules = [
+              self.nixosModules.default
+              sampleOptions
               {
                 services.nokoribi-agent = {
-                  enable = true;
-                  package = pkgs.hello;
-                  environmentFile = "/run/agenix/nokoribi-agent-env";
-                  time.zone = "UTC";
-                  hosts.default = "local:workspace";
-                  goal.allowedModels = [
-                    "deepseek-official/alt-model"
-                  ];
-                  channel.localTest = {
-                    enable = true;
-                    token = "test-token";
-                  };
-                  channel.qqBot = {
-                    enable = true;
-                    appId = "123456";
-                  };
+                  terminal.enable = false;
+                  web.enable = false;
                 };
               }
             ];
           };
+          moduleEval = name: flag: nixos:
+            pkgs.runCommand "nokoribi-${name}" {
+              nativeBuildInputs = [ python ];
+              overlay = pkgs.writeText "${name}-overlay.yml"
+                nixos.config.services.nokoribi-agent._overlayText;
+              serviceConfig = pkgs.writeText "${name}-service.json"
+                (builtins.toJSON nixos.config.systemd.services.nokoribi-agent.serviceConfig);
+              environment = pkgs.writeText "${name}-environment.json"
+                (builtins.toJSON nixos.config.systemd.services.nokoribi-agent.environment);
+            } ''
+              python ${./nix/check-module.py} ${flag} "$overlay" "$serviceConfig" "$environment"
+              touch $out
+            '';
         in
         {
           package = package;
@@ -87,22 +118,16 @@
                 -e 'await import("@tencent-connect/qqbot-nodejs/protocol");')
             ${package}/bin/node-shim -e 'if (typeof fetch !== "function") process.exit(1)'
             ${package}/bin/node-shim -e 'if (typeof WebSocket !== "function") process.exit(1)'
+            # M10: terminal and web rows must resolve from the production
+            # closure; resolve from the bundle package that owns those deps.
+            (cd ${package}/lib/nokoribi-agent/packages/bundle && \
+              ${package}/bin/node-shim --input-type=module -e 'await import("@deepseek-ai/dsh-terminal"); await import("@deepseek-ai/dsh-terminal-bash"); await import("@deepseek-ai/dsh-web"); await import("@deepseek-ai/dsh-tool-web"); await import("@nokoribi/terminal-host");')
             touch $out
           '';
 
-          module-eval = pkgs.runCommand "nokoribi-module-eval" {
-            nativeBuildInputs = [ python ];
-            overlay = pkgs.writeText "overlay.yml"
-              sample.config.services.nokoribi-agent._overlayText;
-            serviceConfig = pkgs.writeText "service.json"
-              (builtins.toJSON sample.config.systemd.services.nokoribi-agent.serviceConfig);
-            environment = pkgs.writeText "environment.json"
-              (builtins.toJSON sample.config.systemd.services.nokoribi-agent.environment);
-          } ''
-            python ${./nix/check-module.py} \
-              "$overlay" "$serviceConfig" "$environment"
-            touch $out
-          '';
+          module-eval = moduleEval "module-eval" "" sample;
+
+          module-eval-disabled = moduleEval "module-eval-disabled" "--disabled" disabledSample;
         });
     };
 }
