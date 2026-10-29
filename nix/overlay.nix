@@ -90,6 +90,7 @@ let
     requestTimeoutMs = cfg.channel.qqBot.requestTimeoutSeconds * 1000;
     connectTimeoutMs = cfg.channel.qqBot.connectTimeoutSeconds * 1000;
     activeMessageFallback = cfg.channel.qqBot.activeMessageFallback;
+    approvalButtons = cfg.channel.qqBot.approvalButtons;
     reconnectBaseMs = cfg.channel.qqBot.reconnectBaseMs;
     reconnectMaxMs = cfg.channel.qqBot.reconnectMaxMs;
   };

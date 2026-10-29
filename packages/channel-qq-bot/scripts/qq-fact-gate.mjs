@@ -29,6 +29,7 @@ const TOKEN_BASE =
 const APP_ID = process.env.NOKORIBI_QQ_BOT_APP_ID ?? "";
 const CLIENT_SECRET = process.env.NOKORIBI_QQ_BOT_CLIENT_SECRET ?? "";
 const INTENTS = 1 << 25;
+const INTERACTION_INTENT = 1 << 26;
 
 function parseArgs(argv) {
     const options = {
@@ -37,6 +38,13 @@ function parseArgs(argv) {
         watch: false,
         passive: false,
         active: false,
+        interactionConnect: false,
+        keyboard: false,
+        watchInteraction: false,
+        ack: false,
+        ackId: "",
+        ackCode: 0,
+        markdown: false,
         chat: "",
         messageId: "",
         seq: 1,
@@ -50,6 +58,16 @@ function parseArgs(argv) {
         else if (arg === "--watch") options.watch = true;
         else if (arg === "--passive") options.passive = true;
         else if (arg === "--active") options.active = true;
+        else if (arg === "--interaction-connect") {
+            options.interactionConnect = true;
+        } else if (arg === "--keyboard") options.keyboard = true;
+        else if (arg === "--watch-interaction") {
+            options.watchInteraction = true;
+        } else if (arg === "--ack") {
+            options.ack = true;
+            options.ackId = argv[++index] ?? "";
+            options.ackCode = Number(argv[++index] ?? 0);
+        } else if (arg === "--markdown") options.markdown = true;
         else if (arg === "--chat") options.chat = argv[++index] ?? "";
         else if (arg === "--message-id") {
             options.messageId = argv[++index] ?? "";
@@ -70,7 +88,9 @@ function usage() {
             "Optional: NOKORIBI_QQ_BOT_API_BASE, NOKORIBI_QQ_BOT_TOKEN_BASE",
             "",
             "Modes: --token | --gateway | --watch | --passive | --active",
+            "       --interaction-connect | --keyboard | --watch-interaction | --ack <id> <code>",
             "Passive fields: --chat c2c:<openid>|group:<openid> --message-id <id> --seq <n>",
+            "Keyboard adds two callback buttons; --markdown selects msg_type=2.",
         ].join("\n") + "\n"
     );
 }
@@ -102,7 +122,7 @@ function client() {
     const messages = new MessageApi(api, tokens, {
         markdownSupport: true,
     });
-    return { tokens, messages };
+    return { tokens, messages, api };
 }
 
 async function probeToken(base) {
@@ -133,7 +153,7 @@ async function probeToken(base) {
     process.stdout.write(`${JSON.stringify(safe)}\n`);
 }
 
-async function withGateway(handler) {
+async function withGateway(handler, intents = INTENTS) {
     const controller = new AbortController();
     const { tokens, messages } = client();
     const connection = new GatewayConnection({
@@ -150,7 +170,7 @@ async function withGateway(handler) {
                 appId: APP_ID,
                 clientSecret: CLIENT_SECRET,
             }),
-        intents: INTENTS,
+        intents,
         onReady: (data) => {
             handler.ready?.(data);
         },
@@ -166,7 +186,9 @@ async function withGateway(handler) {
         onMessage: (message) => {
             handler.message?.(message);
         },
-        onInteraction: () => {},
+        onInteraction: (event) => {
+            handler.interaction?.(event);
+        },
         onRawEvent: () => {},
     });
     const run = connection.start().catch((error) => {
@@ -175,85 +197,229 @@ async function withGateway(handler) {
     await handler.run?.(controller, run);
 }
 
-async function gatewayMode(watch) {
+async function gatewayMode(watch, intents = INTENTS) {
     let ready = false;
     const seen = [];
-    await withGateway({
-        ready(data) {
-            ready = true;
-            const sessionId =
-                typeof data === "object" && data !== null
-                    ? (data.session_id ?? data.sessionId ?? null)
-                    : null;
-            process.stdout.write(
-                `${JSON.stringify({
-                    event: "ready-or-resumed",
-                    hasSessionId: typeof sessionId === "string",
-                })}\n`
-            );
-        },
-        error(error) {
-            process.stdout.write(
-                `${JSON.stringify({
-                    event: "error",
-                    name: error?.name ?? "Error",
-                    message: String(error?.message ?? error).slice(0, 160),
-                })}\n`
-            );
-        },
-        disconnected(event) {
-            process.stdout.write(
-                `${JSON.stringify({
-                    event: "disconnected",
-                    code: event.code,
-                    willReconnect: event.willReconnect,
-                })}\n`
-            );
-        },
-        message(message) {
-            seen.push(message.rawEventType);
-            process.stdout.write(
-                `${JSON.stringify({
-                    event: "message",
-                    type: message.rawEventType,
-                    kind: message.kind,
-                    messageId: message.messageId,
-                    contentLength: message.content.length,
-                })}\n`
-            );
-        },
-        async run(controller) {
-            if (!watch) {
-                const deadline = Date.now() + 30000;
-                while (!ready && Date.now() < deadline) {
-                    await new Promise((resolve) => setTimeout(resolve, 100));
-                }
-            } else {
+    await withGateway(
+        {
+            ready(data) {
+                ready = true;
+                const sessionId =
+                    typeof data === "object" && data !== null
+                        ? (data.session_id ?? data.sessionId ?? null)
+                        : null;
                 process.stdout.write(
                     `${JSON.stringify({
-                        event: "watching",
-                        hint: "send a QQ message to the bot; press Ctrl+C to stop",
+                        event: "ready-or-resumed",
+                        hasSessionId: typeof sessionId === "string",
                     })}\n`
                 );
-                await new Promise((resolve) => {
-                    process.once("SIGINT", resolve);
-                });
-            }
-            controller.abort();
+            },
+            error(error) {
+                process.stdout.write(
+                    `${JSON.stringify({
+                        event: "error",
+                        name: error?.name ?? "Error",
+                        message: String(error?.message ?? error).slice(0, 160),
+                    })}\n`
+                );
+            },
+            disconnected(event) {
+                process.stdout.write(
+                    `${JSON.stringify({
+                        event: "disconnected",
+                        code: event.code,
+                        willReconnect: event.willReconnect,
+                    })}\n`
+                );
+            },
+            interaction(event) {
+                process.stdout.write(
+                    `${JSON.stringify({
+                        event: "interaction",
+                        interactionId: event.id,
+                        type: event.type,
+                        chatType: event.chat_type,
+                        hasUserOpenid:
+                            typeof event.user_openid === "string" &&
+                            event.user_openid.length > 0,
+                        buttonDataLength:
+                            event.data?.resolved?.button_data?.length ?? 0,
+                        buttonIdLength:
+                            event.data?.resolved?.button_id?.length ?? 0,
+                    })}\n`
+                );
+            },
+            message(message) {
+                seen.push(message.rawEventType);
+                process.stdout.write(
+                    `${JSON.stringify({
+                        event: "message",
+                        type: message.rawEventType,
+                        kind: message.kind,
+                        messageId: message.messageId,
+                        contentLength: message.content.length,
+                    })}\n`
+                );
+            },
+            async run(controller) {
+                if (!watch) {
+                    const deadline = Date.now() + 30000;
+                    while (!ready && Date.now() < deadline) {
+                        await new Promise((resolve) =>
+                            setTimeout(resolve, 100)
+                        );
+                    }
+                } else {
+                    process.stdout.write(
+                        `${JSON.stringify({
+                            event: "watching",
+                            hint: "send a QQ message to the bot; press Ctrl+C to stop",
+                        })}\n`
+                    );
+                    await new Promise((resolve) => {
+                        process.once("SIGINT", resolve);
+                    });
+                }
+                controller.abort();
+            },
         },
-    });
+        intents
+    );
     process.stdout.write(
         `${JSON.stringify({ event: "done", messagesSeen: seen.length })}\n`
     );
+}
+
+async function interactionConnectMode() {
+    for (const [label, intents] of [
+        ["message-only", INTENTS],
+        ["with-interaction", INTENTS | INTERACTION_INTENT],
+    ]) {
+        let ready = false;
+        let closeCode = null;
+        await withGateway(
+            {
+                ready() {
+                    ready = true;
+                },
+                disconnected(event) {
+                    closeCode = event.code;
+                },
+                async run(controller) {
+                    const deadline = Date.now() + 15000;
+                    while (
+                        !ready &&
+                        closeCode === null &&
+                        Date.now() < deadline
+                    ) {
+                        await new Promise((resolve) =>
+                            setTimeout(resolve, 100)
+                        );
+                    }
+                    controller.abort();
+                },
+            },
+            intents
+        );
+        process.stdout.write(
+            `${JSON.stringify({
+                event: "interaction-connect",
+                label,
+                intents,
+                ready,
+                closeCode,
+            })}\n`
+        );
+    }
+}
+
+async function ackMode(options) {
+    if (options.ackId.trim() === "") {
+        throw new Error("--ack requires an interaction id");
+    }
+    if (!Number.isInteger(options.ackCode)) {
+        throw new Error("--ack code must be an integer");
+    }
+    const { tokens, api } = client();
+    const token = await tokens.getAccessToken(APP_ID, CLIENT_SECRET);
+    try {
+        await api.request(token, "PUT", `/interactions/${options.ackId}`, {
+            code: options.ackCode,
+        });
+        process.stdout.write(
+            `${JSON.stringify({
+                event: "acked",
+                code: options.ackCode,
+                interactionIdLength: options.ackId.length,
+            })}\n`
+        );
+    } catch (error) {
+        process.stdout.write(
+            `${JSON.stringify({
+                event: "ack-failed",
+                httpStatus: error?.httpStatus ?? null,
+                bizCode: error?.bizCode ?? null,
+                message: String(error?.message ?? error).slice(0, 200),
+            })}\n`
+        );
+        process.exitCode = 1;
+    }
 }
 
 async function sendMode(options) {
     const chat = parseChat(options.chat);
     const { messages } = client();
     const body = {
-        msg_type: 0,
-        content: options.text,
+        msg_type: options.keyboard && options.markdown ? 2 : 0,
+        ...(options.keyboard && options.markdown
+            ? { markdown: { content: options.text } }
+            : { content: options.text }),
     };
+    if (options.keyboard) {
+        body.keyboard = {
+            content: {
+                rows: [
+                    {
+                        buttons: [
+                            {
+                                id: "probe-allow",
+                                render_data: {
+                                    label: "允许一次",
+                                    visited_label: "允许一次",
+                                    style: 4,
+                                },
+                                action: {
+                                    type: 1,
+                                    permission: { type: 2 },
+                                    data: JSON.stringify({
+                                        k: "probe-allow",
+                                        t: "允许一次",
+                                    }),
+                                },
+                            },
+                            {
+                                id: "probe-deny",
+                                render_data: {
+                                    label: "拒绝",
+                                    visited_label: "拒绝",
+                                    style: 3,
+                                },
+                                action: {
+                                    type: 1,
+                                    permission: { type: 2 },
+                                    data: JSON.stringify({
+                                        k: "probe-deny",
+                                        t: "拒绝",
+                                    }),
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        };
+    }
     if (options.passive) {
         if (options.messageId.trim() === "") {
             throw new Error("--passive requires --message-id");
@@ -304,6 +470,10 @@ async function main() {
         await probeToken("https://bots.qq.com");
         return;
     }
+    if (options.watchInteraction) {
+        await gatewayMode(true, INTENTS | INTERACTION_INTENT);
+        return;
+    }
     if (options.watch) {
         await gatewayMode(true);
         return;
@@ -312,7 +482,15 @@ async function main() {
         await gatewayMode(false);
         return;
     }
-    if (options.passive || options.active) {
+    if (options.interactionConnect) {
+        await interactionConnectMode();
+        return;
+    }
+    if (options.ack) {
+        await ackMode(options);
+        return;
+    }
+    if (options.passive || options.active || options.keyboard) {
         await sendMode(options);
         return;
     }

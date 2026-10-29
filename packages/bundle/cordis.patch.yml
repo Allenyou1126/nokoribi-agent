@@ -319,6 +319,7 @@
             requestTimeoutMs: !!js Number(process.env.NOKORIBI_QQ_BOT_REQUEST_TIMEOUT_MS ?? 10000)
             connectTimeoutMs: !!js Number(process.env.NOKORIBI_QQ_BOT_CONNECT_TIMEOUT_MS ?? 30000)
             activeMessageFallback: !!js process.env.NOKORIBI_QQ_BOT_ACTIVE_FALLBACK ?? 'auto'
+            approvalButtons: !!js (process.env.NOKORIBI_QQ_BOT_APPROVAL_BUTTONS ?? 'true') === 'true'
             reconnectBaseMs: !!js Number(process.env.NOKORIBI_QQ_BOT_RECONNECT_BASE_MS ?? 1000)
             reconnectMaxMs: !!js Number(process.env.NOKORIBI_QQ_BOT_RECONNECT_MAX_MS ?? 60000)
             # Test/fake-server URL overrides. An empty gatewayUrl resolves the

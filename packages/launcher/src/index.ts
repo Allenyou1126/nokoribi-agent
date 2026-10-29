@@ -69,6 +69,7 @@ function helpText(version: string): string {
         "  NOKORIBI_QQ_BOT_REQUEST_TIMEOUT_MS REST timeout ms (10000)",
         "  NOKORIBI_QQ_BOT_CONNECT_TIMEOUT_MS connect timeout ms (30000)",
         "  NOKORIBI_QQ_BOT_ACTIVE_FALLBACK active message fallback (auto)",
+        "  NOKORIBI_QQ_BOT_APPROVAL_BUTTONS C2C approval buttons (default true)",
         "  NOKORIBI_QQ_BOT_RECONNECT_BASE_MS reconnect backoff base (1000)",
         "  NOKORIBI_QQ_BOT_RECONNECT_MAX_MS reconnect backoff cap (60000)",
         "  NOKORIBI_QQ_BOT_API_BASE     REST base URL override (test)",

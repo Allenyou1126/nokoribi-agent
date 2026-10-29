@@ -78,6 +78,7 @@ def main():
         "requestTimeoutMs": 10000,
         "connectTimeoutMs": 30000,
         "activeMessageFallback": "auto",
+        "approvalButtons": True,
         "reconnectBaseMs": 1000,
         "reconnectMaxMs": 60000,
     }

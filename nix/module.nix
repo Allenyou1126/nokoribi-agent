@@ -384,6 +384,11 @@ in
         default = "auto";
         description = "Whether to attempt active messages when passive delivery is unavailable.";
       };
+      approvalButtons = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Render C2C approval buttons and subscribe to INTERACTION_CREATE; false keeps text-only approvals.";
+      };
       reconnectBaseMs = mkOption {
         type = types.ints.positive;
         default = 1000;
@@ -558,6 +563,9 @@ in
     ++ lib.optional
       (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.activeMessageFallback == "auto")
       "QQ active message push was announced as removed on 2025-04-21 while the API docs still list active quotas; proactive notices may fail and are deferred to the next inbound (D161)."
+    ++ lib.optional
+      (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.approvalButtons)
+      "QQ approval buttons are C2C-only; INTERACTION intent availability has not passed the real platform gate, and the driver falls back to text when unavailable (see channel health detail)."
     ++ lib.optional
       (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.markdown != "none")
       "QQ Markdown rendering of code blocks and tables is undocumented and untested; lower channel.qqBot.markdown to none if replies render badly."
