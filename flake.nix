@@ -53,6 +53,52 @@
                 enable = true;
                 appId = "123456";
               };
+              # M11/M12: custom limits so the overlay mapping is asserted, not
+              # just the option defaults.
+              sessionSearch = {
+                maxResults = 50;
+                searchTimeoutSeconds = 20;
+              };
+              skill = {
+                customDirs = [ "/run/skills/extra" ];
+                catalogDescriptionMaxLength = 320;
+              };
+              # M13: one stdio and one streamable-http server; env/header values
+              # are environment variable names, never secrets.
+              mcp.servers = [
+                {
+                  name = "github";
+                  transport = "stdio";
+                  command = "npx";
+                  args = [
+                    "-y"
+                    "@modelcontextprotocol/server-github"
+                  ];
+                  env.GITHUB_TOKEN = "GITHUB_TOKEN";
+                  toolCallTimeoutSeconds = 10;
+                  failOnStartupError = true;
+                }
+                {
+                  name = "web";
+                  transport = "streamable-http";
+                  url = "http://127.0.0.1:3000/mcp";
+                  headers.Authorization = "MCP_AUTH_HEADER";
+                  maxInstructionBytes = 16384;
+                  reconnect = {
+                    enable = false;
+                    initialDelayMs = 250;
+                    maxDelayMs = 1000;
+                    maxAttempts = 2;
+                  };
+                }
+              ];
+              # M16: custom snapshot budget so the inject mapping is asserted.
+              memory.inject = {
+                maxChars = 1500;
+                maxEntries = 5;
+                mainOnly = false;
+                autoTags = [ "type:person" ];
+              };
             };
           };
           sample = nixpkgs.lib.nixosSystem {
@@ -75,7 +121,43 @@
                 services.nokoribi-agent = {
                   terminal.enable = false;
                   web.enable = false;
+                  sessionSearch.enable = false;
+                  skill.enable = false;
+                  mcp.servers = pkgs.lib.mkForce [ ];
                 };
+              }
+            ];
+          };
+          openVikingSample = nixpkgs.lib.nixosSystem {
+            system = pkgs.stdenv.hostPlatform.system;
+            modules = [
+              self.nixosModules.default
+              sampleOptions
+              {
+                services.nokoribi-agent.memory.openviking = {
+                  enable = true;
+                  endpoint = "https://openviking.example.invalid";
+                  apiKeyEnv = "OPENVIKING_API_KEY";
+                  peerId = "peer-a";
+                  workspacePeer = "0";
+                  recallMaxTokens = 4000;
+                };
+              }
+            ];
+          };
+          singleMcpSample = nixpkgs.lib.nixosSystem {
+            system = pkgs.stdenv.hostPlatform.system;
+            modules = [
+              self.nixosModules.default
+              sampleOptions
+              {
+                services.nokoribi-agent.mcp.servers = pkgs.lib.mkForce [
+                  {
+                    name = "solo";
+                    transport = "stdio";
+                    command = "solo-mcp";
+                  }
+                ];
               }
             ];
           };
@@ -88,8 +170,11 @@
                 (builtins.toJSON nixos.config.systemd.services.nokoribi-agent.serviceConfig);
               environment = pkgs.writeText "${name}-environment.json"
                 (builtins.toJSON nixos.config.systemd.services.nokoribi-agent.environment);
+              tmpfiles = pkgs.writeText "${name}-tmpfiles.json"
+                (builtins.toJSON nixos.config.systemd.tmpfiles.rules);
+              bundle = ./packages/bundle/cordis.patch.yml;
             } ''
-              python ${./nix/check-module.py} ${flag} "$overlay" "$serviceConfig" "$environment"
+              python ${./nix/check-module.py} ${flag} "$overlay" "$serviceConfig" "$environment" "$tmpfiles" "$bundle"
               touch $out
             '';
         in
@@ -122,12 +207,28 @@
             # closure; resolve from the bundle package that owns those deps.
             (cd ${package}/lib/nokoribi-agent/packages/bundle && \
               ${package}/bin/node-shim --input-type=module -e 'await import("@deepseek-ai/dsh-terminal"); await import("@deepseek-ai/dsh-terminal-bash"); await import("@deepseek-ai/dsh-web"); await import("@deepseek-ai/dsh-tool-web"); await import("@nokoribi/terminal-host");')
+            # M11/M12/M13: session search, skill and MCP rows must resolve from
+            # the production closure.
+            (cd ${package}/lib/nokoribi-agent/packages/bundle && \
+              ${package}/bin/node-shim --input-type=module -e 'await import("@deepseek-ai/dsh-tool-session-query"); await import("@deepseek-ai/dsh-skill"); await import("@deepseek-ai/dsh-skill-filesystem"); await import("@deepseek-ai/dsh-tool-skill"); await import("@deepseek-ai/dsh-mcp-client"); await import("@deepseek-ai/dsh-mcp-resources");')
+            # M12: the bundled read-only skills must ship in share/skills.
+            test -f '${package}/share/skills/nokoribi-deploy/SKILL.md'
+            test -f '${package}/share/skills/nokoribi-debug/SKILL.md'
+            # M17: the optional OpenViking bundle must resolve from the
+            # launcher anchor so M12/M13 peer packages are the host copies.
+            (cd ${package}/lib/nokoribi-agent/packages/launcher && \
+              ${package}/bin/node-shim --input-type=module \
+                -e 'await import("@openviking/dsh-memory-plugin");')
             touch $out
           '';
 
           module-eval = moduleEval "module-eval" "" sample;
 
           module-eval-disabled = moduleEval "module-eval-disabled" "--disabled" disabledSample;
+
+          module-eval-openviking = moduleEval "module-eval-openviking" "--openviking" openVikingSample;
+
+          module-eval-mcp-single = moduleEval "module-eval-mcp-single" "--mcp-single" singleMcpSample;
         });
     };
 }

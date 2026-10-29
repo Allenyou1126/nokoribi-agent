@@ -15,6 +15,7 @@
   nixBinary,
   setpriv,
   timeZone,
+  bundledSkillsDir,
 }:
 
 let
@@ -42,8 +43,11 @@ let
 
     memoryProvider = memoryRoute.provider;
     memoryModel = memoryRoute.model;
-    memoryCurator = cfg.memory.curator.enable;
+    # M16/M17: the curator stays off when local memory is disabled, which
+    # OpenViking mode forces through the env switch (D175).
+    memoryCurator = cfg.memory.curator.enable && !cfg.memory.openviking.enable;
     memoryCuratorTimeoutMs = cfg.memory.curator.timeoutMs;
+    sendFileMaxBytes = cfg.sendFile.maxBytes;
 
     reviewFastProvider = fastRoute.provider;
     reviewFastModel = fastRoute.model;
@@ -91,6 +95,10 @@ let
     connectTimeoutMs = cfg.channel.qqBot.connectTimeoutSeconds * 1000;
     activeMessageFallback = cfg.channel.qqBot.activeMessageFallback;
     approvalButtons = cfg.channel.qqBot.approvalButtons;
+    questionButtons = cfg.channel.qqBot.questionButtons;
+    inboundImages = cfg.channel.qqBot.inboundImages;
+    inboundImageMaxBytes = cfg.channel.qqBot.inboundImageMaxBytes;
+    inboundImageTimeoutMs = cfg.channel.qqBot.inboundImageTimeoutSeconds * 1000;
     reconnectBaseMs = cfg.channel.qqBot.reconnectBaseMs;
     reconnectMaxMs = cfg.channel.qqBot.reconnectMaxMs;
   };
@@ -123,6 +131,116 @@ let
     fetchTimeoutMs = cfg.web.fetchTimeoutSeconds * 1000;
     searchTimeoutMs = cfg.web.searchTimeoutSeconds * 1000;
     fetchMaxOutputChars = cfg.web.fetchMaxOutputChars;
+  };
+
+  # M11: the query-service row stays mounted (exact reads, filters and traces
+  # remain available) and only its FTS lifecycle changes; the model-facing tool
+  # row is switched off as a unit when the deployment disables session search.
+  sessionSearchPatches = [
+    {
+      id = "session-query";
+      config = {
+        path = "${cfg.dshHome}/session-search.db";
+        openAt = if cfg.sessionSearch.enable then "first-search" else "never";
+      };
+    }
+  ] ++ (
+    if cfg.sessionSearch.enable then
+      [
+        {
+          id = "tool-session-query";
+          config = {
+            maxSearchResults = cfg.sessionSearch.maxResults;
+            searchTimeoutMs = cfg.sessionSearch.searchTimeoutSeconds * 1000;
+          };
+        }
+      ]
+    else
+      [
+        {
+          id = "tool-session-query";
+          disabled = true;
+        }
+      ]
+  );
+
+  # M12: local skills are a group: the registry, filesystem provider and
+  # model-facing catalog/tool are disabled together so no skill surface leaks
+  # into an uncovered deployment.
+  skillPatches =
+    if cfg.skill.enable then
+      [
+        {
+          id = "skill-filesystem";
+          config = {
+            includeDefaultRoots = true;
+            dshHome = cfg.dshHome;
+            customSkillDirs = cfg.skill.customDirs;
+            bundledSkillDir = bundledSkillsDir;
+            watch = true;
+          };
+        }
+        {
+          id = "tool-skill";
+          config = {
+            catalogDescriptionMaxLength = cfg.skill.catalogDescriptionMaxLength;
+          };
+        }
+      ]
+    else
+      [
+        {
+          id = "skill";
+          disabled = true;
+        }
+        {
+          id = "skill-filesystem";
+          disabled = true;
+        }
+        {
+          id = "tool-skill";
+          disabled = true;
+        }
+      ];
+
+  # M13: one mcp-client row per configured server. Env/header VALUES are
+  # environment-variable names; they render as markers here and become
+  # app-boot `!!js process.env.<NAME>` expressions in module.nix, so the store
+  # only ever contains the variable name.
+  jsEnvMarker = value: "__nokoribi_js_process_env_${value}__";
+  mcpServerConfig =
+    server:
+    {
+      serverName = server.name;
+      inherit (server) transport maxInstructionBytes failOnStartupError;
+      toolCallTimeoutMs = server.toolCallTimeoutSeconds * 1000;
+      reconnect = {
+        enabled = server.reconnect.enable;
+        inherit (server.reconnect) initialDelayMs maxDelayMs maxAttempts;
+      };
+    }
+    // (
+      if server.transport == "stdio" then
+        {
+          inherit (server) command args;
+          env = lib.mapAttrs (_name: value: jsEnvMarker value) server.env;
+        }
+        // lib.optionalAttrs (server.cwd != null) { inherit (server) cwd; }
+      else
+        {
+          inherit (server) url;
+          headers = lib.mapAttrs (_name: value: jsEnvMarker value) server.headers;
+        }
+    );
+  mcpPatches = lib.optional (cfg.mcp.servers != [ ]) {
+    # Patch rows only override existing ids, so the generated client rows are
+    # appended through one insert entry (id-less insert pushes to the top
+    # level of the Cordis entry list).
+    insert = map (server: {
+      id = "mcp-${server.name}";
+      name = "@deepseek-ai/dsh-mcp-client";
+      config = mcpServerConfig server;
+    }) cfg.mcp.servers;
   };
 
   patches = [
@@ -165,6 +283,9 @@ let
         inherit soulFile templatesDir workspace;
         seedGlobalAgents = cfg.prompt.seedAgentsMd;
         seedWorkspaceAgents = cfg.prompt.seedAgentsMd;
+        # M17: OpenViking owns memory, so the local memory prompt section is
+        # not registered (the memory row is switched off by the env switch).
+        memorySection = !cfg.memory.openviking.enable;
       };
     }
     {
@@ -205,6 +326,13 @@ let
       config = {
         root = "${cfg.dshHome}/memory";
         defaultLimit = 10;
+        inject = {
+          enable = cfg.memory.inject.enable;
+          maxChars = cfg.memory.inject.maxChars;
+          maxEntries = cfg.memory.inject.maxEntries;
+          mainOnly = cfg.memory.inject.mainOnly;
+          autoTags = cfg.memory.inject.autoTags;
+        };
       };
     }
   ];
@@ -297,4 +425,10 @@ let
     };
   };
 in
-patches ++ terminalPatches ++ webPatches ++ timePatch
+patches
+++ terminalPatches
+++ webPatches
+++ sessionSearchPatches
+++ skillPatches
+++ mcpPatches
+++ timePatch

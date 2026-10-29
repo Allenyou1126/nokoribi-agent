@@ -110,6 +110,8 @@ stdenv.mkDerivation {
     mkdir -p $out/share
     cp -a SOUL.md $out/share/SOUL.md
     cp -a templates $out/share/templates
+    # M12: bundled read-only skills (one SKILL.md directory bundle per skill).
+    cp -a skills $out/share/skills
 
     # DSH's subprocess provider re-executes `process.execPath` to start its
     # private bootstrap. Under the loader wrapper that value is the glibc

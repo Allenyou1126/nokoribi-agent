@@ -41,6 +41,20 @@ let
     if cfg.prompt.templatesDir == null then "${cfg.package}/share/templates"
     else cfg.prompt.templatesDir;
 
+  # M12: bundled read-only skill root shipped in the package (share/skills).
+  bundledSkillsDir =
+    if cfg.skill.bundledDir == null then "${cfg.package}/share/skills"
+    else cfg.skill.bundledDir;
+
+  openViking = cfg.memory.openviking;
+
+  mcpServerNames = map (server: server.name) cfg.mcp.servers;
+  mcpNameOk = name: builtins.match "[A-Za-z0-9_-]{1,32}" name != null;
+  mcpEnvNameOk = name: builtins.match "[A-Za-z_][A-Za-z0-9_]*" name != null;
+  mcpSecretsOk = server:
+    lib.all mcpEnvNameOk (lib.attrValues server.env)
+    && lib.all mcpEnvNameOk (lib.attrValues server.headers);
+
   sandboxEnv =
     if cfg.hosts.sandbox.enable then
       pkgs.buildEnv {
@@ -63,9 +77,25 @@ let
     inherit lib cfg;
     inherit mainRoute fastRoute strongRoute goalRoute memoryRoute;
     inherit workspace soulFile templatesDir sandboxBaseEnvironment sandboxRoot;
-    inherit localExtraPackages nixBinary setpriv timeZone;
+    inherit localExtraPackages nixBinary setpriv timeZone bundledSkillsDir;
   };
-  overlayText = lib.generators.toYAML { } overlayPatches;
+  rawOverlayText = lib.generators.toYAML { } overlayPatches;
+
+  # M13: MCP server env/header values are environment-variable indirections.
+  # overlay.nix renders each as the plain scalar marker
+  # `__nokoribi_js_process_env_<NAME>__` so the generated YAML stays valid;
+  # here the quoted marker becomes the app-boot `!!js` expression that reads
+  # the variable at daemon start, so no secret value enters the Nix store.
+  overlayText =
+    lib.concatMapStrings
+      (part:
+        if builtins.isString part then
+          part
+        else
+          "!!js process.env.${builtins.elemAt part 0}")
+      (builtins.split
+        "\"__nokoribi_js_process_env_([A-Za-z_][A-Za-z0-9_]*)__\""
+        rawOverlayText);
   overlayFile = pkgs.writeText "nokoribi-cordis.patch.yml" overlayText;
 
   stateDirectory =
@@ -92,6 +122,22 @@ let
     TZ = timeZone;
   } // lib.optionalAttrs (cfg.web.deepseekSearchBaseUrl != null) {
     DEEPSEEK_SEARCH_BASE_URL = cfg.web.deepseekSearchBaseUrl;
+  } // lib.optionalAttrs openViking.enable {
+    # M17: the launcher mounts the OpenViking bundle and maps these names to
+    # the plugin's OPENVIKING_* credential chain. Local memory is switched off
+    # through the env switch; the overlay keeps the local rows complete.
+    NOKORIBI_OPENVIKING_ENABLED = "true";
+    NOKORIBI_MEMORY_ENABLED = "false";
+    NOKORIBI_OPENVIKING_API_KEY_ENV = openViking.apiKeyEnv;
+    OPENVIKING_STATE_DIR = "${cfg.dshHome}/openviking-state";
+  } // lib.optionalAttrs (openViking.enable && openViking.endpoint != null) {
+    NOKORIBI_OPENVIKING_ENDPOINT = openViking.endpoint;
+  } // lib.optionalAttrs (openViking.enable && openViking.peerId != null) {
+    NOKORIBI_OPENVIKING_PEER_ID = openViking.peerId;
+  } // lib.optionalAttrs (openViking.enable && openViking.workspacePeer != null) {
+    NOKORIBI_OPENVIKING_WORKSPACE_PEER = openViking.workspacePeer;
+  } // lib.optionalAttrs (openViking.enable && openViking.recallMaxTokens != null) {
+    NOKORIBI_OPENVIKING_RECALL_MAX_TOKENS = toString openViking.recallMaxTokens;
   };
 
   routePairOk = route:
@@ -263,6 +309,64 @@ in
       default = 60000;
       description = "Bound for one memory curator run.";
     };
+    memory.inject.enable = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Inject the pinned memory snapshot as a runtime context for the main session (M16).";
+    };
+    memory.inject.maxChars = mkOption {
+      type = types.ints.positive;
+      default = 3000;
+      description = "Snapshot character budget; pinned and auto-included entries beyond it are replaced by a footer hint.";
+    };
+    memory.inject.maxEntries = mkOption {
+      type = types.ints.positive;
+      default = 20;
+      description = "Maximum entries rendered in one memory snapshot.";
+    };
+    memory.inject.mainOnly = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Inject the snapshot only for the main session; goal children get no memory snapshot.";
+    };
+    memory.inject.autoTags = mkOption {
+      type = types.listOf types.str;
+      default = [
+        "type:person"
+        "type:preference"
+      ];
+      description = "Tags that opt an entry into the snapshot without an explicit pin.";
+    };
+    memory.openviking.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Use the OpenViking backend for memory; enabled switches local memory and the curator off (M17, D175).";
+    };
+    memory.openviking.endpoint = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "OpenViking server URL; required when memory.openviking.enable is true.";
+    };
+    memory.openviking.apiKeyEnv = mkOption {
+      type = types.str;
+      default = "OPENVIKING_API_KEY";
+      description = "Environment variable holding the OpenViking bearer key (EnvironmentFile/agenix); the name only enters the Nix store.";
+    };
+    memory.openviking.peerId = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "Explicit OpenViking actor peer; null lets the plugin derive it.";
+    };
+    memory.openviking.workspacePeer = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "Workspace-derived peer identity; the literal \"0\" disables derivation.";
+    };
+    memory.openviking.recallMaxTokens = mkOption {
+      type = types.nullOr types.ints.positive;
+      default = null;
+      description = "Server-assembled recall token budget; null keeps the plugin default.";
+    };
 
     approval.approvalTimeoutSeconds = mkOption {
       type = types.ints.positive;
@@ -410,6 +514,32 @@ in
         default = 60000;
         description = "Gateway reconnect backoff cap in milliseconds.";
       };
+      questionButtons = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Render C2C buttons for single-select ask_user_question options (M15); false keeps text-only questions.";
+      };
+      inboundImages = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Download and forward image attachments from inbound C2C/group messages (M14); false keeps the text-only path.";
+      };
+      inboundImageMaxBytes = mkOption {
+        type = types.ints.positive;
+        default = 10485760;
+        description = "Maximum bytes of one downloaded inbound image (M14).";
+      };
+      inboundImageTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 15;
+        description = "Inbound image download deadline in seconds (M14); the overlay renders it in milliseconds.";
+      };
+    };
+
+    sendFile.maxBytes = mkOption {
+      type = types.ints.positive;
+      default = 33554432;
+      description = "Maximum bytes of one file attached by the agent's send_to_user tool (M14).";
     };
 
     terminal = {
@@ -502,6 +632,136 @@ in
         default = 200000;
         description = "Maximum characters returned by one fetch.";
       };
+    };
+
+    sessionSearch = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Register the session-history search tools (M11) and open the FTS index; false keeps exact session reads only.";
+      };
+      maxResults = mkOption {
+        type = types.ints.positive;
+        default = 100;
+        description = "Maximum authorized hits returned by one session search.";
+      };
+      searchTimeoutSeconds = mkOption {
+        type = types.ints.positive;
+        default = 30;
+        description = "Cooperative session-search deadline; the overlay renders it in milliseconds.";
+      };
+    };
+
+    skill = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Register the local skill registry, filesystem provider and skill tool (M12); false hides the catalog and tool.";
+      };
+      customDirs = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "Additional read-only skill roots scanned after project roots and before $DSH_HOME/skills.";
+      };
+      bundledDir = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Bundled skill root; null uses the package's read-only share/skills directory.";
+      };
+      catalogDescriptionMaxLength = mkOption {
+        type = types.ints.positive;
+        default = 500;
+        description = "Maximum normalized skill description length rendered in the model catalog.";
+      };
+    };
+
+    mcp.servers = mkOption {
+      type = types.listOf (types.submodule {
+        options = {
+          name = mkOption {
+            type = types.str;
+            default = "";
+            description = "Stable server namespace for mcp__<name>__<tool> tool names ([A-Za-z0-9_-]{1,32}, unique).";
+          };
+          transport = mkOption {
+            type = types.enum [
+              "stdio"
+              "streamable-http"
+            ];
+            default = "stdio";
+            description = "MCP transport; stdio spawns command, streamable-http connects to url.";
+          };
+          command = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Executable started for the stdio transport.";
+          };
+          args = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = "Arguments passed directly to the stdio executable.";
+          };
+          env = mkOption {
+            type = types.attrsOf types.str;
+            default = { };
+            description = "Extra stdio environment; each VALUE is the name of an environment variable, never the secret itself.";
+          };
+          cwd = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "Working directory for the stdio child process.";
+          };
+          url = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "MCP endpoint URL for the streamable-http transport.";
+          };
+          headers = mkOption {
+            type = types.attrsOf types.str;
+            default = { };
+            description = "Extra streamable-http request headers; each VALUE is the name of an environment variable, never the secret itself.";
+          };
+          toolCallTimeoutSeconds = mkOption {
+            type = types.ints.positive;
+            default = 60;
+            description = "Per-call MCP tool/resource deadline; the overlay renders it in milliseconds.";
+          };
+          maxInstructionBytes = mkOption {
+            type = types.ints.positive;
+            default = 32768;
+            description = "Maximum UTF-8 bytes of server instructions included in the prompt.";
+          };
+          failOnStartupError = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Fail this row's activation when the initial MCP connection or tool sync fails.";
+          };
+          reconnect = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Reconnect automatically after a lost MCP connection.";
+            };
+            initialDelayMs = mkOption {
+              type = types.ints.positive;
+              default = 500;
+              description = "First reconnect delay in milliseconds; doubles per consecutive failed attempt.";
+            };
+            maxDelayMs = mkOption {
+              type = types.ints.positive;
+              default = 30000;
+              description = "Reconnect backoff ceiling and attempt-budget reset uptime in milliseconds.";
+            };
+            maxAttempts = mkOption {
+              type = types.ints.positive;
+              default = 10;
+              description = "Consecutive failed reconnect attempts before the server's tools are removed.";
+            };
+          };
+        };
+      });
+      default = [ ];
+      description = "External MCP servers; each entry generates one mcp-client row with id mcp-<name>.";
     };
 
     prompt.soulFile = mkOption {
@@ -653,6 +913,54 @@ in
         assertion = !cfg.enable || lib.hasPrefix "/" workspace;
         message = "workspace must be an absolute path.";
       }
+      {
+        assertion = !cfg.enable || lib.all mcpNameOk mcpServerNames;
+        message = "mcp.servers[].name must match [A-Za-z0-9_-]{1,32}.";
+      }
+      {
+        assertion = !cfg.enable
+          || builtins.length (lib.unique mcpServerNames) == builtins.length mcpServerNames;
+        message = "mcp.servers[].name values must be unique.";
+      }
+      {
+        assertion = !cfg.enable
+          || lib.all (server: server.transport != "stdio" || server.command != null) cfg.mcp.servers;
+        message = "mcp.servers[].command is required for the stdio transport.";
+      }
+      {
+        assertion = !cfg.enable
+          || lib.all (server: server.transport != "streamable-http" || server.url != null) cfg.mcp.servers;
+        message = "mcp.servers[].url is required for the streamable-http transport.";
+      }
+      {
+        assertion = !cfg.enable || lib.all mcpSecretsOk cfg.mcp.servers;
+        message = "mcp.servers[].env/headers values must be environment variable names ([A-Za-z_][A-Za-z0-9_]*), not secrets.";
+      }
+      {
+        assertion = !cfg.enable
+          || lib.all (server: server.reconnect.maxDelayMs >= server.reconnect.initialDelayMs) cfg.mcp.servers;
+        message = "mcp.servers[].reconnect.maxDelayMs must be at least initialDelayMs.";
+      }
+      {
+        assertion = !cfg.enable || !openViking.enable || openViking.endpoint != null;
+        message = "memory.openviking.endpoint is required when memory.openviking.enable is true.";
+      }
+      {
+        assertion = !cfg.enable
+          || !openViking.enable
+          || openViking.endpoint == null
+          || lib.hasPrefix "http://" openViking.endpoint
+          || lib.hasPrefix "https://" openViking.endpoint;
+        message = "memory.openviking.endpoint must be an http(s) URL when set.";
+      }
+      {
+        assertion = !cfg.enable || !openViking.enable || openViking.apiKeyEnv != "";
+        message = "memory.openviking.apiKeyEnv must name the environment variable holding the OpenViking key.";
+      }
+      {
+        assertion = !cfg.enable || lib.hasPrefix "/" bundledSkillsDir;
+        message = "skill.bundledDir must be an absolute path.";
+      }
     ];
 
     warnings = lib.optional (cfg.enable && cfg.sudo.enable)
@@ -677,7 +985,13 @@ in
     ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.localTest.enable)
       "channel.localTest and channel.qqBot are both enabled; replies and notices are routed per turn across the two channels."
     ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable)
-      "The QQ client secret is read from ${cfg.channel.qqBot.clientSecretEnv}; provide it through environmentFile/agenix, never the Nix store.";
+      "The QQ client secret is read from ${cfg.channel.qqBot.clientSecretEnv}; provide it through environmentFile/agenix, never the Nix store."
+    ++ lib.optional (cfg.enable && cfg.mcp.servers != [ ])
+      "mcp.servers attaches external MCP servers: their processes run with the service user's privileges and every MCP tool call is reviewed; configure only trusted servers."
+    ++ lib.optional (cfg.enable && openViking.enable)
+      "memory.openviking.enable disables local memory (tool/store/snapshot) and the memory curator; the OpenViking backend owns memory while enabled (D175)."
+    ++ lib.optional (cfg.enable && openViking.enable && openViking.apiKeyEnv == "")
+      "memory.openviking.apiKeyEnv is empty; the OpenViking key cannot be resolved from the environment.";
   } // mkIf cfg.enable {
     services.nokoribi-agent._overlayText = overlayText;
 
@@ -709,9 +1023,9 @@ in
       lib.mkAfter [ "nix-command" "flakes" ]
     );
 
-    systemd.tmpfiles.rules = mkIf (stateDirectory == null) [
-      "d ${cfg.dshHome} 0750 ${cfg.user} ${cfg.group} -"
-    ];
+    systemd.tmpfiles.rules =
+      lib.optional (stateDirectory == null) "d ${cfg.dshHome} 0750 ${cfg.user} ${cfg.group} -"
+      ++ lib.optional openViking.enable "d ${cfg.dshHome}/openviking-state 0700 ${cfg.user} ${cfg.group} -";
 
     systemd.services.nokoribi-agent = {
       wantedBy = [ "multi-user.target" ];
