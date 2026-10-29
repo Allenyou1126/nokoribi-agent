@@ -14,7 +14,24 @@ import { LocalTestChannel, type LocalTestConfig } from "../src/channel.js";
 const dirs: string[] = [];
 const channels: LocalTestChannel[] = [];
 
-async function start(): Promise<{
+async function start(
+    outboundItems: readonly Record<string, unknown>[] = [
+        {
+            seq: 1,
+            kind: "reply",
+            chatId: "local",
+            text: "one",
+            interactionId: null,
+        },
+        {
+            seq: 2,
+            kind: "notice",
+            chatId: "local",
+            text: "two",
+            interactionId: null,
+        },
+    ]
+): Promise<{
     channel: LocalTestChannel;
     url: string;
     ingress: ReturnType<typeof vi.fn>;
@@ -46,22 +63,11 @@ async function start(): Promise<{
             ready: true,
         }),
         waitForOutbound: async (after: number) =>
-            [
-                {
-                    seq: 1,
-                    kind: "reply",
-                    chatId: "local",
-                    text: "one",
-                    interactionId: null,
-                },
-                {
-                    seq: 2,
-                    kind: "notice",
-                    chatId: "local",
-                    text: "two",
-                    interactionId: null,
-                },
-            ].filter((item) => item.seq > after),
+            outboundItems.filter((item) =>
+                (item.seq as number | undefined) !== undefined
+                    ? (item.seq as number) > after
+                    : false
+            ),
         nextOutboxSeq: 3,
     } as unknown as ChannelService;
     const config: LocalTestConfig = {
@@ -172,6 +178,100 @@ describe("local test channel", () => {
             }),
         });
         expect(response.status).toBe(501);
+    });
+
+    it("accepts action-only callbacks and invalid actions", async () => {
+        const { url, ingress } = await start();
+        const headers = { ...auth(), "content-type": "application/json" };
+        const accepted = await fetch(`${url}/v1/inbound`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+                messageId: "act-1",
+                action: {
+                    id: "token-1",
+                    payload: JSON.stringify({ k: "token-1" }),
+                    messageId: "platform-1",
+                },
+            }),
+        });
+        expect(accepted.status).toBe(202);
+        expect(ingress).toHaveBeenCalledWith(
+            expect.objectContaining({
+                messageId: "act-1",
+                action: {
+                    id: "token-1",
+                    payload: JSON.stringify({ k: "token-1" }),
+                    messageId: "platform-1",
+                },
+            })
+        );
+        const firstMessage = ingress.mock.calls[0]?.[0] as
+            | InboundMessage
+            | undefined;
+        expect(firstMessage?.text).toBeUndefined();
+
+        for (const action of [
+            {},
+            { id: "" },
+            { id: "token-1", payload: 1 },
+            { id: "token-1", messageId: " " },
+        ]) {
+            const invalid = await fetch(`${url}/v1/inbound`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ action }),
+            });
+            expect(invalid.status).toBe(400);
+        }
+    });
+
+    it("advertises action capabilities and projects outbound actions", async () => {
+        const outbound = await start([
+            {
+                seq: 1,
+                kind: "interaction",
+                chatId: "local",
+                text: "prompt",
+                interactionId: "i-1",
+                actions: [
+                    {
+                        id: "token-1",
+                        label: "允许一次",
+                        kind: "callback",
+                        payload: "{}",
+                        style: "primary",
+                    },
+                ],
+            },
+        ]);
+        expect(outbound.channel.capabilities.outboundActions).toBe(true);
+        expect(outbound.channel.capabilities.inboundActions).toBe(true);
+        const response = await fetch(
+            `${outbound.url}/v1/outbound?after=0&timeout=1`,
+            { headers: auth() }
+        );
+        await expect(response.json()).resolves.toEqual({
+            items: [
+                {
+                    seq: 1,
+                    kind: "interaction",
+                    chatId: "local",
+                    text: "prompt",
+                    interactionId: "i-1",
+                    actions: [
+                        {
+                            id: "token-1",
+                            label: "允许一次",
+                            kind: "callback",
+                            payload: "{}",
+                            style: "primary",
+                        },
+                    ],
+                },
+            ],
+            nextSeq: 2,
+        });
     });
 
     it("serves status and outbound history", async () => {

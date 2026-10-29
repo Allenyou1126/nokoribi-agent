@@ -12,6 +12,7 @@ import type {
     ChannelHealth,
     ChannelService,
     DeliveryMode,
+    InboundAction,
     InboundMessage,
     OutboundContent,
 } from "@nokoribi/channel-core";
@@ -104,6 +105,33 @@ async function readJson(
     }
 }
 
+function parseInboundAction(value: unknown): InboundAction | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new HttpError(400, "action must be a JSON object");
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id.trim() === "") {
+        throw new HttpError(400, "action.id is required");
+    }
+    if (record.payload !== undefined && typeof record.payload !== "string") {
+        throw new HttpError(400, "action.payload must be a string");
+    }
+    if (
+        record.messageId !== undefined &&
+        (typeof record.messageId !== "string" || record.messageId.trim() === "")
+    ) {
+        throw new HttpError(400, "action.messageId must be a non-empty string");
+    }
+    return {
+        id: record.id,
+        ...(record.payload === undefined ? {} : { payload: record.payload }),
+        ...(record.messageId === undefined
+            ? {}
+            : { messageId: record.messageId }),
+    };
+}
+
 /**
  * Loopback HTTP channel used for local acceptance.
  *
@@ -132,8 +160,11 @@ export class LocalTestChannel implements ChannelDriver {
             maxTextLength: config.maxTextLength,
             inboundImages: false,
             outboundFiles: false,
-            outboundActions: false,
-            inboundActions: false,
+            // The loopback test channel accepts action-only injections so
+            // process tests can replay button callbacks; production drivers
+            // still require a text fallback.
+            outboundActions: true,
+            inboundActions: true,
             activeMessages: true,
         };
         this.server = createServer((request, response) => {
@@ -281,6 +312,7 @@ export class LocalTestChannel implements ChannelDriver {
     ): Promise<void> {
         const body = await readJson(request, this.config.maxBodyBytes);
         const text = typeof body.text === "string" ? body.text : undefined;
+        const action = parseInboundAction(body.action);
         const rawImages = body.images;
         if (rawImages !== undefined) {
             if (!Array.isArray(rawImages)) {
@@ -302,7 +334,10 @@ export class LocalTestChannel implements ChannelDriver {
             });
             return;
         }
-        if (text === undefined || text.trim() === "") {
+        if (
+            action === undefined &&
+            (text === undefined || text.trim() === "")
+        ) {
             throw new HttpError(400, "text is required");
         }
         const messageId =
@@ -327,8 +362,9 @@ export class LocalTestChannel implements ChannelDriver {
             chatId,
             senderId: this.config.senderId,
             messageId,
-            text,
+            ...(text === undefined || text.trim() === "" ? {} : { text }),
             receivedAt: Date.now(),
+            ...(action === undefined ? {} : { action }),
             ...(delivery === undefined
                 ? {}
                 : { delivery: delivery as DeliveryMode }),
@@ -366,6 +402,9 @@ export class LocalTestChannel implements ChannelDriver {
                 ...(item.interactionId === null
                     ? {}
                     : { interactionId: item.interactionId }),
+                ...(item.actions === null || item.actions === undefined
+                    ? {}
+                    : { actions: item.actions }),
             })),
             // A concurrent enqueue can advance nextOutboxSeq after the
             // history read; report a cursor consistent with the returned

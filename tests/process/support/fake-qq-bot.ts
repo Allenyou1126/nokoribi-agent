@@ -26,8 +26,47 @@ export interface FakeQqFailure {
     readonly bizCode?: number;
 }
 
+/** One recorded interaction acknowledgement. */
+export interface FakeQqInteractionAck {
+    readonly interactionId: string;
+    readonly code: number;
+    readonly path: string;
+}
+
 interface FakeQqBotOptions {
     readonly heartbeatMs?: number;
+    /** Close Identify frames carrying the interaction intent with this code. */
+    readonly rejectInteractionIntent?: number;
+}
+
+/** Build an INTERACTION_CREATE event for one keyboard click. */
+export function interactionEvent(
+    overrides: {
+        readonly id?: string;
+        readonly userId?: string;
+        readonly buttonData?: string;
+        readonly buttonId?: string;
+        readonly type?: number;
+        readonly chatType?: number;
+        readonly timestamp?: string;
+    } = {}
+): Record<string, unknown> {
+    return {
+        id: overrides.id ?? `interaction-${String(Date.now())}`,
+        type: overrides.type ?? 11,
+        scene: "c2c",
+        chat_type: overrides.chatType ?? 2,
+        timestamp: overrides.timestamp ?? new Date().toISOString(),
+        user_openid: overrides.userId ?? "user-1",
+        version: 1,
+        data: {
+            type: 11,
+            resolved: {
+                button_data: overrides.buttonData ?? "{}",
+                button_id: overrides.buttonId ?? "",
+            },
+        },
+    };
 }
 
 /** Build a C2C event body with sensible defaults. */
@@ -84,9 +123,11 @@ export class FakeQqBot {
     private readonly api: Server;
     private readonly ws: FakeWsServer;
     private readonly heartbeatMs: number;
+    private readonly rejectInteractionIntent: number | undefined;
     private readonly failures: FakeQqFailure[] = [];
     private readonly requests: FakeQqRequest[] = [];
     private readonly sends: FakeQqSend[] = [];
+    private readonly acks: FakeQqInteractionAck[] = [];
     private readonly tokens: string[] = [];
     private readonly identifies: Record<string, unknown>[] = [];
     private readonly resumes: Record<string, unknown>[] = [];
@@ -102,6 +143,7 @@ export class FakeQqBot {
         this.api = api;
         this.ws = ws;
         this.heartbeatMs = options.heartbeatMs ?? 1000;
+        this.rejectInteractionIntent = options.rejectInteractionIntent;
     }
 
     static async start(options: FakeQqBotOptions = {}): Promise<FakeQqBot> {
@@ -132,6 +174,10 @@ export class FakeQqBot {
 
     get outbound(): readonly FakeQqSend[] {
         return this.sends;
+    }
+
+    get interactionAcks(): readonly FakeQqInteractionAck[] {
+        return this.acks;
     }
 
     get httpRequests(): readonly FakeQqRequest[] {
@@ -191,6 +237,44 @@ export class FakeQqBot {
         }
     }
 
+    /** Wait until at least `count` WebSocket IDENTIFY frames were seen. */
+    async waitForIdentifyCount(
+        count: number,
+        timeoutMs = 15000
+    ): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+        while (this.identifies.length < count) {
+            if (Date.now() > deadline) {
+                throw new Error(
+                    `timed out waiting for ${String(count)} QQ identifies; got ${String(
+                        this.identifies.length
+                    )}`
+                );
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+    }
+
+    /** Wait until one interaction acknowledgement is recorded. */
+    async waitForInteractionAck(
+        interactionId: string,
+        timeoutMs = 15000
+    ): Promise<FakeQqInteractionAck> {
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+            const ack = this.acks.find(
+                (entry) => entry.interactionId === interactionId
+            );
+            if (ack !== undefined) return ack;
+            if (Date.now() > deadline) {
+                throw new Error(
+                    `timed out waiting for interaction ack ${interactionId}`
+                );
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+    }
+
     /** Wait until the gateway has reconnected and sent RESUME. */
     async waitForResume(timeoutMs = 15000): Promise<void> {
         const deadline = Date.now() + timeoutMs;
@@ -242,6 +326,13 @@ export class FakeQqBot {
         this.pushEvent("GROUP_AT_MESSAGE_CREATE", groupAtEvent(overrides));
     }
 
+    /** Push one INTERACTION_CREATE event. */
+    pushInteraction(
+        overrides: Parameters<typeof interactionEvent>[0] = {}
+    ): void {
+        this.pushEvent("INTERACTION_CREATE", interactionEvent(overrides));
+    }
+
     /** Drop the current gateway connection with a resumable close code. */
     dropConnection(code = 4009): void {
         this.latestConnection()?.sendClose(code, "test drop");
@@ -276,7 +367,20 @@ export class FakeQqBot {
                 return;
             }
             if (payload.op === 2) {
-                this.identifies.push(payload.d ?? {});
+                const identify = payload.d ?? {};
+                this.identifies.push(identify);
+                const intents =
+                    typeof identify.intents === "number" ? identify.intents : 0;
+                if (
+                    this.rejectInteractionIntent !== undefined &&
+                    (intents & (1 << 26)) !== 0
+                ) {
+                    connection.sendClose(
+                        this.rejectInteractionIntent,
+                        "interaction intent rejected"
+                    );
+                    return;
+                }
                 this.sequence = 1;
                 connection.sendJson({
                     op: 0,
@@ -329,6 +433,13 @@ export class FakeQqBot {
         }
         if (path === "/gateway") {
             this.json(response, 200, { url: this.ws.url });
+            return;
+        }
+        if (path.startsWith("/interactions/")) {
+            const interactionId = path.slice("/interactions/".length);
+            const code = typeof body.code === "number" ? body.code : -1;
+            this.acks.push({ interactionId, code, path });
+            this.json(response, 200, {});
             return;
         }
         if (path.endsWith("/messages")) {
