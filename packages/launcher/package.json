@@ -29,6 +29,9 @@
         "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3",
         "@deepseek-ai/dsh-http-proxy": "0.2.1-rc.3",
         "@deepseek-ai/dsh-launch-environment": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-mcp-client": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-skill-filesystem": "0.2.1-rc.3",
         "@nokoribi/agent-app": "workspace:*",
         "@nokoribi/bundle": "workspace:*",
         "@nokoribi/channel-core": "workspace:*",
@@ -39,6 +42,7 @@
         "@nokoribi/reviewer": "workspace:*",
         "@nokoribi/shared": "workspace:*",
         "@nokoribi/shell-bash": "workspace:*",
-        "@nokoribi/shell-host-local": "workspace:*"
+        "@nokoribi/shell-host-local": "workspace:*",
+        "@openviking/dsh-memory-plugin": "0.5.31"
     }
 }
