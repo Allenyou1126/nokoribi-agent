@@ -11,7 +11,7 @@ export const MEMORY_TOOL_NAME: string = "memory";
 /** Maximum characters of body preview shown by `search`. */
 const PREVIEW_CHARS: number = 160;
 
-const MEMORY_TOOL_DESCRIPTION: string = `Long-term memory: a global Markdown store that is never injected into the prompt. Before relying on history, preferences, or decisions, run search. Before writing, search for duplicates; use supersedes (not a new near-duplicate) when replacing an existing entry. Only store durable facts: user preferences, personal facts, project-stable facts (tag project:<name>), important decisions and corrections, and reusable lessons. Never store secrets, credentials, API keys, tokens, logs, transcripts, or transient task state. Tags use namespace:value (type:preference|fact|decision|person|project, project:<name>, topic:<name>). forget is a soft delete: the entry is archived, not erased.`;
+const MEMORY_TOOL_DESCRIPTION: string = `Long-term memory: a global Markdown store. The host automatically injects a pinned snapshot (pinned entries plus auto-included type:person/type:preference) into the main session each turn with a budget (default maxChars=3000, maxEntries=20); the snapshot can truncate, so run search for exact or latest information. Pin only stable long-term facts: user identity/preferences and decisions that stay valid; keep the pinned set small. Do not duplicate AGENTS.md operational instructions. Before writing, search for duplicates; use supersedes (not a new near-duplicate) when replacing an existing entry. Only store durable facts: user preferences, personal facts, project-stable facts (tag project:<name>), important decisions and corrections, and reusable lessons. Never store secrets, credentials, API keys, tokens, logs, transcripts, or transient task state. Tags use namespace:value (type:preference|fact|decision|person|project, project:<name>, topic:<name>). forget is a soft delete: the entry is archived, not erased.`;
 
 /**
  * Build the model-facing memory tool for one store.
@@ -26,10 +26,11 @@ export function createMemoryTool(service: MemoryService): ToolDefinition {
             action: {
                 type: "string",
                 required: true,
-                enum: ["search", "read", "write", "forget"],
+                enum: ["search", "read", "write", "forget", "pin", "unpin"],
                 description:
                     "search: find entries; read: full entry by id; " +
-                    "write: create or update; forget: archive by id.",
+                    "write: create or update; forget: archive by id; " +
+                    "pin/unpin: control automatic snapshot inclusion.",
             },
             query: {
                 type: "string",
@@ -71,6 +72,13 @@ export function createMemoryTool(service: MemoryService): ToolDefinition {
                 type: "string",
                 enum: ["high", "medium", "low"],
                 description: "write: trust level (default medium).",
+            },
+            pinned: {
+                type: "boolean",
+                description:
+                    "write: also pin for the automatic snapshot (default " +
+                    "false for new entries; updates keep the stored flag " +
+                    "unless set).",
             },
             supersedes: {
                 type: "array",
@@ -123,6 +131,9 @@ export function createMemoryTool(service: MemoryService): ToolDefinition {
                         ...(args.confidence === undefined
                             ? {}
                             : { confidence: args.confidence }),
+                        ...(args.pinned === undefined
+                            ? {}
+                            : { pinned: args.pinned }),
                         ...(args.supersedes === undefined
                             ? {}
                             : { supersedes: args.supersedes }),
@@ -133,6 +144,14 @@ export function createMemoryTool(service: MemoryService): ToolDefinition {
                     const id = requireArgument(args.id, "forget", "id");
                     const entry = await service.forget(id);
                     return formatForgetResult(entry);
+                }
+                case "pin": {
+                    const id = requireArgument(args.id, "pin", "id");
+                    return formatPinResult(await service.pin(id), true);
+                }
+                case "unpin": {
+                    const id = requireArgument(args.id, "unpin", "id");
+                    return formatPinResult(await service.unpin(id), false);
                 }
                 default:
                     throw new Error(
@@ -173,7 +192,7 @@ function formatSearchResults(hits: readonly MemoryEntry[]): string {
     for (const hit of hits) {
         lines.push(
             "",
-            `- ${hit.id}: ${hit.title}`,
+            `- ${hit.id}: ${hit.title}${hit.pinned ? " [pinned]" : ""}`,
             `  tags: ${hit.tags.join(", ")}`,
             `  updated: ${hit.updated} | confidence: ${hit.confidence}`
         );
@@ -196,7 +215,8 @@ function formatEntry(entry: MemoryEntry): string {
         `- created: ${entry.created}`,
         `- updated: ${entry.updated}`,
         `- confidence: ${entry.confidence}`,
-        `- status: ${entry.status}`
+        `- status: ${entry.status}`,
+        `- pinned: ${String(entry.pinned)}`
     );
     if (entry.supersedes.length > 0) {
         lines.push(`- supersedes: ${entry.supersedes.join(", ")}`);
@@ -212,6 +232,7 @@ function formatWriteResult(entry: MemoryEntry, created: boolean): string {
         `- title: ${entry.title}`,
         `- tags: ${entry.tags.join(", ")}`,
         `- confidence: ${entry.confidence}`,
+        `- pinned: ${String(entry.pinned)}`,
     ];
     if (entry.supersedes.length > 0) {
         lines.push(`- supersedes: ${entry.supersedes.join(", ")}`);
@@ -225,4 +246,13 @@ function formatForgetResult(entry: MemoryEntry): string {
         `Archived memory entry \`${entry.id}\` (${entry.title}). ` +
         "It is no longer searchable but remains under archive/."
     );
+}
+
+/** Render the pin/unpin confirmation. */
+function formatPinResult(entry: MemoryEntry, pinned: boolean): string {
+    const action = pinned ? "Pinned" : "Unpinned";
+    const effect = pinned
+        ? "It is always included in the automatic snapshot."
+        : "It is no longer forced into the automatic snapshot.";
+    return `${action} memory entry \`${entry.id}\` (${entry.title}). ${effect}`;
 }

@@ -16,6 +16,9 @@ export const DEFAULT_CONFIDENCE: MemoryConfidence = "medium";
 /** Lifecycle state assigned to every stored entry. */
 export const DEFAULT_STATUS: MemoryStatus = "active";
 
+/** Whether a new entry is pinned for automatic snapshot injection. */
+export const DEFAULT_PINNED: boolean = false;
+
 /** Frontmatter fields of one memory entry. */
 export interface MemoryFrontmatter {
     /** Stable entry id; also the file name without the `.md` suffix. */
@@ -34,6 +37,8 @@ export interface MemoryFrontmatter {
     readonly confidence: MemoryConfidence;
     /** Lifecycle state; only `active` entries are searchable. */
     readonly status: MemoryStatus;
+    /** Whether the automatic snapshot always includes this entry (M16). */
+    readonly pinned: boolean;
     /** Ids of the entries this entry replaces. */
     readonly supersedes: readonly string[];
 }
@@ -111,7 +116,8 @@ export function serializeFrontmatter(
         `created: ${quote(frontmatter.created)}`,
         `updated: ${quote(frontmatter.updated)}`,
         `confidence: ${quote(frontmatter.confidence)}`,
-        `status: ${quote(frontmatter.status)}`
+        `status: ${quote(frontmatter.status)}`,
+        `pinned: ${frontmatter.pinned ? "true" : "false"}`
     );
     lines.push(
         frontmatter.supersedes.length === 0
@@ -297,6 +303,16 @@ function readStatus(fields: ReadonlyMap<string, unknown>): MemoryStatus {
     return value;
 }
 
+/** Read the pinned flag, defaulting it for pre-M16 files. */
+function readPinned(fields: ReadonlyMap<string, unknown>): boolean {
+    const value = fields.get("pinned");
+    if (value === undefined || value === null) return DEFAULT_PINNED;
+    if (typeof value !== "boolean") {
+        throw new MemoryFormatError('field "pinned" must be true or false');
+    }
+    return value;
+}
+
 /** Read the supersedes field, accepting null, a scalar, or a list. */
 function readSupersedes(
     fields: ReadonlyMap<string, unknown>
@@ -323,8 +339,8 @@ function readSupersedes(
  * Parse one memory Markdown document into frontmatter and body.
  *
  * Required fields are `id`, `title`, `tags`, `created` and `updated`; `source`
- * and `supersedes` are optional, and `confidence`/`status` default to
- * `medium`/`active` when a hand-written file omits them.
+ * and `supersedes` are optional, and `confidence`/`status`/`pinned` default to
+ * `medium`/`active`/`false` when a hand-written file omits them.
  * @param text - complete Markdown document.
  * @returns validated frontmatter and the normalized body.
  * @throws {MemoryFormatError} when the document is not a valid entry.
@@ -343,6 +359,7 @@ export function parseFrontmatter(text: string): ParsedMemoryFile {
             updated: readTimestamp(fields, "updated"),
             confidence: readConfidence(fields),
             status: readStatus(fields),
+            pinned: readPinned(fields),
             supersedes: readSupersedes(fields),
         },
         body: normalizeBody(document.body),

@@ -9,6 +9,7 @@ import { isNodeError, STATE_DIR_MODE, STATE_FILE_MODE } from "@nokoribi/shared";
 import type { MemoryConfidence, MemoryEntry } from "./frontmatter.js";
 import {
     DEFAULT_CONFIDENCE,
+    DEFAULT_PINNED,
     normalizeBody,
     serializeMemoryFile,
     tryParseMemoryFile,
@@ -81,6 +82,8 @@ export interface MemoryWriteInput {
     readonly source?: string | undefined;
     /** Trust level; defaults to `medium` for new entries. */
     readonly confidence?: MemoryConfidence | undefined;
+    /** Whether the entry is pinned for automatic snapshot injection. */
+    readonly pinned?: boolean | undefined;
     /** Active ids this entry replaces; they are archived on write. */
     readonly supersedes?: string | readonly string[] | undefined;
 }
@@ -95,6 +98,16 @@ export interface MemoryStats {
     readonly invalid: number;
     /** Total bytes of every `.md` file under either directory. */
     readonly bytes: number;
+    /** Active entries pinned for automatic snapshot injection (M16). */
+    readonly pinned: number;
+}
+
+/** Observation of the M16 automatic snapshot reported by `/status full`. */
+export interface MemoryRuntimeStatus {
+    /** Whether automatic snapshot injection is configured on. */
+    readonly enabled: boolean;
+    /** Characters of the snapshot frozen for the latest turn. */
+    readonly snapshotChars: number;
 }
 
 /** One write after validation but before it reaches the commit chain. */
@@ -105,6 +118,7 @@ interface NormalizedWrite {
     readonly body: string;
     readonly source: string | undefined;
     readonly confidence: MemoryConfidence | undefined;
+    readonly pinned: boolean | undefined;
     readonly supersedes: readonly string[] | undefined;
 }
 
@@ -207,6 +221,18 @@ function normalizeConfidence(
     return confidence;
 }
 
+/** Validate an optional pinned flag. */
+function normalizePinned(pinned: boolean | undefined): boolean | undefined {
+    if (pinned === undefined) return undefined;
+    if (typeof pinned !== "boolean") {
+        throw new Error(
+            `invalid memory pinned value "${String(pinned)}": ` +
+                "expected a boolean"
+        );
+    }
+    return pinned;
+}
+
 /** Validate and deduplicate the ids a write supersedes. */
 function normalizeSupersedes(
     supersedes: string | readonly string[] | undefined,
@@ -249,12 +275,13 @@ function normalizeWrite(input: MemoryWriteInput): NormalizedWrite {
     const body = normalizeBody(input.body);
     const source = normalizeSource(input.source);
     const confidence = normalizeConfidence(input.confidence);
+    const pinned = normalizePinned(input.pinned);
     const supersedes = normalizeSupersedes(input.supersedes, id);
     assertNoSecrets(
         [title, tags.join(" "), source ?? "", body].join("\n"),
         "memory entry"
     );
-    return { id, title, tags, body, source, confidence, supersedes };
+    return { id, title, tags, body, source, confidence, pinned, supersedes };
 }
 
 /** Tokenize a search query into lowercase keyword fragments. */
@@ -330,6 +357,8 @@ export class MemoryService extends Service {
     private readonly defaultLimit: number;
     private initialization: Promise<void> | undefined;
     private writeChain: Promise<unknown> = Promise.resolve();
+    private readonly changeListeners = new Set<() => void>();
+    private runtimeStatusValue: MemoryRuntimeStatus | undefined;
 
     /**
      * Create and install the `memory` service.
@@ -358,6 +387,33 @@ export class MemoryService extends Service {
     /** Absolute directory that holds the store. */
     get root(): string {
         return this.rootPath;
+    }
+
+    /** Latest automatic-injection observation, set by the snapshot injector. */
+    get runtimeStatus(): MemoryRuntimeStatus | undefined {
+        return this.runtimeStatusValue;
+    }
+
+    /**
+     * Record the current automatic-injection observation for `/status full`.
+     * @param status - latest injector state, or `undefined` to clear it.
+     */
+    setRuntimeStatus(status: MemoryRuntimeStatus | undefined): void {
+        this.runtimeStatusValue = status;
+    }
+
+    /**
+     * Subscribe to successful entry mutations (write/pin/unpin/forget and
+     * supersede archiving). The snapshot injector uses this to invalidate its
+     * rendered cache without polling.
+     * @param listener - called after each committed mutation.
+     * @returns the disposer that stops notifications.
+     */
+    onChange(listener: () => void): () => void {
+        this.changeListeners.add(listener);
+        return () => {
+            this.changeListeners.delete(listener);
+        };
     }
 
     /**
@@ -426,6 +482,36 @@ export class MemoryService extends Service {
     }
 
     /**
+     * List every active entry, for the automatic snapshot renderer.
+     * @returns active entries in directory order.
+     */
+    async listActive(): Promise<MemoryEntry[]> {
+        await this.initialize();
+        const scan = await this.scanDirectory(this.entriesDir);
+        return scan.entries.filter((entry) => entry.status === "active");
+    }
+
+    /**
+     * Pin one active entry so the automatic snapshot always includes it.
+     * @param id - entry id.
+     * @returns the updated entry.
+     * @throws when the entry is missing, malformed, or archived.
+     */
+    async pin(id: string): Promise<MemoryEntry> {
+        return this.setPinned(id, true);
+    }
+
+    /**
+     * Unpin one active entry; automatic inclusion by tag still applies.
+     * @param id - entry id.
+     * @returns the updated entry.
+     * @throws when the entry is missing, malformed, or archived.
+     */
+    async unpin(id: string): Promise<MemoryEntry> {
+        return this.setPinned(id, false);
+    }
+
+    /**
      * Create or update one entry.
      *
      * A write without an id creates a generated id; a write with an existing
@@ -473,6 +559,7 @@ export class MemoryService extends Service {
             };
             await this.writeEntryFile(this.archivePath(entryId), archived);
             await rm(this.entryPath(entryId), { force: true });
+            this.notifyChange();
             return archived;
         });
     }
@@ -486,16 +573,22 @@ export class MemoryService extends Service {
         const active = await this.scanDirectory(this.entriesDir);
         const archived = await this.scanDirectory(this.archiveDir);
         let activeCount = 0;
+        let pinnedCount = 0;
         let archivedCount = archived.entries.length;
         for (const entry of active.entries) {
-            if (entry.status === "active") activeCount += 1;
-            else archivedCount += 1;
+            if (entry.status === "active") {
+                activeCount += 1;
+                if (entry.pinned) pinnedCount += 1;
+            } else {
+                archivedCount += 1;
+            }
         }
         return {
             active: activeCount,
             archived: archivedCount,
             invalid: active.invalid + archived.invalid,
             bytes: active.bytes + archived.bytes,
+            pinned: pinnedCount,
         };
     }
 
@@ -553,6 +646,7 @@ export class MemoryService extends Service {
             confidence:
                 input.confidence ?? existing?.confidence ?? DEFAULT_CONFIDENCE,
             status: "active",
+            pinned: input.pinned ?? existing?.pinned ?? DEFAULT_PINNED,
             supersedes,
             body: input.body,
         };
@@ -561,7 +655,46 @@ export class MemoryService extends Service {
             if (supersededId === id) continue;
             await this.archiveEntry(supersededId);
         }
+        this.notifyChange();
         return entry;
+    }
+
+    /** Flip the pinned flag of one active entry; no-op when already set. */
+    private async setPinned(id: string, pinned: boolean): Promise<MemoryEntry> {
+        const entryId = normalizeEntryId(id);
+        return this.enqueue(async () => {
+            await this.initialize();
+            const text = await this.readText(this.entryPath(entryId));
+            if (text === undefined) {
+                throw new Error(`memory entry "${entryId}" was not found`);
+            }
+            const parsed = tryParseMemoryFile(text);
+            if (!parsed.ok) {
+                throw new Error(
+                    `memory entry "${entryId}" is invalid: ` +
+                        parsed.error.message
+                );
+            }
+            if (parsed.entry.status !== "active") {
+                throw new Error(`memory entry "${entryId}" is archived`);
+            }
+            if (parsed.entry.pinned === pinned) return parsed.entry;
+            const entry: MemoryEntry = { ...parsed.entry, pinned };
+            await this.writeEntryFile(this.entryPath(entryId), entry);
+            this.notifyChange();
+            return entry;
+        });
+    }
+
+    /** Notify snapshot caches after one committed mutation. */
+    private notifyChange(): void {
+        for (const listener of this.changeListeners) {
+            try {
+                listener();
+            } catch {
+                // A cache listener must never fail a memory mutation.
+            }
+        }
     }
 
     /** Allocate an unused generated id. */

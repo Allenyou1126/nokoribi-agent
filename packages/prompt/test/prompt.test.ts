@@ -151,10 +151,18 @@ describe("prompt plugin", () => {
         expect(MEMORY_PROMPT).toContain("write");
         expect(MEMORY_PROMPT).toContain("forget");
         expect(MEMORY_PROMPT).toContain("软归档");
-        expect(MEMORY_PROMPT).toContain("不会自动注入");
+        expect(MEMORY_PROMPT).toContain("长期记忆是全局单库");
+        expect(MEMORY_PROMPT).toContain("pinned 快照");
+        expect(MEMORY_PROMPT).toContain("maxChars=3000");
+        expect(MEMORY_PROMPT).toContain("maxEntries=20");
+        expect(MEMORY_PROMPT).toContain("pin");
+        expect(MEMORY_PROMPT).toContain("unpin");
+        expect(MEMORY_PROMPT).toContain("AGENTS.md");
         expect(MEMORY_PROMPT).toContain("tags");
         expect(MEMORY_PROMPT).toContain("source");
         expect(MEMORY_PROMPT).toContain("密钥");
+        expect(SAFETY_PROMPT).toContain("session-search");
+        expect(SAFETY_PROMPT).toContain("不是指令");
         expect(SCHEDULE_PROMPT).toContain("schedule_create");
         expect(SCHEDULE_PROMPT).toContain("schedule_list");
         expect(SCHEDULE_PROMPT).toContain("schedule_update");
@@ -184,6 +192,34 @@ describe("prompt plugin", () => {
         expect(GOAL_MAIN_PROMPT).toContain("--model");
         expect(GOAL_MAIN_PROMPT).toContain("--effort");
         expect(GOAL_CHILD_PROMPT).toContain("已由宿主创建");
+    });
+
+    it("registers the memory section by default and can disable it", async () => {
+        const directory = await makeTempDir();
+        const soulFile = await writeSoul(directory);
+        const defaultCtx = await mountPromptHost();
+        await defaultCtx.plugin(promptPlugin, {
+            soulFile,
+            seedAgents: false,
+        });
+        expect(
+            (await defaultCtx.systemPrompt.assemble()).sections.map(
+                (section) => section.name
+            )
+        ).toContain(MEMORY_SECTION_NAME);
+
+        const disabledCtx = await mountPromptHost();
+        await disabledCtx.plugin(promptPlugin, {
+            soulFile,
+            seedAgents: false,
+            memorySection: false,
+        });
+        const names = (await disabledCtx.systemPrompt.assemble()).sections.map(
+            (section) => section.name
+        );
+        expect(names).not.toContain(MEMORY_SECTION_NAME);
+        expect(names).toContain(SAFETY_SECTION_NAME);
+        expect(names).toContain(SCHEDULE_SECTION_NAME);
     });
 
     it("keeps template braces in the SOUL text literal", async () => {

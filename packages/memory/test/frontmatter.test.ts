@@ -20,6 +20,7 @@ const fullEntry: MemoryEntry = {
     updated: "2026-10-25T02:00:00+08:00",
     confidence: "high",
     status: "active",
+    pinned: true,
     supersedes: ["mem-20261024-000000-000000"],
     body: "用户希望所有 NixOS 密钥通过 agenix 管理。\n\n不使用明文 EnvironmentFile。",
 };
@@ -42,6 +43,7 @@ describe("frontmatter serialization", () => {
         expect(lines).toContain('source: "session:main-1#turn-12"');
         expect(lines).toContain('confidence: "high"');
         expect(lines).toContain('status: "active"');
+        expect(lines).toContain("pinned: true");
         expect(lines).toContain('supersedes: ["mem-20261024-000000-000000"]');
         expect(lines).toContain("---");
         expect(text.endsWith("\n")).toBe(true);
@@ -56,6 +58,7 @@ describe("frontmatter serialization", () => {
             updated: "2026-10-25T02:00:00Z",
             confidence: "low",
             status: "active",
+            pinned: false,
             supersedes: [],
             body: "body",
         };
@@ -111,6 +114,7 @@ describe("frontmatter parsing", () => {
             updated: "2026-10-25T02:00:00Z",
             confidence: DEFAULT_CONFIDENCE,
             status: "active",
+            pinned: false,
             supersedes: [],
             body: "Body text.",
         });
@@ -140,6 +144,40 @@ describe("frontmatter parsing", () => {
         expect(parsed.title).toBe("Single quoted");
         expect(parsed.tags).toStrictEqual(["type:fact"]);
         expect(parsed.supersedes).toStrictEqual(["mem-0"]);
+        expect(parsed.pinned).toBe(false);
+    });
+
+    it("keeps pre-M16 files compatible and round-trips pinned", () => {
+        const text = [
+            "---",
+            'id: "mem-legacy"',
+            'title: "Legacy entry"',
+            'tags: ["type:fact"]',
+            'created: "2026-10-25T01:30:00Z"',
+            'updated: "2026-10-25T01:30:00Z"',
+            "---",
+        ].join("\n");
+        expect(parseMemoryFile(text).pinned).toBe(false);
+        const pinnedText = text.replace(
+            'tags: ["type:fact"]',
+            'tags: ["type:fact"]\npinned: true'
+        );
+        expect(parseMemoryFile(pinnedText).pinned).toBe(true);
+        const entry: MemoryEntry = {
+            id: "mem-pinned",
+            title: "Pinned",
+            tags: ["type:person"],
+            created: "2026-10-25T01:30:00Z",
+            updated: "2026-10-25T01:30:00Z",
+            confidence: "high",
+            status: "active",
+            pinned: true,
+            supersedes: [],
+            body: "",
+        };
+        expect(parseMemoryFile(serializeMemoryFile(entry))).toStrictEqual(
+            entry
+        );
     });
 
     it.each([
@@ -165,6 +203,12 @@ describe("frontmatter parsing", () => {
             "invalid timestamp",
             '---\nid: "mem-1"\ntitle: "T"\ntags: ["type:fact"]\n' +
                 'created: yesterday\nupdated: "2026-10-25T01:30:00Z"\n---\n',
+        ],
+        [
+            "invalid pinned flag",
+            '---\nid: "mem-1"\ntitle: "T"\ntags: ["type:fact"]\n' +
+                'created: "2026-10-25T01:30:00Z"\n' +
+                'updated: "2026-10-25T01:30:00Z"\npinned: maybe\n---\n',
         ],
         [
             "unsupported frontmatter line",

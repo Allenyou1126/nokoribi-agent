@@ -136,6 +136,9 @@ export const inject: string[] = ["systemPrompt"];
 /** Seed missing AGENTS.md files on startup unless configured otherwise. */
 export const DEFAULT_SEED_AGENTS: boolean = true;
 
+/** Register the `nokoribi:memory` section unless configured otherwise. */
+export const DEFAULT_MEMORY_SECTION: boolean = true;
+
 type ObjectSchema = ReturnType<typeof Schema.object>;
 
 /** Prompt plugin configuration; every field has a documented default. */
@@ -158,6 +161,11 @@ export interface Config {
     readonly globalAgentsFile?: string | undefined;
     /** Workspace AGENTS.md target override. */
     readonly workspaceAgentsFile?: string | undefined;
+    /**
+     * Register the `nokoribi:memory` section (default true). Local memory is
+     * disabled when the OpenViking backend takes over (M17).
+     */
+    readonly memorySection?: boolean | undefined;
 }
 
 /** Validated prompt configuration schema. */
@@ -192,6 +200,12 @@ export const Config: ObjectSchema = Schema.object({
     workspaceAgentsFile: Schema.string().description(
         "Workspace AGENTS.md target; defaults to <workspace>/AGENTS.md."
     ),
+    memorySection: Schema.boolean()
+        .default(DEFAULT_MEMORY_SECTION)
+        .description(
+            "Register the nokoribi:memory section; false when local memory " +
+                "is disabled (M17 OpenViking)."
+        ),
 });
 
 function resolveWorkspace(
@@ -230,12 +244,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         text: INTERACTION_PROMPT,
         interpolate: false,
     });
-    ctx.systemPrompt.section({
-        name: MEMORY_SECTION_NAME,
-        order: MEMORY_SECTION_ORDER,
-        text: MEMORY_PROMPT,
-        interpolate: false,
-    });
+    if (config.memorySection ?? DEFAULT_MEMORY_SECTION) {
+        ctx.systemPrompt.section({
+            name: MEMORY_SECTION_NAME,
+            order: MEMORY_SECTION_ORDER,
+            text: MEMORY_PROMPT,
+            interpolate: false,
+        });
+    }
     ctx.systemPrompt.section({
         name: SAFETY_SECTION_NAME,
         order: SAFETY_SECTION_ORDER,

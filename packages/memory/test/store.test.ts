@@ -58,6 +58,7 @@ function sampleEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
         updated: "2026-01-01T00:00:00.000Z",
         confidence: "medium",
         status: "active",
+        pinned: false,
         supersedes: [],
         body: "Sample body",
         ...overrides,
@@ -148,6 +149,7 @@ describe("MemoryService storage", () => {
             archived: 0,
             invalid: 0,
             bytes: 0,
+            pinned: 0,
         });
     });
 
@@ -538,5 +540,116 @@ describe("MemoryService forget and supersede", () => {
         });
         expect(await service.read(entry.id)).toStrictEqual(entry);
         expect((await service.stats()).archived).toBe(1);
+    });
+});
+
+describe("MemoryService pinned entries", () => {
+    it("stores the pinned flag and counts it in stats", async () => {
+        const root = await makeRoot();
+        const service = makeService(root);
+        const pinned = await service.write({
+            title: "称呼",
+            tags: ["type:person"],
+            body: "用户希望被称为老板。",
+            pinned: true,
+        });
+        expect(pinned.pinned).toBe(true);
+        const plain = await service.write({
+            title: "Random fact",
+            tags: ["type:fact"],
+            body: "plain",
+        });
+        expect(plain.pinned).toBe(false);
+        const stats = await service.stats();
+        expect(stats.active).toBe(2);
+        expect(stats.pinned).toBe(1);
+        expect(
+            (await service.listActive()).map((entry) => entry.id).sort()
+        ).toStrictEqual([pinned.id, plain.id].sort());
+    });
+
+    it("keeps the stored flag when an update omits pinned", async () => {
+        const root = await makeRoot();
+        const service = makeService(root);
+        const first = await service.write({
+            id: "entry-pin",
+            title: "First",
+            tags: ["type:fact"],
+            body: "one",
+            pinned: true,
+        });
+        const second = await service.write({
+            id: first.id,
+            title: "Second",
+            tags: ["type:fact"],
+            body: "two",
+        });
+        expect(second.pinned).toBe(true);
+        const third = await service.write({
+            id: first.id,
+            title: "Third",
+            tags: ["type:fact"],
+            body: "three",
+            pinned: false,
+        });
+        expect(third.pinned).toBe(false);
+    });
+
+    it("pins and unpins active entries idempotently", async () => {
+        const root = await makeRoot();
+        const service = makeService(root);
+        const entry = await service.write({
+            title: "Pinnable",
+            tags: ["type:fact"],
+            body: "body",
+        });
+        expect((await service.pin(entry.id)).pinned).toBe(true);
+        expect((await service.pin(entry.id)).pinned).toBe(true);
+        expect((await service.stats()).pinned).toBe(1);
+        expect((await service.unpin(entry.id)).pinned).toBe(false);
+        expect((await service.unpin(entry.id)).pinned).toBe(false);
+        expect((await service.stats()).pinned).toBe(0);
+        await expect(service.pin("missing")).rejects.toThrow(/was not found/);
+        await service.forget(entry.id);
+        await expect(service.pin(entry.id)).rejects.toThrow(/was not found/);
+    });
+
+    it("notifies change listeners after mutations and stops after dispose", async () => {
+        const root = await makeRoot();
+        const service = makeService(root);
+        let changes = 0;
+        const dispose = service.onChange(() => {
+            changes += 1;
+        });
+        const entry = await service.write({
+            title: "Tracked",
+            tags: ["type:fact"],
+            body: "body",
+        });
+        await service.pin(entry.id);
+        await service.unpin(entry.id);
+        await service.forget(entry.id);
+        expect(changes).toBe(4);
+        dispose();
+        const again = await service.write({
+            title: "After dispose",
+            tags: ["type:fact"],
+            body: "body",
+        });
+        expect(changes).toBe(4);
+        expect(again.pinned).toBe(false);
+    });
+
+    it("exposes snapshot runtime status for /status full", async () => {
+        const root = await makeRoot();
+        const service = makeService(root);
+        expect(service.runtimeStatus).toBeUndefined();
+        service.setRuntimeStatus({ enabled: true, snapshotChars: 120 });
+        expect(service.runtimeStatus).toStrictEqual({
+            enabled: true,
+            snapshotChars: 120,
+        });
+        service.setRuntimeStatus(undefined);
+        expect(service.runtimeStatus).toBeUndefined();
     });
 });

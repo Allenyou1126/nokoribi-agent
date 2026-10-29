@@ -65,6 +65,8 @@ describe("memory tool", () => {
         const { tool } = await makeTool();
         expect(tool.name).toBe("memory");
         expect(tool.description.length).toBeGreaterThan(100);
+        expect(tool.description).toContain("automatic");
+        expect(tool.description).toContain("pinned");
         const parameters = tool.parameters as {
             readonly properties?: Record<string, unknown>;
             readonly required?: readonly string[];
@@ -75,6 +77,7 @@ describe("memory tool", () => {
             "confidence",
             "id",
             "limit",
+            "pinned",
             "query",
             "source",
             "supersedes",
@@ -90,6 +93,8 @@ describe("memory tool", () => {
             "read",
             "write",
             "forget",
+            "pin",
+            "unpin",
         ]);
     });
 
@@ -133,6 +138,32 @@ describe("memory tool", () => {
         );
     });
 
+    it("writes pinned entries, marks them, and pins or unpins by id", async () => {
+        const { tool } = await makeTool();
+        const write = await run(tool, {
+            action: "write",
+            title: "称呼",
+            tags: ["type:person"],
+            body: "用户希望被称呼为老板。",
+            pinned: true,
+        });
+        const id = idOf(write);
+        expect(write).toContain("- pinned: true");
+        const search = await run(tool, { action: "search", query: "称呼" });
+        expect(search).toContain("[pinned]");
+        const read = await run(tool, { action: "read", id });
+        expect(read).toContain("- pinned: true");
+        const unpin = await run(tool, { action: "unpin", id });
+        expect(unpin).toContain("Unpinned memory entry");
+        expect(unpin).toContain(id);
+        const unpinned = await run(tool, { action: "read", id });
+        expect(unpinned).toContain("- pinned: false");
+        const pin = await run(tool, { action: "pin", id });
+        expect(pin).toContain("Pinned memory entry");
+        const pinnedSearch = await run(tool, { action: "search" });
+        expect(pinnedSearch).toContain("[pinned]");
+    });
+
     it("reports an update and superseded ids", async () => {
         const { tool } = await makeTool();
         const first = await run(tool, {
@@ -171,6 +202,12 @@ describe("memory tool", () => {
             /requires "id"/
         );
         await expect(run(tool, { action: "forget" })).rejects.toThrow(
+            /requires "id"/
+        );
+        await expect(run(tool, { action: "pin" })).rejects.toThrow(
+            /requires "id"/
+        );
+        await expect(run(tool, { action: "unpin" })).rejects.toThrow(
             /requires "id"/
         );
         await expect(
