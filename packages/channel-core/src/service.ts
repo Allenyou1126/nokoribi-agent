@@ -303,7 +303,8 @@ export class ChannelService extends Service {
             sendPrompt: async (input) => {
                 await this.enqueueInteractionPrompt(
                     input.text,
-                    input.interactionId
+                    input.interactionId,
+                    input.actions
                 );
             },
             sendNotice: async (text) => {
@@ -796,11 +797,11 @@ export class ChannelService extends Service {
         }
         await this.seen.add(key);
         const text = message.text?.trim() ?? "";
-        if (text === "") {
-            return { accepted: false, duplicate: false, reason: "empty" };
-        }
         const runtime = this.runtime;
         if (runtime === undefined) {
+            if (message.action === undefined && text === "") {
+                return { accepted: false, duplicate: false, reason: "empty" };
+            }
             if (this.buffer.length >= this.config.ingressBufferLimit) {
                 throw new IngressBufferFullError(
                     this.config.ingressBufferLimit
@@ -813,6 +814,26 @@ export class ChannelService extends Service {
             channelId: message.channelId,
             chatId: message.chatId,
         };
+        if (message.action !== undefined) {
+            this.lastActiveChat = { ...chat };
+            runtime.onChatActive?.(chat);
+            let consumed = false;
+            try {
+                consumed = await this.broker.handleAction(message.action);
+            } catch (error) {
+                this.logger.warn("failed to handle inbound action", {
+                    channel: message.channelId,
+                    messageId: message.messageId,
+                    error:
+                        error instanceof Error ? error.message : String(error),
+                });
+            }
+            if (!consumed) await this.notifyActionExpired(chat);
+            return { accepted: true, duplicate: false };
+        }
+        if (text === "") {
+            return { accepted: false, duplicate: false, reason: "empty" };
+        }
         this.lastActiveChat = { ...chat };
         this.rememberInbound(message);
         runtime.onChatActive?.(chat);
@@ -830,6 +851,52 @@ export class ChannelService extends Service {
         const delivery = this.resolveDelivery(message.delivery, runtime.agent);
         await this.deliverText(runtime.agent, chat, text, delivery);
         return { accepted: true, duplicate: false };
+    }
+
+    private async notifyActionExpired(chat: ChatRef): Promise<void> {
+        const body =
+            "该按钮已失效（审批已处理、已超时或进程重启），请以最新提示为准。";
+        const driver = this.drivers.get(chat.channelId);
+        if (driver === undefined) {
+            this.logger.warn("cannot notify expired action: driver missing", {
+                channel: chat.channelId,
+            });
+            return;
+        }
+        try {
+            const seed = this.replyContextFor(chat);
+            if (seed !== undefined) {
+                const seq = this.nextReplySeq(chat, seed.messageId);
+                const remaining = remainingReplySlots(
+                    driver.capabilities.maxRepliesPerReply,
+                    seq
+                );
+                const passive =
+                    remaining > 0 &&
+                    this.passiveDeliverable(driver, chat.chatId, "notice", {
+                        messageId: seed.messageId,
+                        receivedAt: seed.receivedAt,
+                        seq,
+                    });
+                if (passive) {
+                    await this.enqueueText("notice", chat, `⚠️ ${body}`, {
+                        reply: seed,
+                    });
+                    return;
+                }
+            }
+            if (this.activeDeliverable(driver, chat.chatId, "notice")) {
+                await this.enqueueText("notice", chat, `⚠️ ${body}`);
+                return;
+            }
+            await this.deferNoticeText(chat, body);
+        } catch (error) {
+            this.logger.warn("failed to notify expired action", {
+                channel: chat.channelId,
+                chatId: chat.chatId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
     }
 
     private rememberInbound(message: InboundMessage): void {
@@ -922,7 +989,8 @@ export class ChannelService extends Service {
 
     private async enqueueInteractionPrompt(
         text: string,
-        interactionId: string
+        interactionId: string,
+        actions?: readonly OutboundAction[]
     ): Promise<void> {
         const chat = this.replyTarget();
         if (chat === null) throw new DriverNotFoundError("default");
@@ -957,13 +1025,17 @@ export class ChannelService extends Service {
             await this.enqueueText("interaction", chat, text, {
                 interactionId,
                 reply: seed,
+                ...(actions === undefined ? {} : { actions }),
             });
             return;
         }
         if (!this.activeDeliverable(driver, chat.chatId, "interaction")) {
             throw new NonRetryableDeliveryError("interaction-undeliverable");
         }
-        await this.enqueueText("interaction", chat, text, { interactionId });
+        await this.enqueueText("interaction", chat, text, {
+            interactionId,
+            ...(actions === undefined ? {} : { actions }),
+        });
     }
 
     private async enqueueText(

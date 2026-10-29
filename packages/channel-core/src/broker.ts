@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {
@@ -11,8 +11,9 @@ import {
     type AskUserQuestionAnswerItem,
     type AskUserQuestionRequest,
 } from "@deepseek-ai/dsh-user-questions";
-import type { Logger } from "@nokoribi/shared";
+import type { Logger, OutboundAction } from "@nokoribi/shared";
 
+import type { InboundAction } from "./contract.js";
 import {
     describeAgent,
     formatApprovalPrompt,
@@ -36,6 +37,7 @@ export interface InteractionBrokerOptions {
     readonly sendPrompt: (input: {
         readonly text: string;
         readonly interactionId: string;
+        readonly actions?: readonly OutboundAction[];
     }) => Promise<void>;
     readonly sendNotice: (text: string) => Promise<void>;
     readonly onTerminal?: (interactionId: string) => void;
@@ -60,6 +62,12 @@ interface ApprovalInteraction extends BaseInteraction {
     readonly kind: "approval";
     readonly request: ApprovalRequest;
     readonly resolve: (outcome: ApprovalOutcome) => void;
+    actions: readonly OutboundAction[] | undefined;
+}
+
+interface ApprovalActionToken {
+    readonly interactionId: string;
+    readonly outcome: ApprovalOutcome;
 }
 
 interface QuestionInteraction extends BaseInteraction {
@@ -81,6 +89,15 @@ function timeoutError(message: string): UserQuestionError {
     return new UserQuestionError(message, "ASK_ABORTED");
 }
 
+const APPROVAL_ACTIONS: readonly {
+    readonly label: string;
+    readonly outcome: ApprovalOutcome;
+    readonly style: "primary" | "danger";
+}[] = [
+    { label: "允许一次", outcome: "allowed-once", style: "primary" },
+    { label: "拒绝", outcome: "rejected", style: "danger" },
+];
+
 /**
  * Serial text interaction broker for approvals and user questions.
  *
@@ -94,6 +111,8 @@ export class InteractionBroker {
     private readonly queue: Interaction[] = [];
     private readonly terminalIds = new Set<string>();
     private readonly terminalOrder: string[] = [];
+    private readonly actionTokens = new Map<string, ApprovalActionToken>();
+    private readonly tokensByInteraction = new Map<string, Set<string>>();
     private active: Interaction | undefined;
     private closed = false;
     private aborting = false;
@@ -127,6 +146,7 @@ export class InteractionBroker {
                 kind: "approval",
                 request: req,
                 resolve,
+                actions: undefined,
             };
             this.enqueue(approval);
         });
@@ -203,6 +223,33 @@ export class InteractionBroker {
             return true;
         }
         await this.presentQuestion(active);
+        return true;
+    }
+
+    /**
+     * Route one inbound button callback to the active approval.
+     *
+     * Actions are authoritative: the payload token is the only approval
+     * signal. Unknown, malformed, stale or already-consumed actions are not
+     * interpreted as text replies and never reach the model.
+     * @returns true when the broker settled the active approval.
+     */
+    async handleAction(action: InboundAction): Promise<boolean> {
+        const token = this.actionToken(action);
+        if (token === undefined) return false;
+        const entry = this.actionTokens.get(token);
+        if (entry === undefined) return false;
+        const active = this.active;
+        if (
+            active === undefined ||
+            active.kind !== "approval" ||
+            !active.shown ||
+            active.settled ||
+            active.id !== entry.interactionId
+        ) {
+            return false;
+        }
+        this.settleApproval(active, entry.outcome);
         return true;
     }
 
@@ -328,9 +375,11 @@ export class InteractionBroker {
             ...(summary === undefined ? {} : { summary }),
             timeoutSeconds: Math.ceil(this.options.approvalTimeoutMs / 1000),
         });
+        const actions = this.createApprovalActions(interaction);
         await this.options.sendPrompt({
             text,
             interactionId: interaction.id,
+            actions,
         });
     }
 
@@ -359,10 +408,15 @@ export class InteractionBroker {
         const text =
             "无效回复。请按提示重新作答。\n\n" +
             this.describeCurrentPrompt(interaction);
+        const actions =
+            interaction.kind === "approval"
+                ? this.createApprovalActions(interaction)
+                : undefined;
         try {
             await this.options.sendPrompt({
                 text,
                 interactionId: interaction.id,
+                ...(actions === undefined ? {} : { actions }),
             });
         } catch (error) {
             this.options.logger.warn("interaction reprompt failed", {
@@ -396,6 +450,68 @@ export class InteractionBroker {
             ...(summary === undefined ? {} : { summary }),
             timeoutSeconds: Math.ceil(this.options.approvalTimeoutMs / 1000),
         });
+    }
+
+    private createApprovalActions(
+        interaction: ApprovalInteraction
+    ): readonly OutboundAction[] {
+        if (interaction.actions !== undefined) return interaction.actions;
+        const actions = APPROVAL_ACTIONS.map((spec) => {
+            const token = this.registerApprovalToken(
+                interaction.id,
+                spec.outcome
+            );
+            return {
+                id: token,
+                label: spec.label,
+                kind: "callback" as const,
+                payload: JSON.stringify({ k: token, t: spec.label }),
+                style: spec.style,
+            };
+        });
+        interaction.actions = actions;
+        return actions;
+    }
+
+    private registerApprovalToken(
+        interactionId: string,
+        outcome: ApprovalOutcome
+    ): string {
+        const token = randomBytes(16).toString("base64url");
+        this.actionTokens.set(token, { interactionId, outcome });
+        let tokens = this.tokensByInteraction.get(interactionId);
+        if (tokens === undefined) {
+            tokens = new Set<string>();
+            this.tokensByInteraction.set(interactionId, tokens);
+        }
+        tokens.add(token);
+        return token;
+    }
+
+    private actionToken(action: InboundAction): string | undefined {
+        const payload = action.payload;
+        if (payload !== undefined) {
+            try {
+                const parsed: unknown = JSON.parse(payload);
+                if (typeof parsed === "object" && parsed !== null) {
+                    const token = (parsed as { k?: unknown }).k;
+                    if (typeof token === "string" && token.trim() !== "") {
+                        return token;
+                    }
+                }
+            } catch {
+                // A malformed payload falls back to the platform id below.
+            }
+        }
+        const id = action.id.trim();
+        return id === "" ? undefined : id;
+    }
+
+    private forgetApprovalActions(interactionId: string): void {
+        const tokens = this.tokensByInteraction.get(interactionId);
+        if (tokens === undefined) return;
+        for (const token of tokens) this.actionTokens.delete(token);
+        this.tokensByInteraction.delete(interactionId);
     }
 
     private startTimer(interaction: Interaction): void {
@@ -481,6 +597,7 @@ export class InteractionBroker {
     }
 
     private finish(interaction: Interaction, skipNext = false): void {
+        this.forgetApprovalActions(interaction.id);
         if (this.active === interaction) this.active = undefined;
         if (
             interaction.signal !== undefined &&

@@ -558,25 +558,27 @@ describe("M7 channel routing", () => {
         ]);
     });
 
-    it("accepts inbound action metadata with a text fallback", async () => {
+    it("routes inbound action metadata through the broker", async () => {
         const driver = makeDriver({ id: "fake-a" });
         const { ctx } = await setup({
             drivers: [driver],
             defaultChannelId: "fake-a",
         });
 
-        const accepted = await ctx.channels.ingress(
+        const fallback = await ctx.channels.ingress(
             inbound("fake-a", "a-1", "允许", {
                 action: { id: "button-1", payload: "allow", messageId: "m-1" },
             })
         );
-        expect(accepted.accepted).toBe(true);
+        expect(fallback.accepted).toBe(true);
+        // M9: action-only callbacks are accepted; the empty-text check no
+        // longer applies before the action branch.
         const empty = await ctx.channels.ingress(
             inbound("fake-a", "a-2", "", {
                 action: { id: "button-2" },
             })
         );
-        expect(empty).toMatchObject({ accepted: false, reason: "empty" });
+        expect(empty).toMatchObject({ accepted: true });
     });
 
     it("drops a notice when no chat can be addressed", async () => {
