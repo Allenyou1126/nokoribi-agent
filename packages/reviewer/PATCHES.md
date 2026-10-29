@@ -16,6 +16,12 @@ Applied to `vendor/auto-review.js` (upstream `lib/index.js`, rc.3):
    The switch is skipped when the child is already under `ask`.
 4. Reviewer failures now report the failing tier in the model-facing error.
 5. The diagnostic plugin name is `nokoribi-reviewer`.
+6. `createAutoReview` accepts `config.exemptTools` (default `[]`). The
+   `tools/pre-execute` hook passes a matching tool name straight through to
+   `next()` after the preset/accepting gates and before snapshot/review, so
+   exempted tools bypass Auto review while every other tool keeps the two-tier
+   logic. The list is configured by the host (M10 defaults it to
+   `web_search,web_fetch`); an empty list restores full review.
 
 No other upstream behavior is changed. The wrapper keeps the upstream
 `reviewUserText` and `REVIEW_POLICY` exports.

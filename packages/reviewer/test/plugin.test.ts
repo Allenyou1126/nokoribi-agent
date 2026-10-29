@@ -35,4 +35,19 @@ describe("reviewer plugin contract", () => {
         expect(parsed.timeoutMs).toBe(30000);
         expect(() => Config({ fast: { provider: "p", model: "f" } })).toThrow();
     });
+
+    it("defaults exemptTools to empty and parses a custom list", () => {
+        const defaults = Config({
+            fast: { provider: "p", model: "fast" },
+            strong: { provider: "p", model: "strong" },
+        }) as unknown as { exemptTools: readonly string[] };
+        expect(defaults.exemptTools).toEqual([]);
+
+        const custom = Config({
+            fast: { provider: "p", model: "fast" },
+            strong: { provider: "p", model: "strong" },
+            exemptTools: ["web_search", "web_fetch"],
+        }) as unknown as { exemptTools: readonly string[] };
+        expect(custom.exemptTools).toEqual(["web_search", "web_fetch"]);
+    });
 });

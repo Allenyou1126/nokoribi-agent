@@ -80,6 +80,7 @@ const config: AutoReviewConfig = {
     fast: { provider: "fast-provider", model: "fast-model" },
     strong: { provider: "strong-provider", model: "strong-model" },
     timeoutMs: 500,
+    exemptTools: [],
 };
 
 describe("parseDecision", () => {

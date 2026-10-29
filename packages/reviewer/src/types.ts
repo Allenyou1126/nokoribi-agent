@@ -12,6 +12,8 @@ export interface AutoReviewConfig {
     readonly strong: ReviewerRoute;
     /** Per-call reviewer deadline in milliseconds. */
     readonly timeoutMs: number;
+    /** Tool names that bypass the Auto review gate; empty reviews everything. */
+    readonly exemptTools: readonly string[];
 }
 
 /** Risk classes accepted by the upstream reviewer protocol. */

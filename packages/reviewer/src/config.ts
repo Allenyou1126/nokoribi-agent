@@ -28,4 +28,7 @@ export const Config: ObjectSchema = Schema.object({
         .min(1)
         .default(30000)
         .description("Per-reviewer-call deadline in milliseconds."),
+    exemptTools: Schema.array(Schema.string())
+        .default([])
+        .description("Tool names that bypass the Auto review gate."),
 });

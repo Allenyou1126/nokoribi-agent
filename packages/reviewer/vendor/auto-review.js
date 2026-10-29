@@ -385,6 +385,7 @@ function createAutoReview(ctx, config, policy) {
 			if (agent === void 0 || exec.parent === void 0 && exec.name === RUN_CODE_NAME) return next();
 			if (permissionPresets.current(agent.session) !== AUTO_PRESET) return next();
 			if (!accepting || lifecycle.signal.aborted) return { kind: "cancel" };
+			if (config.exemptTools.includes(exec.name)) return next();
 			const completed = Promise.withResolvers();
 			active.add(completed.promise);
 			try {
