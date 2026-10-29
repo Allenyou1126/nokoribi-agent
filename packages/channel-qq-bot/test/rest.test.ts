@@ -119,6 +119,7 @@ const config: QqBotConfig = {
     requestTimeoutMs: 1000,
     connectTimeoutMs: 1000,
     activeMessageFallback: "auto",
+    approvalButtons: true,
     reconnectBaseMs: 100,
     reconnectMaxMs: 1000,
 };
@@ -213,6 +214,27 @@ describe("qq REST wrapper", () => {
         });
         expect(await fixed.getGatewayUrl()).toBe("ws://fixed.test/websocket");
         fixed.stop();
+    });
+
+    it("acknowledges interactions with the documented PUT body", async () => {
+        const { rest: client, server } = await rest();
+        await client.ackInteraction("interaction-1", 0);
+        await client.ackInteraction("interaction-2", 1);
+        const acks = server.requests.filter((request) =>
+            request.path.startsWith("/interactions/")
+        );
+        expect(acks).toEqual([
+            {
+                method: "PUT",
+                path: "/interactions/interaction-1",
+                body: { code: 0 },
+            },
+            {
+                method: "PUT",
+                path: "/interactions/interaction-2",
+                body: { code: 1 },
+            },
+        ]);
     });
 
     it("stops without throwing when called twice", async () => {

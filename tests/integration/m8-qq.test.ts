@@ -28,6 +28,7 @@ import type { QqBotConfig } from "../../packages/channel-qq-bot/src/config.js";
 import { QqBotDriver } from "../../packages/channel-qq-bot/src/driver.js";
 import type {
     QqGatewayClient,
+    QqGatewayHandlers,
     QqRestClient,
 } from "../../packages/channel-qq-bot/src/transport.js";
 import { createLogger } from "../../packages/shared/src/log.js";
@@ -50,6 +51,8 @@ class FakeRest implements QqRestClient {
         return { id: `sent-${String(this.requests.length)}`, timestamp: 0 };
     }
 
+    async ackInteraction(): Promise<void> {}
+
     async getGatewayUrl(): Promise<string> {
         return "ws://127.0.0.1/websocket";
     }
@@ -64,13 +67,11 @@ class FakeRest implements QqRestClient {
 }
 
 class FakeGateway implements QqGatewayClient {
-    handler: ((message: SdkInboundMessage) => void) | undefined;
+    handlers: QqGatewayHandlers | undefined;
     state: ChannelHealth["state"] = "online";
 
-    async start(
-        onInbound: (message: SdkInboundMessage) => void
-    ): Promise<void> {
-        this.handler = onInbound;
+    async start(handlers: QqGatewayHandlers): Promise<void> {
+        this.handlers = handlers;
     }
 
     async stop(): Promise<void> {
@@ -79,6 +80,10 @@ class FakeGateway implements QqGatewayClient {
 
     health(): ChannelHealth {
         return { state: this.state };
+    }
+
+    interactionAvailable(): boolean {
+        return this.state === "online";
     }
 }
 
@@ -94,6 +99,7 @@ const config: QqBotConfig = {
     requestTimeoutMs: 1000,
     connectTimeoutMs: 1000,
     activeMessageFallback: "auto",
+    approvalButtons: true,
     reconnectBaseMs: 100,
     reconnectMaxMs: 1000,
 };
@@ -220,7 +226,7 @@ async function setup(
 describe("M8 QQ driver integration", () => {
     it("accepts a trusted QQ chat and sends a passive reply", async () => {
         const { ctx, rest, gateway } = await setup();
-        gateway.handler?.(sdkMessage());
+        gateway.handlers?.onInbound(sdkMessage());
         await waitFor(() => ctx.channels.activeChat?.chatId === "c2c:user-1");
         await ctx.channels.sendReply("pong");
         await waitFor(() => rest.requests.length > 0);
@@ -239,12 +245,14 @@ describe("M8 QQ driver integration", () => {
         const { ctx, rest, gateway } = await setup({
             activeMessageFallback: "off",
         });
-        gateway.handler?.(sdkMessage());
+        gateway.handlers?.onInbound(sdkMessage());
         await waitFor(() => ctx.channels.activeChat?.chatId === "c2c:user-1");
         await ctx.channels.notify("喝水提醒");
         expect(ctx.channels.status().deferredNotices).toBe(1);
 
-        gateway.handler?.(sdkMessage({ messageId: "m-2", content: "wake" }));
+        gateway.handlers?.onInbound(
+            sdkMessage({ messageId: "m-2", content: "wake" })
+        );
         await waitFor(() => ctx.channels.activeChat?.chatId === "c2c:user-1");
         await ctx.channels.sendReply("answer");
         await waitFor(() =>

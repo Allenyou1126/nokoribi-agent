@@ -4,6 +4,7 @@ import {
     ApiError,
     TokenManager,
     gatewayPath,
+    interactionPath,
     messagePath,
     type ChatScope,
     type MessageResponse,
@@ -70,6 +71,13 @@ export class QqRest implements QqRestClient {
             this.logger.warn("refreshing qq bot token after auth failure");
             return await this.requestSend(scope, targetId, body);
         }
+    }
+
+    async ackInteraction(interactionId: string, code: 0 | 1): Promise<void> {
+        const token = await this.getAccessToken();
+        await this.api.request(token, "PUT", interactionPath(interactionId), {
+            code,
+        });
     }
 
     async getGatewayUrl(): Promise<string> {

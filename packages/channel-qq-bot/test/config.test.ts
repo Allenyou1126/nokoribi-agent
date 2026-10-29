@@ -23,6 +23,7 @@ const config: QqBotConfig = {
     requestTimeoutMs: 1000,
     connectTimeoutMs: 1000,
     activeMessageFallback: "auto",
+    approvalButtons: true,
     reconnectBaseMs: 100,
     reconnectMaxMs: 1000,
 };
@@ -43,6 +44,7 @@ describe("qq bot config", () => {
         expect(defaults.c2cReplyWindowSeconds).toBe(3600);
         expect(defaults.groupReplyWindowSeconds).toBe(300);
         expect(defaults.activeMessageFallback).toBe("auto");
+        expect(defaults.approvalButtons).toBe(true);
         expect(defaults.gatewayUrl).toBe("");
     });
 

@@ -17,6 +17,8 @@ export interface QqBotConfig {
     readonly requestTimeoutMs: number;
     readonly connectTimeoutMs: number;
     readonly activeMessageFallback: QqActiveMessageFallback;
+    /** Render and accept C2C approval button callbacks. */
+    readonly approvalButtons: boolean;
     readonly reconnectBaseMs: number;
     readonly reconnectMaxMs: number;
     /** How long an unavailable active-message state is remembered. */

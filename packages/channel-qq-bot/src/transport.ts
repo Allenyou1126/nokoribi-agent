@@ -2,6 +2,7 @@ import type { ChannelHealth } from "@nokoribi/channel-core";
 import type {
     ChatScope,
     InboundMessage as SdkInboundMessage,
+    InteractionEvent,
     MessageResponse,
 } from "@tencent-connect/qqbot-nodejs/protocol";
 
@@ -13,6 +14,8 @@ export interface QqRestClient {
         targetId: string,
         body: Record<string, unknown>
     ): Promise<MessageResponse>;
+    /** Acknowledge one interaction callback; code 0 succeeds, 1 fails. */
+    ackInteraction(interactionId: string, code: 0 | 1): Promise<void>;
     /** Resolve the WebSocket gateway URL. */
     getGatewayUrl(): Promise<string>;
     /** Return a cached or freshly fetched access token. */
@@ -23,12 +26,22 @@ export interface QqRestClient {
     stop(): void;
 }
 
+/** Event callbacks consumed by the QQ driver. */
+export interface QqGatewayHandlers {
+    /** One normalized inbound message or group @ event. */
+    onInbound(message: SdkInboundMessage): void;
+    /** One INTERACTION_CREATE event; may acknowledge asynchronously. */
+    onInteraction(event: InteractionEvent): void | Promise<void>;
+}
+
 /** Gateway lifecycle surface used by the QQ driver. */
 export interface QqGatewayClient {
     /** Start the connection; resolves after READY or the bounded wait. */
-    start(onInbound: (message: SdkInboundMessage) => void): Promise<void>;
+    start(handlers: QqGatewayHandlers): Promise<void>;
     /** Stop the connection and cancel reconnect timers. */
     stop(): Promise<void>;
     /** Current connection health. */
     health(): ChannelHealth;
+    /** Whether button callbacks are subscribed and usable right now. */
+    interactionAvailable(): boolean;
 }

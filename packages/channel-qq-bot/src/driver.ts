@@ -11,8 +11,13 @@ import {
     NonRetryableDeliveryError,
     PassiveReplyExpiredError,
 } from "@nokoribi/channel-core";
-import type { Logger } from "@nokoribi/shared";
-import type { ChatScope } from "@tencent-connect/qqbot-nodejs/protocol";
+import type { Logger, OutboundAction } from "@nokoribi/shared";
+import type {
+    ChatScope,
+    InlineKeyboard,
+    InteractionEvent,
+    KeyboardButton,
+} from "@tencent-connect/qqbot-nodejs/protocol";
 
 import {
     resolveActiveMessageDisableMs,
@@ -25,7 +30,11 @@ import {
     toDeliveryError,
 } from "./errors.js";
 import { SendLimiter } from "./limiter.js";
-import { normalizeInbound } from "./normalize.js";
+import {
+    interactionAckCode,
+    normalizeInbound,
+    normalizeInteraction,
+} from "./normalize.js";
 import type { QqGatewayClient, QqRestClient } from "./transport.js";
 
 /** One parsed `chatId` with its QQ scope. */
@@ -70,10 +79,90 @@ function hasMarkdown(body: Record<string, unknown>): boolean {
     return typeof body.markdown === "object" && body.markdown !== null;
 }
 
+const MAX_KEYBOARD_LABEL = 10;
+const MAX_KEYBOARD_BUTTONS = 2;
+
+function keyboardLabel(label: string, logger: Logger): string {
+    const chars = Array.from(label);
+    if (chars.length <= MAX_KEYBOARD_LABEL) return label;
+    logger.warn("qq bot keyboard label truncated", {
+        labelLength: chars.length,
+    });
+    return chars.slice(0, MAX_KEYBOARD_LABEL).join("");
+}
+
+function keyboardStyle(style: OutboundAction["style"]): number {
+    if (style === "primary") return 4;
+    if (style === "danger") return 3;
+    return 0;
+}
+
+/**
+ * Map channel-core actions onto one QQ inline keyboard row.
+ *
+ * Only callback actions with a payload are renderable. M9 produces exactly two
+ * buttons; extra actions are ignored so an unsupported row can never fail the
+ * whole approval message.
+ */
+function buildKeyboard(
+    actions: readonly OutboundAction[] | undefined,
+    logger: Logger
+): InlineKeyboard | undefined {
+    if (actions === undefined || actions.length === 0) return undefined;
+    const buttons: KeyboardButton[] = [];
+    for (const action of actions) {
+        if (buttons.length >= MAX_KEYBOARD_BUTTONS) {
+            logger.warn("qq bot keyboard button limit reached", {
+                count: actions.length,
+            });
+            break;
+        }
+        if (action.kind !== "callback") {
+            logger.debug("qq bot skipped non-callback action", {
+                kind: action.kind,
+            });
+            continue;
+        }
+        if (action.disabled === true) {
+            logger.debug("qq bot skipped disabled action", { id: action.id });
+            continue;
+        }
+        if (action.payload === undefined || action.payload === "") {
+            logger.warn("qq bot skipped callback action without payload", {
+                id: action.id,
+            });
+            continue;
+        }
+        const label = keyboardLabel(action.label, logger);
+        if (label.trim() === "") {
+            logger.warn("qq bot skipped callback action with empty label", {
+                id: action.id,
+            });
+            continue;
+        }
+        buttons.push({
+            id: action.id,
+            render_data: {
+                label,
+                visited_label: label,
+                style: keyboardStyle(action.style),
+            },
+            action: {
+                type: 1,
+                permission: { type: 2 },
+                data: action.payload,
+            },
+        });
+    }
+    if (buttons.length === 0) return undefined;
+    return { content: { rows: [{ buttons }] } };
+}
+
 function buildBody(
     config: QqBotConfig,
     text: string,
-    reply: ReplyContext | undefined
+    reply: ReplyContext | undefined,
+    keyboard: InlineKeyboard | undefined
 ): Record<string, unknown> {
     if (text.trim() === "") {
         throw new NonRetryableDeliveryError(
@@ -89,6 +178,7 @@ function buildBody(
         body.msg_id = reply.messageId;
         body.msg_seq = reply.seq;
     }
+    if (keyboard !== undefined) body.keyboard = keyboard;
     return body;
 }
 
@@ -97,6 +187,7 @@ function toTextBody(body: Record<string, unknown>): Record<string, unknown> {
     const next: Record<string, unknown> = { msg_type: 0, content: text };
     if (typeof body.msg_id === "string") next.msg_id = body.msg_id;
     if (typeof body.msg_seq === "number") next.msg_seq = body.msg_seq;
+    if (body.keyboard !== undefined) next.keyboard = body.keyboard;
     return next;
 }
 
@@ -149,13 +240,15 @@ export class QqBotDriver implements ChannelDriver {
     }
 
     get capabilities(): ChannelCapabilities {
+        const interactions =
+            this.config.approvalButtons && this.gateway.interactionAvailable();
         return {
             markdown: this.config.markdown,
             maxTextLength: this.config.maxTextLength,
             inboundImages: false,
             outboundFiles: false,
-            outboundActions: false,
-            inboundActions: false,
+            outboundActions: interactions,
+            inboundActions: interactions,
             activeMessages: this.activeAvailable(),
             maxRepliesPerReply: this.config.maxRepliesPerReply,
         };
@@ -167,15 +260,18 @@ export class QqBotDriver implements ChannelDriver {
         if (this.started) return;
         this.started = true;
         this.stopped = false;
-        await this.gateway.start((message) => {
-            const normalized = normalizeInbound(message);
-            if (normalized === null) {
-                this.logger.debug("ignored qq bot inbound", {
-                    event: message.rawEventType,
-                });
-                return;
-            }
-            handler.onInbound(normalized);
+        await this.gateway.start({
+            onInbound: (message) => {
+                const normalized = normalizeInbound(message);
+                if (normalized === null) {
+                    this.logger.debug("ignored qq bot inbound", {
+                        event: message.rawEventType,
+                    });
+                    return;
+                }
+                handler.onInbound(normalized);
+            },
+            onInteraction: (event) => this.handleInteraction(event, handler),
         });
     }
 
@@ -196,6 +292,19 @@ export class QqBotDriver implements ChannelDriver {
             );
         }
         await this.limiter.acquire(chat.scope, chatId);
+        const keyboard =
+            chat.scope === "c2c" && this.config.approvalButtons
+                ? buildKeyboard(content.actions, this.logger)
+                : undefined;
+        if (
+            chat.scope !== "c2c" &&
+            content.actions !== undefined &&
+            content.actions.length > 0
+        ) {
+            this.logger.debug("qq bot drops group keyboard actions", {
+                count: content.actions.length,
+            });
+        }
         const reply = content.reply;
         if (reply !== undefined) {
             if (!this.passiveValid(chat.scope, reply)) {
@@ -204,7 +313,7 @@ export class QqBotDriver implements ChannelDriver {
             return await this.sendBody(
                 chatId,
                 chat,
-                buildBody(this.config, content.text, reply),
+                buildBody(this.config, content.text, reply, keyboard),
                 true
             );
         }
@@ -217,7 +326,7 @@ export class QqBotDriver implements ChannelDriver {
         return await this.sendBody(
             chatId,
             chat,
-            buildBody(this.config, content.text, undefined),
+            buildBody(this.config, content.text, undefined, keyboard),
             false
         );
     }
@@ -245,6 +354,35 @@ export class QqBotDriver implements ChannelDriver {
             state: health.state,
             ...(details.length === 0 ? {} : { detail: details.join("; ") }),
         };
+    }
+
+    private async handleInteraction(
+        event: InteractionEvent,
+        handler: { onInbound(message: InboundMessage): void }
+    ): Promise<void> {
+        if (this.stopped) return;
+        if (event.id.trim() === "") return;
+        const code: 0 | 1 = this.config.approvalButtons
+            ? interactionAckCode(event)
+            : 1;
+        try {
+            await this.rest.ackInteraction(event.id, code);
+        } catch (error) {
+            this.logger.warn(
+                "qq bot interaction acknowledgement failed",
+                safeErrorFields(error)
+            );
+        }
+        if (code !== 0) {
+            this.logger.debug("ignored qq bot interaction", {
+                eventType: event.type,
+                chatType: event.chat_type,
+            });
+            return;
+        }
+        const normalized = normalizeInteraction(event);
+        if (normalized === null) return;
+        handler.onInbound(normalized);
     }
 
     private async sendBody(

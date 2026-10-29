@@ -28,19 +28,29 @@ export type { SendErrorKind } from "./errors.js";
 export {
     buildReconnectDelays,
     QqGateway,
+    QQ_GROUP_AND_C2C_AND_INTERACTION_INTENTS,
     QQ_GROUP_AND_C2C_INTENTS,
+    QQ_INTERACTION_INTENT,
 } from "./gateway.js";
 export type { QqGatewayOptions } from "./gateway.js";
 export { SendLimiter } from "./limiter.js";
 export type { SendLimiterOptions } from "./limiter.js";
 export {
+    interactionAckCode,
     normalizeInbound,
+    normalizeInteraction,
     normalizeText,
+    parseInteractionButtonData,
     parseTimestamp,
 } from "./normalize.js";
+export type { InteractionButtonPayload } from "./normalize.js";
 export { QqRest } from "./rest.js";
 export type { QqRestOptions } from "./rest.js";
-export type { QqGatewayClient, QqRestClient } from "./transport.js";
+export type {
+    QqGatewayClient,
+    QqGatewayHandlers,
+    QqRestClient,
+} from "./transport.js";
 
 /** Loader plugin label. */
 export const name = "channel-qq-bot";
@@ -61,6 +71,7 @@ export const Config: unknown = z.object({
     requestTimeoutMs: z.natural().min(1).default(10000),
     connectTimeoutMs: z.natural().min(1).default(30000),
     activeMessageFallback: z.union(["auto", "off"]).default("auto"),
+    approvalButtons: z.boolean().default(true),
     reconnectBaseMs: z.natural().min(1).default(1000),
     reconnectMaxMs: z.natural().min(1).default(60000),
     activeMessageDisableMs: z.natural().min(1).default(3600000),
