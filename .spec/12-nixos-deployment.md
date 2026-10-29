@@ -422,3 +422,13 @@ age.secrets.nokoribi-agent-env = {
 - Web（目标机/真实凭据）：设置 `DEEPSEEK_API_KEY` 后 `web_search`/`web_fetch` 各成功一次；`web_fetch` 对非公网 URL 返回 blocked；切换 `searchProvider = "deepseek-search-api"`/`fetchProvider = "deepseek-fetch-api"` 前先确认 Search/Fetch API 可用性（G5）；`/status full` 只显示 reviewer 两档，不显示 `exemptTools`，豁免行为以 fake/reviewer 测试与配置审计为准。
 - 网络出口：目标机可直连 `api.deepseek.com`（以及搜索 API 基址）；无代理时按环境变量代理策略处理。
 - 门禁对照：G2（目标机 local PTY）、G3（sandbox 终端）、G4（真实搜索）、G5（API provider）、G6（真实公网抓取）见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)；通过前 12.14 只算“代码完成”。
+
+## 12.15 规划中的选项（M11/M15，未实现）
+
+> 状态：**规划口径（D174/D175），代码未实现**；启动对应里程碑时再补实现与 module-eval 断言。里程碑总览见 [14.15](14-roadmap.md)。
+
+- **M11 `memory.inject.*`**（本地记忆自动注入）：`enable`（默认 `true`）、`maxChars`（默认 3000）、`maxEntries`（默认 20）、`mainOnly`（默认 `true`）、`autoTags`（默认 `["type:person","type:preference"]`）；overlay 接到 `nokoribi-memory` 行，bundle 侧用 `NOKORIBI_MEMORY_INJECT_*` 默认值。
+- **M15 记忆后端开关（待最终定名）**：形如 `memory.backend = "local" | "openviking"`，默认 `local`。
+- **M15 OpenViking 连接配置（仅连接，不打包 server）**：`endpoint`、`apiKeyEnv`（指向 EnvironmentFile/agenix 变量，不写入 store）、可选 `peerId`/`workspacePeer`/`recallMaxTokens` 等；启用时 overlay 将 `nokoribi-memory` 行标为 disabled，并让 `nokoribi-prompt` 不注册 memory 提示词段。
+- **M15 前置**：`@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本）作为额外 profile bundle；peer 依赖 `dsh-mcp-client`（M14）与 `dsh-skill-filesystem`（M13），`dsh-skill` 服务需由 M13 挂载。
+- **不做**：不在 NixOS module 中提供 openviking-server 的 package/systemd unit/模型服务；server 由用户外部部署，本仓库只读取连接配置。

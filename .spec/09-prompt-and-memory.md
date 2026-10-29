@@ -190,9 +190,19 @@ supersedes: null
 
 **安全**：记忆内容来自模型写入，进入上下文等价于持久化提示注入面；缓解：写入仍过 Auto review + secret guard、快照固定“数据非指令”声明、pinned 预算上限、可配置关闭；残余风险登记 [15](15-verification-and-risks.md)。
 
-**范围外**：不做每轮自动检索/向量召回（D143 的主动检索保留）、不做 embedding/外部 memory provider、不做多用户作用域、本阶段不改提炼触发（`/clear` 前提取等后续再评估）。
+**范围外**：不做每轮自动检索/向量召回（D143 的主动检索保留）、不做 embedding/外部 memory provider（可选 OpenViking 后端由 M15/D175 另行定义）、不做多用户作用域、本阶段不改提炼触发（`/clear` 前提取等后续再评估）。
 
 **验收**：单元（frontmatter pinned 兼容、渲染排序/预算/footer/低置信过滤、缓存失效）；进程测试（fake LLM 捕获请求：写入 pinned 后下轮出现快照、goal child 无快照、关闭配置无快照、超预算 footer、重启恢复不重复追加）；Nix module-eval 断言；`pnpm check`/`test*`/`nix flake check`/`nix build`。
+
+### 记忆后端切换（M15 规划，2026-10-29 确认）
+
+> 决策 D175；里程碑见 [14.15](14-roadmap.md)。本节只定义后端口径，M11 仍实现本地后端。
+
+- **默认本地**：本节的 entries + pinned 快照自动注入；无外部依赖。
+- **可选 OpenViking**：启用后由 OpenViking 接管（profile/recall/capture/commit），**停用本地 `nokoribi-memory` 组件**（存储/工具/快照）；两者互斥，不做双写/双读。
+- **边界**：openviking-server **不打包**；仓库只保留连接配置（endpoint、凭据 env/agenix、可选 peer/recall 参数）；server 由用户外部部署（uv/Docker/云），需自带 embedding + VLM provider。
+- **接入**：`@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本）作为 profile bundle；前置为 M13 Skill（`dsh-skill`/`dsh-skill-filesystem`）与 M14 MCP 客户端（`dsh-mcp-client`）；插件已验证兼容 DSH `0.2.1-rc.3`。
+- **门禁**：module-eval（本地行 disabled、连接 env）；无 server 启动不崩；fake server recall/capture；真实 server spike；配置命名在 M15 启动时最终落定。
 
 ### 隐私
 

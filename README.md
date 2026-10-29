@@ -29,7 +29,7 @@
 | [11 模型与成本](.spec/11-models-and-cost.md) | 主/子代理/记忆提炼模型分配、reviewer 双档、图像输入约束、压缩与成本策略 |
 | [12 NixOS 部署](.spec/12-nixos-deployment.md) | flake、NixOS module 选项表、systemd、agenix、sudo、看门狗、状态目录、升级 |
 | [13 测试与运维](.spec/13-testing-and-ops.md) | Vitest 策略、fake driver/LLM、进程级恢复测试、flake checks、日志、`/status`、运维手册 |
-| [14 路线图](.spec/14-roadmap.md) | M1–M10 交付物、依赖、验收标准、实现记录、后置项 |
+| [14 路线图](.spec/14-roadmap.md) | M1–M10 交付物、依赖、验收标准、实现记录、后置项，以及 M11–M17 下一阶段规划 |
 | [15 待验证项与风险](.spec/15-verification-and-risks.md) | 实现前必须验证的 9 项、M9/M10 门禁项、风险登记、实现期开放问题、已接受的残余风险 |
 | [16 被取代/否决与术语](.spec/16-superseded-and-glossary.md) | 被撤销或被取代的决策及原因、被否决的方案、术语表 |
 | [17 QQ 官方 Bot（M8）](.spec/17-qq-official-bot.md) | 真实 IM 适配器：规格、平台事实、消息策略、配置、安全、测试与验收（M7 core 扩展为其前置；M8 代码已实现；M9 按钮审批见 18） |
