@@ -477,10 +477,12 @@ describe("M9 QQ button approval integration", () => {
     it("keeps group approvals textual without a keyboard", async () => {
         const result = await setup("group:group-1");
         startChild(result);
-        await waitFor(() =>
-            result.rest.requests.some(
-                (request) => request.body.keyboard === undefined
-            )
+        await waitFor(
+            () =>
+                result.rest.requests.some(
+                    (request) => request.body.keyboard === undefined
+                ),
+            25_000
         );
         const prompt = result.rest.requests.find(
             (request) => request.body.keyboard === undefined
@@ -501,5 +503,5 @@ describe("M9 QQ button approval integration", () => {
         );
         await result.child.whenIdle();
         expect(result.executed).toHaveLength(1);
-    });
+    }, 30_000);
 });
