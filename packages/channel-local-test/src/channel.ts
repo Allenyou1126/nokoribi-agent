@@ -12,6 +12,7 @@ import type {
     ChannelHealth,
     ChannelService,
     DeliveryMode,
+    FileAttachmentRef,
     InboundAction,
     InboundMessage,
     OutboundContent,
@@ -37,6 +38,109 @@ export interface LocalTestConfig {
     readonly maxTextLength: number;
     readonly markdown: "none" | "basic" | "full";
     readonly maxBodyBytes: number;
+    /** Maximum decoded bytes for one inbound test image (default 10 MiB). */
+    readonly inboundImageMaxBytes?: number;
+}
+
+/** Durable reader used by the loopback attachment endpoint. */
+export interface LocalTestAttachments {
+    readFileStream(
+        ref: FileAttachmentRef,
+        signal?: AbortSignal
+    ): AsyncIterable<Uint8Array>;
+}
+
+const DEFAULT_INBOUND_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+const SUPPORTED_IMAGE_MIME: ReadonlySet<string> = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+]);
+
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** Normalize one declared test image mime onto the attachment vocabulary. */
+function normalizeImageMime(mime: string): string | undefined {
+    const base = mime.trim().toLowerCase();
+    if (base === "image/jpg") return "image/jpeg";
+    return SUPPORTED_IMAGE_MIME.has(base) ? base : undefined;
+}
+
+/** Validate one inbound test image and decode its base64 bytes. */
+function parseInboundImage(
+    value: unknown,
+    maxBytes: number
+): { readonly mime: string; readonly data: Uint8Array } {
+    if (typeof value !== "object" || value === null) {
+        throw new HttpError(400, "invalid image entry");
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.mime !== "string") {
+        throw new HttpError(400, "image.mime is required");
+    }
+    const mime = normalizeImageMime(record.mime);
+    if (mime === undefined) {
+        throw new HttpError(400, "image.mime is not a supported image type");
+    }
+    if (typeof record.data !== "string" || record.data.trim() === "") {
+        throw new HttpError(400, "image.data must be a base64 string");
+    }
+    const compact = record.data.replace(/\s+/g, "");
+    if (!BASE64.test(compact) || compact.length % 4 !== 0) {
+        throw new HttpError(400, "image.data is not valid base64");
+    }
+    const buffer = Buffer.from(compact, "base64");
+    if (buffer.length === 0) {
+        throw new HttpError(400, "image.data decodes to zero bytes");
+    }
+    if (buffer.toString("base64") !== compact) {
+        throw new HttpError(400, "image.data is not canonical base64");
+    }
+    if (buffer.length > maxBytes) {
+        throw new HttpError(400, "image.data exceeds the byte limit");
+    }
+    return { mime, data: new Uint8Array(buffer) };
+}
+
+/** Validate one optional inbound image array. */
+function parseInboundImages(
+    value: unknown,
+    maxBytes: number
+): readonly { readonly mime: string; readonly data: Uint8Array }[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) {
+        throw new HttpError(400, "images must be an array");
+    }
+    return value.map((entry) => parseInboundImage(entry, maxBytes));
+}
+
+/** Best-effort content type for one already-stored outbound file. */
+function mimeForFileName(name: string): string {
+    const ext = name.includes(".")
+        ? name.slice(name.lastIndexOf(".") + 1).toLowerCase()
+        : "";
+    switch (ext) {
+        case "png":
+            return "image/png";
+        case "jpg":
+        case "jpeg":
+            return "image/jpeg";
+        case "webp":
+            return "image/webp";
+        case "gif":
+            return "image/gif";
+        case "txt":
+        case "md":
+            return "text/plain; charset=utf-8";
+        case "json":
+            return "application/json";
+        case "pdf":
+            return "application/pdf";
+        default:
+            return "application/octet-stream";
+    }
 }
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -146,20 +250,27 @@ export class LocalTestChannel implements ChannelDriver {
     private readonly config: LocalTestConfig;
     private readonly channels: ChannelService;
     private readonly logger: Logger;
+    private readonly attachments: LocalTestAttachments | undefined;
+    private readonly fileRefs = new Map<string, FileAttachmentRef>();
     private readonly server: Server;
     private boundPort = 0;
     private stopped = false;
 
-    constructor(config: LocalTestConfig, channels: ChannelService) {
+    constructor(
+        config: LocalTestConfig,
+        channels: ChannelService,
+        attachments?: LocalTestAttachments
+    ) {
         this.config = config;
         this.channels = channels;
+        this.attachments = attachments;
         this.defaultChatId = config.chatId;
         this.logger = createLogger("channel-local-test");
         this.capabilities = {
             markdown: config.markdown,
             maxTextLength: config.maxTextLength,
-            inboundImages: false,
-            outboundFiles: false,
+            inboundImages: true,
+            outboundFiles: true,
             // The loopback test channel accepts action-only injections so
             // process tests can replay button callbacks; production drivers
             // still require a text fallback.
@@ -243,8 +354,12 @@ export class LocalTestChannel implements ChannelDriver {
         chatId: string,
         content: OutboundContent
     ): Promise<{ channelId: string; chatId: string; messageId: string }> {
-        if (content.text.length === 0) {
+        const files = content.files ?? [];
+        if (content.text.length === 0 && files.length === 0) {
             throw new Error("refusing to send an empty message");
+        }
+        for (const file of files) {
+            this.fileRefs.set(file.attachmentId, file);
         }
         return {
             channelId: this.id,
@@ -276,6 +391,13 @@ export class LocalTestChannel implements ChannelDriver {
             }
             if (request.method === "GET" && url.pathname === "/v1/outbound") {
                 await this.handleOutbound(url, response);
+                return;
+            }
+            if (
+                request.method === "GET" &&
+                url.pathname.startsWith("/v1/attachments/")
+            ) {
+                await this.handleAttachment(url.pathname, response);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v1/status") {
@@ -313,32 +435,16 @@ export class LocalTestChannel implements ChannelDriver {
         const body = await readJson(request, this.config.maxBodyBytes);
         const text = typeof body.text === "string" ? body.text : undefined;
         const action = parseInboundAction(body.action);
-        const rawImages = body.images;
-        if (rawImages !== undefined) {
-            if (!Array.isArray(rawImages)) {
-                throw new HttpError(400, "images must be an array");
-            }
-            for (const image of rawImages) {
-                if (
-                    typeof image !== "object" ||
-                    image === null ||
-                    typeof (image as { mime?: unknown }).mime !== "string" ||
-                    typeof (image as { dataBase64?: unknown }).dataBase64 !==
-                        "string"
-                ) {
-                    throw new HttpError(400, "invalid image entry");
-                }
-            }
-            sendJson(response, 501, {
-                error: "inbound images are not supported until M2",
-            });
-            return;
-        }
+        const images = parseInboundImages(
+            body.images,
+            this.config.inboundImageMaxBytes ?? DEFAULT_INBOUND_IMAGE_MAX_BYTES
+        );
         if (
             action === undefined &&
+            images.length === 0 &&
             (text === undefined || text.trim() === "")
         ) {
-            throw new HttpError(400, "text is required");
+            throw new HttpError(400, "text or images are required");
         }
         const messageId =
             typeof body.messageId === "string" && body.messageId.trim() !== ""
@@ -363,6 +469,7 @@ export class LocalTestChannel implements ChannelDriver {
             senderId: this.config.senderId,
             messageId,
             ...(text === undefined || text.trim() === "" ? {} : { text }),
+            ...(images.length === 0 ? {} : { images }),
             receivedAt: Date.now(),
             ...(action === undefined ? {} : { action }),
             ...(delivery === undefined
@@ -370,7 +477,10 @@ export class LocalTestChannel implements ChannelDriver {
                 : { delivery: delivery as DeliveryMode }),
         });
         if (result.reason === "empty") {
-            throw new HttpError(400, "text is required");
+            throw new HttpError(400, "text or images are required");
+        }
+        if (result.reason === "unsupported-images") {
+            throw new HttpError(400, "inbound images are not supported");
         }
         sendJson(response, 202, { messageId });
     }
@@ -405,6 +515,9 @@ export class LocalTestChannel implements ChannelDriver {
                 ...(item.actions === null || item.actions === undefined
                     ? {}
                     : { actions: item.actions }),
+                ...(item.files === null || item.files === undefined
+                    ? {}
+                    : { files: item.files.map(describeFile) }),
             })),
             // A concurrent enqueue can advance nextOutboxSeq after the
             // history read; report a cursor consistent with the returned
@@ -412,4 +525,57 @@ export class LocalTestChannel implements ChannelDriver {
             nextSeq: lastSeq === undefined ? after : lastSeq + 1,
         });
     }
+
+    /** Stream one stored outbound file by its durable attachment id. */
+    private async handleAttachment(
+        pathname: string,
+        response: ServerResponse
+    ): Promise<void> {
+        const attachmentId = decodeURIComponent(
+            pathname.slice("/v1/attachments/".length)
+        ).trim();
+        if (attachmentId === "") {
+            throw new HttpError(400, "attachment id is required");
+        }
+        const ref = this.fileRefs.get(attachmentId);
+        if (ref === undefined) {
+            throw new HttpError(404, "attachment not found");
+        }
+        const attachments = this.attachments;
+        if (attachments === undefined) {
+            throw new HttpError(501, "attachment reader is not configured");
+        }
+        response.writeHead(200, {
+            "content-type": mimeForFileName(ref.name),
+            "content-length": ref.bytes,
+            "cache-control": "no-store",
+        });
+        try {
+            for await (const chunk of attachments.readFileStream(ref)) {
+                response.write(chunk);
+            }
+            response.end();
+        } catch (error) {
+            this.logger.error("failed to stream attachment", {
+                attachmentId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            response.destroy();
+        }
+    }
+}
+
+/** Public file metadata for one outbound item. */
+function describeFile(ref: FileAttachmentRef): {
+    readonly attachmentId: string;
+    readonly name: string;
+    readonly bytes: number;
+    readonly mime: string;
+} {
+    return {
+        attachmentId: ref.attachmentId,
+        name: ref.name,
+        bytes: ref.bytes,
+        mime: mimeForFileName(ref.name),
+    };
 }

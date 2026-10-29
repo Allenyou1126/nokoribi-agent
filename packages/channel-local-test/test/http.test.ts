@@ -9,7 +9,11 @@ import type {
 } from "@nokoribi/channel-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { LocalTestChannel, type LocalTestConfig } from "../src/channel.js";
+import {
+    LocalTestChannel,
+    type LocalTestAttachments,
+    type LocalTestConfig,
+} from "../src/channel.js";
 
 const dirs: string[] = [];
 const channels: LocalTestChannel[] = [];
@@ -30,7 +34,11 @@ async function start(
             text: "two",
             interactionId: null,
         },
-    ]
+    ],
+    options: {
+        readonly attachments?: LocalTestAttachments;
+        readonly config?: Partial<LocalTestConfig>;
+    } = {}
 ): Promise<{
     channel: LocalTestChannel;
     url: string;
@@ -80,8 +88,9 @@ async function start(
         maxTextLength: 0,
         markdown: "basic",
         maxBodyBytes: 1024 * 1024,
+        ...options.config,
     };
-    const channel = new LocalTestChannel(config, fake);
+    const channel = new LocalTestChannel(config, fake, options.attachments);
     const port = await channel.listen();
     await channel.writeDiscoveryFile();
     channels.push(channel);
@@ -167,17 +176,64 @@ describe("local test channel", () => {
         ).toBe(400);
     });
 
-    it("returns 501 for inbound images in M1", async () => {
-        const { url } = await start();
+    it("accepts inbound images as decoded bytes", async () => {
+        const { url, ingress } = await start();
         const response = await fetch(`${url}/v1/inbound`, {
             method: "POST",
             headers: { ...auth(), "content-type": "application/json" },
             body: JSON.stringify({
                 text: "look",
-                images: [{ mime: "image/png", dataBase64: "AA==" }],
+                messageId: "img-1",
+                images: [{ mime: "image/png", data: "AAEC" }],
             }),
         });
-        expect(response.status).toBe(501);
+        expect(response.status).toBe(202);
+        const message = ingress.mock.calls[0]?.[0] as
+            | InboundMessage
+            | undefined;
+        expect(message?.images).toEqual([
+            { mime: "image/png", data: new Uint8Array([0, 1, 2]) },
+        ]);
+    });
+
+    it("accepts an image-only inbound message", async () => {
+        const { url, ingress } = await start();
+        const response = await fetch(`${url}/v1/inbound`, {
+            method: "POST",
+            headers: { ...auth(), "content-type": "application/json" },
+            body: JSON.stringify({
+                messageId: "img-2",
+                images: [{ mime: "image/jpeg", data: "AAEC" }],
+            }),
+        });
+        expect(response.status).toBe(202);
+        const message = ingress.mock.calls[0]?.[0] as
+            | InboundMessage
+            | undefined;
+        expect(message?.text).toBeUndefined();
+        expect(message?.images).toHaveLength(1);
+    });
+
+    it("rejects malformed inbound image payloads", async () => {
+        const { url } = await start(undefined, {
+            config: { inboundImageMaxBytes: 2 },
+        });
+        const headers = { ...auth(), "content-type": "application/json" };
+        const bodies = [
+            { text: "x", images: "nope" },
+            { text: "x", images: [{}] },
+            { text: "x", images: [{ mime: "image/bmp", data: "AAEC" }] },
+            { text: "x", images: [{ mime: "image/png", data: "not base64" }] },
+            { text: "x", images: [{ mime: "image/png", data: "AAEC" }] },
+        ];
+        for (const body of bodies) {
+            const response = await fetch(`${url}/v1/inbound`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(body),
+            });
+            expect(response.status).toBe(400);
+        }
     });
 
     it("accepts action-only callbacks and invalid actions", async () => {
@@ -272,6 +328,84 @@ describe("local test channel", () => {
             ],
             nextSeq: 2,
         });
+    });
+
+    it("projects outbound file metadata and streams stored bytes", async () => {
+        const attachments: LocalTestAttachments = {
+            readFileStream: async function* (ref) {
+                yield new Uint8Array(ref.bytes).fill(7);
+            },
+        };
+        const outbound = await start(
+            [
+                {
+                    seq: 1,
+                    kind: "reply",
+                    chatId: "local",
+                    text: "",
+                    files: [
+                        {
+                            attachmentId: "file-1",
+                            name: "report.txt",
+                            bytes: 6,
+                        },
+                    ],
+                },
+            ],
+            { attachments }
+        );
+        expect(outbound.channel.capabilities.outboundFiles).toBe(true);
+        await outbound.channel.send("local", {
+            kind: "reply",
+            text: "",
+            deliveryId: 1,
+            attempt: 0,
+            files: [
+                { attachmentId: "file-1", name: "report.txt", bytes: 6 },
+            ] as never,
+        });
+        const response = await fetch(
+            `${outbound.url}/v1/outbound?after=0&timeout=1`,
+            { headers: auth() }
+        );
+        await expect(response.json()).resolves.toEqual({
+            items: [
+                {
+                    seq: 1,
+                    kind: "reply",
+                    chatId: "local",
+                    text: "",
+                    files: [
+                        {
+                            attachmentId: "file-1",
+                            name: "report.txt",
+                            bytes: 6,
+                            mime: "text/plain; charset=utf-8",
+                        },
+                    ],
+                },
+            ],
+            nextSeq: 2,
+        });
+
+        const bytes = await fetch(`${outbound.url}/v1/attachments/file-1`, {
+            headers: auth(),
+        });
+        expect(bytes.status).toBe(200);
+        expect(bytes.headers.get("content-type")).toContain("text/plain");
+        expect(new Uint8Array(await bytes.arrayBuffer())).toEqual(
+            new Uint8Array([7, 7, 7, 7, 7, 7])
+        );
+        expect(
+            (
+                await fetch(`${outbound.url}/v1/attachments/missing`, {
+                    headers: auth(),
+                })
+            ).status
+        ).toBe(404);
+        expect(
+            (await fetch(`${outbound.url}/v1/attachments/file-1`)).status
+        ).toBe(401);
     });
 
     it("serves status and outbound history", async () => {

@@ -1,16 +1,21 @@
 import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-attachment";
 import z from "@deepseek-ai/schemastery";
 
-import { LocalTestChannel, type LocalTestConfig } from "./channel.js";
+import {
+    LocalTestChannel,
+    type LocalTestAttachments,
+    type LocalTestConfig,
+} from "./channel.js";
 
 export { LocalTestChannel } from "./channel.js";
-export type { LocalTestConfig } from "./channel.js";
+export type { LocalTestAttachments, LocalTestConfig } from "./channel.js";
 
 /** Loader plugin label. */
 export const name = "channel-local-test";
 
-/** Channel core must exist before this driver registers itself. */
-export const inject: string[] = ["channels"];
+/** Channel core and the attachment store must exist before registration. */
+export const inject: string[] = ["channels", "attachments"];
 
 /** Runtime configuration schema (validated by the Loader). */
 export const Config: unknown = z.object({
@@ -24,6 +29,7 @@ export const Config: unknown = z.object({
     maxTextLength: z.natural().default(0),
     markdown: z.union(["none", "basic", "full"]).default("basic"),
     maxBodyBytes: z.natural().min(1024).default(1048576),
+    inboundImageMaxBytes: z.natural().min(1).default(10485760),
 });
 
 /** Mount the loopback test channel. */
@@ -32,7 +38,10 @@ export async function apply(
     config: LocalTestConfig
 ): Promise<void> {
     if (config.enabled === false) return;
-    const channel = new LocalTestChannel(config, ctx.channels);
+    const attachments: LocalTestAttachments = {
+        readFileStream: (ref) => ctx.attachments.readFileStream(ref),
+    };
+    const channel = new LocalTestChannel(config, ctx.channels, attachments);
     await channel.listen();
     const disposeDriver = await ctx.channels.registerDriver(channel);
     await channel.writeDiscoveryFile();

@@ -10,6 +10,7 @@ interface Prompt {
     readonly text: string;
     readonly interactionId: string;
     readonly actions?: readonly OutboundAction[];
+    readonly actionKind?: "approval" | "question";
 }
 
 function fakeAgent(id = "main-1", origin?: "subagent"): Agent {
@@ -66,6 +67,20 @@ function question(
         ],
         ...(signal === undefined ? {} : { signal }),
     } as AskUserQuestionRequest;
+}
+
+function questionRequest(
+    questions: readonly {
+        readonly id: string;
+        readonly question: string;
+        readonly multiSelect?: boolean;
+        readonly options?: readonly { readonly label: string }[];
+    }[]
+): AskUserQuestionRequest {
+    return {
+        agent: fakeAgent(),
+        questions: [...questions],
+    } as unknown as AskUserQuestionRequest;
 }
 
 interface Fixture {
@@ -292,12 +307,18 @@ describe("InteractionBroker approvals", () => {
         expect(fx.terminal).toHaveLength(1);
     });
 
-    it("does not generate actions for questions", async () => {
+    it("generates buttons only for single-select questions", async () => {
         const fx = fixture();
         const pending = fx.broker.requestQuestion(question());
         await flush();
-        expect(fx.prompts[0]?.actions).toBeUndefined();
+        expect(fx.prompts[0]?.actionKind).toBe("question");
+        expect(fx.prompts[0]?.actions).toHaveLength(2);
         await fx.broker.handleReply("1");
+        await flush();
+        // The second question is multi-select, so its text fallback has no
+        // buttons and the first question's tokens are gone.
+        expect(fx.prompts[1]?.actions).toBeUndefined();
+        expect(fx.prompts[1]?.actionKind).toBeUndefined();
         await fx.broker.handleReply("1,3");
         await expect(pending).resolves.toEqual({
             answers: [
@@ -305,6 +326,11 @@ describe("InteractionBroker approvals", () => {
                 { id: "q2", selected: ["One", "Three"] },
             ],
         });
+        await expect(
+            fx.broker.handleAction({
+                id: fx.prompts[0]?.actions?.[0]?.id ?? "",
+            })
+        ).resolves.toBe(false);
     });
 
     it("rejects unknown, malformed and repeated actions without guessing", async () => {
@@ -445,5 +471,144 @@ describe("InteractionBroker questions", () => {
         const fx = fixture({ failPrompt: new Error("no channel") });
         const pending = fx.broker.requestQuestion(question());
         await expect(pending).rejects.toMatchObject({ code: "ASK_ABORTED" });
+    });
+
+    it("settles a question from an option button click", async () => {
+        const fx = fixture();
+        const pending = fx.broker.requestQuestion(
+            questionRequest([
+                {
+                    id: "q1",
+                    question: "Which option?",
+                    options: [{ label: "Alpha" }, { label: "Beta" }],
+                },
+            ])
+        );
+        await flush();
+        const actions = promptActions(fx.prompts[0]);
+        expect(actions).toHaveLength(2);
+        expect(actions[0]).toMatchObject({
+            label: "Alpha",
+            kind: "callback",
+            style: "default",
+        });
+        const beta = actionByLabel(fx.prompts[0], "Beta");
+        await expect(
+            fx.broker.handleAction({ id: beta.id, payload: beta.payload })
+        ).resolves.toBe(true);
+        await expect(pending).resolves.toEqual({
+            answers: [{ id: "q1", selected: ["Beta"] }],
+        });
+        expect(fx.broker.pendingCount).toBe(0);
+        await expect(
+            fx.broker.handleAction({ id: beta.id, payload: beta.payload })
+        ).resolves.toBe(false);
+    });
+
+    it("keeps text fallback for multi-select, optionless and over-cap questions", async () => {
+        const overCap = Array.from({ length: 11 }, (_value, index) => ({
+            label: `Option ${String(index + 1)}`,
+        }));
+        for (const questions of [
+            [
+                {
+                    id: "q1",
+                    question: "Pick several",
+                    multiSelect: true,
+                    options: [{ label: "One" }, { label: "Two" }],
+                },
+            ],
+            [{ id: "q1", question: "Free text?" }],
+            [{ id: "q1", question: "Too many?", options: overCap }],
+        ]) {
+            const fx = fixture();
+            const pending = fx.broker.requestQuestion(
+                questionRequest(questions)
+            );
+            await flush();
+            expect(fx.prompts[0]?.actions).toBeUndefined();
+            expect(fx.prompts[0]?.text).toContain("❓ 提问");
+            await expect(fx.broker.handleReply("whatever")).resolves.toBe(true);
+            await expect(pending).resolves.toMatchObject({
+                answers: [{ id: "q1", selected: [] }],
+            });
+        }
+    });
+
+    it("truncates long option labels to the keyboard limit", async () => {
+        const fx = fixture();
+        const pending = fx.broker.requestQuestion(
+            questionRequest([
+                {
+                    id: "q1",
+                    question: "Pick",
+                    options: [
+                        { label: "这是一个非常非常长的选项标签" },
+                        { label: "Short" },
+                    ],
+                },
+            ])
+        );
+        await flush();
+        const actions = promptActions(fx.prompts[0]);
+        const longLabel = actions[0]?.label ?? "";
+        expect(Array.from(longLabel)).toHaveLength(10);
+        expect(longLabel.endsWith("…")).toBe(true);
+        const payload = JSON.parse(actions[0]?.payload ?? "{}") as Record<
+            string,
+            unknown
+        >;
+        expect(payload["t"]).toBe(longLabel);
+        await fx.broker.handleAction({
+            id: actions[0]?.id ?? "",
+            payload: actions[0]?.payload,
+        });
+        await expect(pending).resolves.toEqual({
+            answers: [{ id: "q1", selected: ["这是一个非常非常长的选项标签"] }],
+        });
+    });
+
+    it("scopes question clicks to the current question", async () => {
+        const fx = fixture();
+        const pending = fx.broker.requestQuestion(question());
+        await flush();
+        const alpha = actionByLabel(fx.prompts[0], "Alpha");
+        await fx.broker.handleAction({ id: alpha.id, payload: alpha.payload });
+        expect(fx.prompts[1]?.text).toContain("(2/2)");
+        expect(fx.prompts[1]?.actions).toBeUndefined();
+        // The first question's token is stale once the batch advanced.
+        await expect(
+            fx.broker.handleAction({ id: alpha.id, payload: alpha.payload })
+        ).resolves.toBe(false);
+        await fx.broker.handleReply("1,3");
+        await expect(pending).resolves.toEqual({
+            answers: [
+                { id: "q1", selected: ["Alpha"] },
+                { id: "q2", selected: ["One", "Three"] },
+            ],
+        });
+    });
+
+    it("cleans question action tokens after timeout", async () => {
+        vi.useFakeTimers();
+        const fx = fixture({ questionTimeoutMs: 100 });
+        const pending = fx.broker.requestQuestion(
+            questionRequest([
+                {
+                    id: "q1",
+                    question: "Pick",
+                    options: [{ label: "Alpha" }, { label: "Beta" }],
+                },
+            ])
+        );
+        const failure = expect(pending).rejects.toMatchObject({
+            code: "ASK_ABORTED",
+        });
+        await vi.advanceTimersByTimeAsync(150);
+        await failure;
+        const alpha = actionByLabel(fx.prompts[0], "Alpha");
+        await expect(
+            fx.broker.handleAction({ id: alpha.id, payload: alpha.payload })
+        ).resolves.toBe(false);
     });
 });

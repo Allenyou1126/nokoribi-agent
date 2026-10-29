@@ -6,7 +6,11 @@ import {
     type InteractionEvent,
 } from "@tencent-connect/qqbot-nodejs/protocol";
 
-import type { QqBotConfig, QqCredentials } from "./config.js";
+import {
+    resolveInteractionButtons,
+    type QqBotConfig,
+    type QqCredentials,
+} from "./config.js";
 import { createSdkLogger } from "./logger.js";
 import type {
     QqGatewayClient,
@@ -119,7 +123,7 @@ export class QqGateway implements QqGatewayClient {
             this.resolveReady = resolve;
         });
         this.launch(
-            this.config.approvalButtons
+            resolveInteractionButtons(this.config)
                 ? QQ_GROUP_AND_C2C_AND_INTERACTION_INTENTS
                 : QQ_GROUP_AND_C2C_INTENTS
         );
@@ -163,7 +167,7 @@ export class QqGateway implements QqGatewayClient {
 
     interactionAvailable(): boolean {
         return (
-            this.config.approvalButtons &&
+            resolveInteractionButtons(this.config) &&
             !this.interactionDegraded &&
             !this.stopped
         );
@@ -266,7 +270,7 @@ export class QqGateway implements QqGatewayClient {
             this.stopped ||
             this.everReady ||
             this.interactionDegraded ||
-            !this.config.approvalButtons ||
+            !resolveInteractionButtons(this.config) ||
             !isInteractionClose(code)
         ) {
             return;

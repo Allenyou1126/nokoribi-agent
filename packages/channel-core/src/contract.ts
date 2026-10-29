@@ -1,4 +1,9 @@
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type {
+    FileAttachmentRef,
+    ImageAttachmentRef,
+    ImageMediaType,
+} from "@deepseek-ai/dsh-attachment";
 import type { CommandRuntime } from "@deepseek-ai/dsh-commands";
 import type {
     OutboundAction,
@@ -7,6 +12,7 @@ import type {
 } from "@nokoribi/shared";
 
 export type { OutboundAction, OutboundActionKind };
+export type { FileAttachmentRef, ImageAttachmentRef, ImageMediaType };
 
 /** What a channel driver can render and accept. */
 export interface ChannelCapabilities {
@@ -82,6 +88,16 @@ export interface OutboundContent {
     readonly reply?: ReplyContext;
     /** Optional action widgets; drivers without `outboundActions` never see them. */
     readonly actions?: readonly OutboundAction[];
+    /**
+     * Interaction kind that produced `actions`; drivers gate keyboards by
+     * their own approval/question button configuration.
+     */
+    readonly actionKind?: "approval" | "question";
+    /**
+     * Durable files to deliver after the text. Only a final outbox entry
+     * carries files; drivers without `outboundFiles` never see them.
+     */
+    readonly files?: readonly FileAttachmentRef[];
 }
 
 /** Identifier of a message accepted by the platform. */

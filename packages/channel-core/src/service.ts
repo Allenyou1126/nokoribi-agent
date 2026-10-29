@@ -2,8 +2,14 @@ import { join } from "node:path";
 
 import { Context, Service } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import type {
+    FileAttachmentRef,
+    ImageAttachmentRef,
+    ImageMediaType,
+} from "@deepseek-ai/dsh-attachment";
 import type { CommandResult } from "@deepseek-ai/dsh-commands";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type {} from "@deepseek-ai/dsh-user-approval";
 import type {} from "@deepseek-ai/dsh-user-questions";
 import z from "@deepseek-ai/schemastery";
@@ -35,7 +41,12 @@ import {
 import { SeenStore } from "./dedupe.js";
 import { chooseDelivery } from "./delivery.js";
 import { formatOutbound } from "./format.js";
-import { OutboxStore, type EnqueueInput } from "./outbox.js";
+import {
+    OutboxStore,
+    outboxEntry,
+    type EnqueueInput,
+    type OutboxEntry,
+} from "./outbox.js";
 import {
     chatKey,
     pickNoticeRoute,
@@ -142,6 +153,12 @@ export interface FullMemoryStatus {
     readonly archivedEntries: number;
     readonly invalidEntries: number;
     readonly bytes: number;
+    /** Active entries pinned for the automatic snapshot (M16). */
+    readonly pinnedEntries: number;
+    /** Characters of the snapshot frozen for the latest turn (M16). */
+    readonly snapshotChars: number;
+    /** Whether automatic snapshot injection is configured on (M16). */
+    readonly inject: "enabled" | "disabled";
 }
 
 /** Detailed status returned by `/status full` and `GET /v1/status?full=1`. */
@@ -171,6 +188,10 @@ export type FullStatusProvider = () => Promise<FullStatusDetails>;
 /** Optional outbound extras accepted by reply/notice helpers. */
 export interface OutboundOptions {
     readonly actions?: readonly OutboundAction[];
+    /** Interaction kind behind `actions`; drivers gate keyboards by config. */
+    readonly actionKind?: "approval" | "question";
+    /** Durable files delivered after the text (M14). */
+    readonly files?: readonly FileAttachmentRef[];
 }
 
 /** Channel core configuration. */
@@ -199,7 +220,7 @@ export interface ChannelCoreConfig {
 
 interface Waiter {
     readonly after: number;
-    readonly resolve: (items: readonly OutboxItem[]) => void;
+    readonly resolve: (items: readonly OutboxEntry[]) => void;
     readonly timer: NodeJS.Timeout;
 }
 
@@ -218,8 +239,12 @@ interface EnqueueOptions {
     readonly interactionId?: string;
     readonly reply?: ReplySeed;
     readonly actions?: readonly OutboundAction[];
+    readonly actionKind?: "approval" | "question";
+    readonly files?: readonly FileAttachmentRef[];
     readonly maxChunks?: number;
     readonly requireReply?: boolean;
+    /** Throw instead of silently dropping files that cannot be delivered. */
+    readonly requireFiles?: boolean;
 }
 
 /**
@@ -233,6 +258,7 @@ export class ChannelService extends Service {
         "commands",
         "approval",
         "userQuestions",
+        "attachments",
     ];
 
     static readonly Config: unknown = z.object({
@@ -306,7 +332,8 @@ export class ChannelService extends Service {
                 await this.enqueueInteractionPrompt(
                     input.text,
                     input.interactionId,
-                    input.actions
+                    input.actions,
+                    input.actionKind
                 );
             },
             sendNotice: async (text) => {
@@ -403,6 +430,9 @@ export class ChannelService extends Service {
                 archivedEntries: 0,
                 invalidEntries: 0,
                 bytes: 0,
+                pinnedEntries: 0,
+                snapshotChars: 0,
+                inject: "disabled",
             },
             recentErrors: [],
             lastVersion: "unknown",
@@ -500,17 +530,73 @@ export class ChannelService extends Service {
         text: string,
         options: OutboundOptions = {}
     ): Promise<void> {
+        await this.enqueueReply(text, options);
+    }
+
+    /**
+     * Send durable files to the active chat, optionally accompanied by text.
+     *
+     * Text entries are enqueued first, then one entry per file, so every
+     * platform message gets its own passive reply slot and retry identity.
+     * @param files - stored file references returned by `ctx.attachments`.
+     * @param text - optional short message delivered before the files.
+     * @param options - optional actions/action kind for interaction prompts.
+     * @returns outbox sequence numbers allocated for this call.
+     * @throws NonRetryableDeliveryError when files cannot be delivered.
+     */
+    async sendFiles(
+        files: readonly FileAttachmentRef[],
+        text = "",
+        options: OutboundOptions = {}
+    ): Promise<readonly number[]> {
+        if (files.length === 0) return [];
+        return await this.enqueueReply(text, options, [
+            ...(options.files ?? []),
+            ...files,
+        ]);
+    }
+
+    /**
+     * Enqueue one text reply plus optional files and return allocated seqs.
+     * @param requireFiles - files are all-or-nothing instead of dropping them.
+     */
+    private async enqueueReply(
+        text: string,
+        options: OutboundOptions,
+        requireFiles?: readonly FileAttachmentRef[]
+    ): Promise<readonly number[]> {
         const chat = this.replyTarget();
         if (chat === null) {
             this.logger.error("failed to route reply: no channel target");
-            return;
+            if (requireFiles !== undefined) {
+                throw new NonRetryableDeliveryError(
+                    "no-channel-target",
+                    "没有可用的渠道目标"
+                );
+            }
+            return [];
         }
         const driver = this.drivers.get(chat.channelId);
         if (driver === undefined) {
             this.logger.error("failed to route reply: driver missing", {
                 channel: chat.channelId,
             });
-            return;
+            if (requireFiles !== undefined) {
+                throw new NonRetryableDeliveryError(
+                    "channel-not-registered",
+                    `渠道未注册：${chat.channelId}`
+                );
+            }
+            return [];
+        }
+        if (
+            requireFiles !== undefined &&
+            driver.capabilities.outboundFiles !== true
+        ) {
+            throw new NonRetryableDeliveryError(
+                "files-unsupported",
+                "当前渠道不支持发送文件"
+            );
         }
         const seed = this.replyContextFor(chat);
         const passive =
@@ -522,12 +608,23 @@ export class ChannelService extends Service {
             });
         const active = this.activeDeliverable(driver, chat.chatId, "reply");
         if (!passive && !active) {
+            if (requireFiles !== undefined) {
+                throw new NonRetryableDeliveryError(
+                    "channel-not-deliverable",
+                    "当前渠道暂时无法送达，请稍后重试"
+                );
+            }
             try {
-                await this.deferNoticeText(chat, text);
-                this.logger.warn("reply deferred: channel is not deliverable", {
-                    channel: chat.channelId,
-                    chatId: chat.chatId,
-                });
+                const deferred = await this.deferNoticeText(chat, text);
+                if (deferred) {
+                    this.logger.warn(
+                        "reply deferred: channel is not deliverable",
+                        {
+                            channel: chat.channelId,
+                            chatId: chat.chatId,
+                        }
+                    );
+                }
             } catch (error) {
                 this.logger.error("failed to defer reply", {
                     channel: chat.channelId,
@@ -535,13 +632,21 @@ export class ChannelService extends Service {
                         error instanceof Error ? error.message : String(error),
                 });
             }
-            return;
+            return [];
         }
-        await this.enqueueText("reply", chat, text, {
+        return await this.enqueueText("reply", chat, text, {
             ...(passive && seed !== undefined ? { reply: seed } : {}),
             ...(options.actions === undefined
                 ? {}
                 : { actions: options.actions }),
+            ...(options.actionKind === undefined
+                ? {}
+                : { actionKind: options.actionKind }),
+            ...(requireFiles === undefined
+                ? options.files === undefined
+                    ? {}
+                    : { files: options.files }
+                : { files: requireFiles, requireFiles: true }),
         });
     }
 
@@ -584,11 +689,17 @@ export class ChannelService extends Service {
     /** Feed one normalized inbound message. */
     async ingress(message: InboundMessage): Promise<IngressResult> {
         if (message.images !== undefined && message.images.length > 0) {
-            return {
-                accepted: false,
-                duplicate: false,
-                reason: "unsupported-images",
-            };
+            // The driver declared whether it can hand over decoded images;
+            // cores without the capability reject the whole message so the
+            // user gets a deterministic outcome instead of a silent drop.
+            const driver = this.drivers.get(message.channelId);
+            if (driver?.capabilities.inboundImages !== true) {
+                return {
+                    accepted: false,
+                    duplicate: false,
+                    reason: "unsupported-images",
+                };
+            }
         }
         if (!this.active || this.runtime === undefined) {
             if (this.buffer.length >= this.config.ingressBufferLimit) {
@@ -634,15 +745,15 @@ export class ChannelService extends Service {
     }
 
     /** Read retained outbox history after `after`. */
-    historyAfter(after: number): readonly OutboxItem[] {
-        return this.outbox.historyAfter(after);
+    historyAfter(after: number): readonly OutboxEntry[] {
+        return this.outbox.historyAfter(after).map(outboxEntry);
     }
 
     /** Wait for at least one outbox entry newer than `after`. */
     waitForOutbound(
         after: number,
         timeoutMs: number
-    ): Promise<readonly OutboxItem[]> {
+    ): Promise<readonly OutboxEntry[]> {
         const existing = this.outbox.historyAfter(after);
         if (existing.length > 0) return Promise.resolve(existing);
         return new Promise((resolve) => {
@@ -799,9 +910,11 @@ export class ChannelService extends Service {
         }
         await this.seen.add(key);
         const text = message.text?.trim() ?? "";
+        const hasImages =
+            message.images !== undefined && message.images.length > 0;
         const runtime = this.runtime;
         if (runtime === undefined) {
-            if (message.action === undefined && text === "") {
+            if (message.action === undefined && text === "" && !hasImages) {
                 return { accepted: false, duplicate: false, reason: "empty" };
             }
             if (this.buffer.length >= this.config.ingressBufferLimit) {
@@ -833,7 +946,8 @@ export class ChannelService extends Service {
             if (!consumed) await this.notifyActionExpired(chat);
             return { accepted: true, duplicate: false };
         }
-        if (text === "") {
+        const imageRefs = await this.saveInboundImages(message.images);
+        if (text === "" && imageRefs.length === 0) {
             return { accepted: false, duplicate: false, reason: "empty" };
         }
         this.lastActiveChat = { ...chat };
@@ -842,17 +956,64 @@ export class ChannelService extends Service {
         await this.releaseDeferredNotices(message);
 
         if (text.startsWith("/")) {
-            await this.executeCommand(runtime, text, message);
-            return { accepted: true, duplicate: false };
+            if (await this.executeCommand(runtime, text, message)) {
+                return { accepted: true, duplicate: false };
+            }
+            // Unknown slash commands are not rejected: they fall through and
+            // are delivered to the agent as ordinary user text so user-invoked
+            // skills (`/skill-name`) and future command aliases keep working.
         }
 
-        if (this.broker.hasPending() && (await this.broker.handleReply(text))) {
+        if (
+            text !== "" &&
+            this.broker.hasPending() &&
+            (await this.broker.handleReply(text))
+        ) {
             return { accepted: true, duplicate: false };
         }
 
         const delivery = this.resolveDelivery(message.delivery, runtime.agent);
-        await this.deliverText(runtime.agent, chat, text, delivery);
+        await this.deliverUserMessage(
+            runtime.agent,
+            chat,
+            text,
+            imageRefs,
+            delivery
+        );
         return { accepted: true, duplicate: false };
+    }
+
+    /**
+     * Validate and store inbound images through the attachment service.
+     * @returns durable references; an unavailable or failing service degrades
+     * to no images (the caller then delivers the text alone).
+     */
+    private async saveInboundImages(
+        images: InboundMessage["images"]
+    ): Promise<readonly ImageAttachmentRef[]> {
+        if (images === undefined || images.length === 0) return [];
+        const attachments = this.ctx.attachments;
+        if (attachments === undefined) {
+            this.logger.warn(
+                "attachments service unavailable; inbound images ignored",
+                { count: images.length }
+            );
+            return [];
+        }
+        try {
+            return await attachments.saveImages(
+                images.map((image) => ({
+                    data: image.data,
+                    mediaType: image.mime as ImageMediaType,
+                }))
+            );
+        } catch (error) {
+            this.logger.warn("failed to save inbound images; text-only", {
+                count: images.length,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return [];
+        }
     }
 
     private async notifyActionExpired(chat: ChatRef): Promise<void> {
@@ -992,7 +1153,8 @@ export class ChannelService extends Service {
     private async enqueueInteractionPrompt(
         text: string,
         interactionId: string,
-        actions?: readonly OutboundAction[]
+        actions?: readonly OutboundAction[],
+        actionKind?: "approval" | "question"
     ): Promise<void> {
         const chat = this.replyTarget();
         if (chat === null) throw new DriverNotFoundError("default");
@@ -1028,6 +1190,7 @@ export class ChannelService extends Service {
                 interactionId,
                 reply: seed,
                 ...(actions === undefined ? {} : { actions }),
+                ...(actionKind === undefined ? {} : { actionKind }),
             });
             return;
         }
@@ -1037,22 +1200,34 @@ export class ChannelService extends Service {
         await this.enqueueText("interaction", chat, text, {
             interactionId,
             ...(actions === undefined ? {} : { actions }),
+            ...(actionKind === undefined ? {} : { actionKind }),
         });
     }
 
+    /**
+     * Enqueue one formatted outbound entry.
+     *
+     * Files are enqueued as their own empty-text entries after the last text
+     * chunk so each platform message keeps its own passive reply slot and
+     * retry identity (M14 implementation note; see .spec/23).
+     * @returns outbox sequence numbers allocated by this call.
+     */
     private async enqueueText(
         kind: OutboxKind,
         chat: ChatRef,
         text: string,
         options: EnqueueOptions = {}
-    ): Promise<void> {
-        if (text.trim() === "") return;
+    ): Promise<readonly number[]> {
         const driver = this.drivers.get(chat.channelId);
         if (driver === undefined) throw new DriverNotFoundError(chat.channelId);
         const capabilities = driver.capabilities;
         const actions = this.selectActions(driver, options.actions);
+        const files = this.selectFiles(driver, options.files);
+        const hasText = text.trim() !== "";
+        if (!hasText && (files === undefined || files.length === 0)) return [];
         let reply = options.reply;
         let maxChunks = options.maxChunks;
+        let passiveSlots: number | undefined;
         if (reply !== undefined) {
             const remaining = remainingReplySlots(
                 capabilities.maxRepliesPerReply,
@@ -1070,37 +1245,112 @@ export class ChannelService extends Service {
                         { channel: chat.channelId, chatId: chat.chatId }
                     );
                     reply = undefined;
-                } else if (maxChunks === undefined) {
-                    maxChunks = remaining;
                 } else {
-                    maxChunks = Math.min(maxChunks, remaining);
+                    passiveSlots = remaining;
                 }
             }
         }
-        const chunks = formatOutbound(
-            text,
-            capabilities,
-            maxChunks === undefined ? {} : { maxChunks }
-        );
-        if (chunks.length === 0) return;
+        let effectiveFiles = files ?? [];
+        if (passiveSlots !== undefined) {
+            if (effectiveFiles.length > passiveSlots) {
+                if (options.requireFiles === true) {
+                    throw new NonRetryableDeliveryError(
+                        "reply-slots-exhausted"
+                    );
+                }
+                this.logger.warn(
+                    "passive reply slots exhausted; files dropped",
+                    { channel: chat.channelId, chatId: chat.chatId }
+                );
+                effectiveFiles = effectiveFiles.slice(0, passiveSlots);
+            }
+            const textBudget = Math.max(
+                0,
+                passiveSlots - effectiveFiles.length
+            );
+            if (hasText && textBudget === 0) {
+                if (options.requireFiles === true) {
+                    throw new NonRetryableDeliveryError(
+                        "reply-slots-exhausted"
+                    );
+                }
+                this.logger.warn(
+                    "passive reply slots exhausted; reply text dropped",
+                    { channel: chat.channelId, chatId: chat.chatId }
+                );
+            }
+            maxChunks =
+                maxChunks === undefined
+                    ? textBudget
+                    : Math.min(maxChunks, textBudget);
+        }
+        const chunks =
+            hasText && (maxChunks === undefined || maxChunks > 0)
+                ? formatOutbound(
+                      text,
+                      capabilities,
+                      maxChunks === undefined ? {} : { maxChunks }
+                  )
+                : [];
+        if (chunks.length === 0 && effectiveFiles.length === 0) return [];
+        const replyInput =
+            reply === undefined
+                ? null
+                : {
+                      messageId: reply.messageId,
+                      receivedAt: reply.receivedAt,
+                  };
         const inputs: EnqueueInput[] = chunks.map((chunk, index) => ({
             channelId: chat.channelId,
             chatId: chat.chatId,
             kind,
             text: chunk,
             interactionId: options.interactionId ?? null,
-            reply:
-                reply === undefined
-                    ? null
-                    : {
-                          messageId: reply.messageId,
-                          receivedAt: reply.receivedAt,
-                      },
+            reply: replyInput,
             actions: index === chunks.length - 1 ? (actions ?? null) : null,
+            actionKind:
+                index === chunks.length - 1 && actions !== undefined
+                    ? (options.actionKind ?? null)
+                    : null,
         }));
-        await this.outbox.enqueueMany(inputs);
+        for (const file of effectiveFiles) {
+            inputs.push({
+                channelId: chat.channelId,
+                chatId: chat.chatId,
+                kind,
+                text: "",
+                interactionId: options.interactionId ?? null,
+                reply: replyInput,
+                files: [file],
+            });
+        }
+        if (actions !== undefined && chunks.length === 0) {
+            const last = inputs[inputs.length - 1];
+            if (last !== undefined) {
+                inputs[inputs.length - 1] = {
+                    ...last,
+                    actions,
+                    actionKind: options.actionKind ?? null,
+                };
+            }
+        }
+        const items = await this.outbox.enqueueMany(inputs);
         this.notifyWaiters();
         void this.pump();
+        return items.map((item) => item.seq);
+    }
+
+    private selectFiles(
+        driver: ChannelDriver,
+        files: readonly FileAttachmentRef[] | undefined
+    ): readonly FileAttachmentRef[] | undefined {
+        if (files === undefined || files.length === 0) return undefined;
+        if (driver.capabilities.outboundFiles === true) return files;
+        this.logger.warn(
+            "channel does not support outbound files; dropping them",
+            { channel: driver.id, count: files.length }
+        );
+        return undefined;
     }
 
     private selectActions(
@@ -1157,15 +1407,21 @@ export class ChannelService extends Service {
         return choice.mode;
     }
 
-    private async deliverText(
+    private async deliverUserMessage(
         agent: Agent,
         chat: ChatRef,
         text: string,
+        images: readonly ImageAttachmentRef[],
         delivery: DeliveryMode
     ): Promise<void> {
         const wasRunning = agent.status === "running";
+        const content: ContentBlock[] = [];
+        if (text !== "") content.push({ type: "text", text });
+        for (const attachment of images) {
+            content.push({ type: "image", attachment });
+        }
         const message = createUserMessage({
-            content: [{ type: "text", text }],
+            content,
             source: { kind: "user" },
         });
         this.noteTurnSource(chat, delivery, wasRunning);
@@ -1200,11 +1456,19 @@ export class ChannelService extends Service {
         if (this.turnChat === null) this.turnChat = { ...chat };
     }
 
+    /**
+     * Execute one registered slash command.
+     *
+     * @returns true when the command registry handled the line; false when the
+     * line is not a registered command and must fall through to the agent as a
+     * normal user message (this is how user-invoked skills such as `/name`
+     * reach the skill pre-step).
+     */
     private async executeCommand(
         runtime: ChannelRuntime,
         line: string,
         message: InboundMessage
-    ): Promise<void> {
+    ): Promise<boolean> {
         const chat: ChatRef = {
             channelId: message.channelId,
             chatId: message.chatId,
@@ -1220,19 +1484,12 @@ export class ChannelService extends Service {
             [],
             controller.signal
         );
-        if (execution === undefined) {
-            await this.enqueueText(
-                "reply",
-                chat,
-                `未知命令：${line.split(/\s+/, 1)[0] ?? line}`,
-                { reply }
-            );
-            return;
-        }
+        if (execution === undefined) return false;
         const text = execution.result.text;
         if (text !== undefined && text !== "") {
             await this.enqueueText("reply", chat, text, { reply });
         }
+        return true;
     }
 
     private registerCommands(): void {
@@ -1288,7 +1545,7 @@ export class ChannelService extends Service {
         if (chat === null) {
             return { kind: "error", text: "没有可用渠道" };
         }
-        void this.deliverText(runtime.agent, chat, text, mode).catch(
+        void this.deliverUserMessage(runtime.agent, chat, text, [], mode).catch(
             (error) => {
                 this.logger.error("forced delivery failed", {
                     error:
@@ -1360,6 +1617,32 @@ export class ChannelService extends Service {
                     driver.capabilities.outboundActions === true
                         ? item.actions
                         : undefined;
+                const storedFiles = readFiles(item);
+                const files =
+                    storedFiles !== undefined &&
+                    driver.capabilities.outboundFiles === true
+                        ? storedFiles
+                        : undefined;
+                if (storedFiles !== undefined && files === undefined) {
+                    this.logger.warn(
+                        "outbound files dropped: channel does not support them",
+                        { seq: item.seq, channel: item.channelId }
+                    );
+                    if (item.text.trim() === "") {
+                        await this.outbox.markAttemptFailed(
+                            item.seq,
+                            null,
+                            true
+                        );
+                        this.logger.error(
+                            "outbound file entry cannot be delivered",
+                            { seq: item.seq, channel: item.channelId }
+                        );
+                        continue;
+                    }
+                }
+                const actionKind =
+                    actions === undefined ? undefined : readActionKind(item);
                 try {
                     await driver.send(item.chatId, {
                         kind: item.kind,
@@ -1368,6 +1651,8 @@ export class ChannelService extends Service {
                         attempt: item.attempts,
                         ...(reply === undefined ? {} : { reply }),
                         ...(actions === undefined ? {} : { actions }),
+                        ...(actionKind === undefined ? {} : { actionKind }),
+                        ...(files === undefined ? {} : { files }),
                     });
                     await this.outbox.markSent(item.seq);
                     this.notifyWaiters();
@@ -1449,6 +1734,12 @@ export class ChannelService extends Service {
 
     private async tryDeferFailed(item: OutboxItem): Promise<boolean> {
         try {
+            if (readFiles(item) !== undefined) {
+                this.logger.warn(
+                    "outbound files dropped: deferred entries carry text only",
+                    { seq: item.seq, channel: item.channelId }
+                );
+            }
             const deferred = await this.deferNoticeText(
                 { channelId: item.channelId, chatId: item.chatId },
                 item.text
@@ -1550,6 +1841,39 @@ function stripWarningPrefix(text: string): string {
     return trimmed.startsWith("⚠️") ? trimmed.slice(2).trimStart() : trimmed;
 }
 
+/** Read the durable file references of one outbox entry. */
+function readFiles(item: OutboxItem): readonly FileAttachmentRef[] | undefined {
+    const files = outboxEntry(item).files;
+    if (!Array.isArray(files) || files.length === 0) return undefined;
+    const valid: FileAttachmentRef[] = [];
+    for (const file of files) {
+        if (typeof file !== "object" || file === null) continue;
+        const candidate = file as {
+            readonly attachmentId?: unknown;
+            readonly name?: unknown;
+            readonly bytes?: unknown;
+        };
+        if (
+            typeof candidate.attachmentId !== "string" ||
+            candidate.attachmentId === "" ||
+            typeof candidate.name !== "string" ||
+            candidate.name === "" ||
+            typeof candidate.bytes !== "number" ||
+            !Number.isFinite(candidate.bytes)
+        ) {
+            continue;
+        }
+        valid.push(file);
+    }
+    return valid.length === 0 ? undefined : valid;
+}
+
+/** Read the interaction kind stored beside one outbox entry's actions. */
+function readActionKind(item: OutboxItem): "approval" | "question" | undefined {
+    const kind = outboxEntry(item).actionKind;
+    return kind === "approval" || kind === "question" ? kind : undefined;
+}
+
 /** Build a passive reply context from one outbox entry, if complete. */
 function readReply(item: OutboxItem):
     | {
@@ -1581,4 +1905,5 @@ export const inject: string[] = [
     "commands",
     "approval",
     "userQuestions",
+    "attachments",
 ];

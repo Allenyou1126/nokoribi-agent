@@ -6,6 +6,19 @@ import type {
     MessageResponse,
 } from "@tencent-connect/qqbot-nodejs/protocol";
 
+/** One downloaded inbound image. */
+export interface DownloadedImage {
+    readonly data: Uint8Array;
+    /** Content type reported by the download response, when present. */
+    readonly mime?: string;
+}
+
+/** Options bounding one inbound image download. */
+export interface DownloadImageOptions {
+    readonly maxBytes: number;
+    readonly timeoutMs: number;
+}
+
 /** REST operations used by the QQ driver. */
 export interface QqRestClient {
     /** Send one raw message body to a C2C user or group. */
@@ -24,6 +37,23 @@ export interface QqRestClient {
     clearTokenCache(): void;
     /** Stop background token refresh. */
     stop(): void;
+    /**
+     * Download one platform-provided image URL with timeout and byte caps.
+     * Optional so lightweight test doubles for non-media scenarios compile.
+     */
+    downloadImage?(
+        url: string,
+        options: DownloadImageOptions
+    ): Promise<DownloadedImage>;
+    /**
+     * Upload one media file through the rich-media API.
+     * @returns the platform `file_info` used by a `msg_type=7` message.
+     */
+    uploadMedia?(
+        scope: ChatScope,
+        targetId: string,
+        body: Record<string, unknown>
+    ): Promise<{ readonly file_info: string }>;
 }
 
 /** Event callbacks consumed by the QQ driver. */

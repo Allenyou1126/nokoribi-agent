@@ -2,9 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { FileAttachmentRef } from "@deepseek-ai/dsh-attachment";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { OutboxStore } from "../src/outbox.js";
+import { OutboxStore, outboxEntry } from "../src/outbox.js";
 
 const dirs: string[] = [];
 
@@ -323,5 +324,44 @@ describe("outbox store", () => {
             now + 10_000
         );
         expect(box.deferredCount(now + 10_000, 60_000)).toBe(2);
+    });
+
+    it("persists files and action kinds across reload", async () => {
+        const { path, store: box } = await store();
+        const file = {
+            attachmentId: "file-1",
+            name: "report.txt",
+            bytes: 6,
+        } as unknown as FileAttachmentRef;
+        await box.enqueue({
+            channelId: "local-test",
+            chatId: "local",
+            kind: "reply",
+            text: "artifact ready",
+            files: [file],
+        });
+        await box.enqueue({
+            channelId: "qq-bot",
+            chatId: "c2c:user-1",
+            kind: "interaction",
+            text: "question",
+            actionKind: "question",
+            actions: [
+                {
+                    id: "token-1",
+                    label: "选项一",
+                    kind: "callback",
+                    payload: JSON.stringify({ k: "token-1", t: "选项一" }),
+                },
+            ],
+        });
+        const reloaded = new OutboxStore(path, 100);
+        await reloaded.load();
+        const [first, second] = reloaded.pending();
+        expect(first).toBeDefined();
+        expect(second).toBeDefined();
+        expect(outboxEntry(first!).files).toEqual([file]);
+        expect(outboxEntry(second!).actionKind).toBe("question");
+        expect(second!.actions?.[0]?.label).toBe("选项一");
     });
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { FileAttachmentRef } from "@deepseek-ai/dsh-attachment";
 import {
     emptyOutbox,
     parseOutbox,
@@ -27,6 +28,27 @@ export interface EnqueueInput {
     readonly interactionId?: string | null;
     readonly reply?: EnqueueReplyInput | null;
     readonly actions?: readonly OutboundAction[] | null;
+    /** Durable files delivered after the text (M14). */
+    readonly files?: readonly FileAttachmentRef[] | null;
+    /** Interaction kind that produced `actions` (M15). */
+    readonly actionKind?: "approval" | "question" | null;
+}
+
+/**
+ * One outbox entry with the M14/M15 extension fields.
+ *
+ * The shared schema stores these keys generically (its item schema is
+ * passthrough), so channel-core owns the typed view instead of editing the
+ * Lead-owned shared package.
+ */
+export type OutboxEntry = OutboxItem & {
+    readonly files?: readonly FileAttachmentRef[] | null;
+    readonly actionKind?: "approval" | "question" | null;
+};
+
+/** Read one shared outbox item through the channel-core extension type. */
+export function outboxEntry(item: OutboxItem): OutboxEntry {
+    return item as OutboxEntry;
 }
 
 /** Bounds applied when deferring one notice. */
@@ -188,7 +210,15 @@ export class OutboxStore {
                 nextAttemptAt: null,
                 createdAt: new Date().toISOString(),
                 sentAt: null,
-            });
+                ...(input.files === undefined ||
+                input.files === null ||
+                input.files.length === 0
+                    ? {}
+                    : { files: input.files }),
+                ...(input.actionKind === undefined || input.actionKind === null
+                    ? {}
+                    : { actionKind: input.actionKind }),
+            } as OutboxItem);
             nextSeq += 1;
         }
         this.document = {

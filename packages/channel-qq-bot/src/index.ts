@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-attachment";
 import z from "@deepseek-ai/schemastery";
 import { createLogger } from "@nokoribi/shared";
 
@@ -14,7 +15,7 @@ export type {
     QqCredentials,
     QqMarkdown,
 } from "./config.js";
-export { QqBotDriver, parseChatId } from "./driver.js";
+export { mediaFileTypeFor, QqBotDriver, parseChatId } from "./driver.js";
 export type { ParsedQqChat, QqBotDriverOptions } from "./driver.js";
 export {
     classifySendError,
@@ -43,7 +44,11 @@ export {
     parseInteractionButtonData,
     parseTimestamp,
 } from "./normalize.js";
-export type { InteractionButtonPayload } from "./normalize.js";
+export type {
+    InboundImageSource,
+    InteractionButtonPayload,
+    NormalizedInboundMessage,
+} from "./normalize.js";
 export { QqRest } from "./rest.js";
 export type { QqRestOptions } from "./rest.js";
 export type {
@@ -55,8 +60,8 @@ export type {
 /** Loader plugin label. */
 export const name = "channel-qq-bot";
 
-/** Channel core must exist before this driver registers itself. */
-export const inject: string[] = ["channels"];
+/** Channel core and the attachment store must exist before registration. */
+export const inject: string[] = ["channels", "attachments"];
 
 /** Runtime configuration schema (validated by the Loader). */
 export const Config: unknown = z.object({
@@ -72,6 +77,10 @@ export const Config: unknown = z.object({
     connectTimeoutMs: z.natural().min(1).default(30000),
     activeMessageFallback: z.union(["auto", "off"]).default("auto"),
     approvalButtons: z.boolean().default(true),
+    questionButtons: z.boolean().default(true),
+    inboundImages: z.boolean().default(true),
+    inboundImageMaxBytes: z.natural().min(1).default(10485760),
+    inboundImageTimeoutMs: z.natural().min(1).default(15000),
     reconnectBaseMs: z.natural().min(1).default(1000),
     reconnectMaxMs: z.natural().min(1).default(60000),
     activeMessageDisableMs: z.natural().min(1).default(3600000),
@@ -88,7 +97,13 @@ export async function apply(ctx: Context, config: QqBotConfig): Promise<void> {
     const logger = createLogger("channel-qq-bot");
     const rest = new QqRest({ config, credentials, logger });
     const gateway = new QqGateway({ config, credentials, rest, logger });
-    const driver = new QqBotDriver({ config, rest, gateway, logger });
+    const driver = new QqBotDriver({
+        config,
+        rest,
+        gateway,
+        logger,
+        readFile: (file) => ctx.attachments.readFileStream(file),
+    });
     const disposeDriver = await ctx.channels.registerDriver(driver);
     ctx.effect(() => () => {
         rest.stop();

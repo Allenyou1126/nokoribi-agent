@@ -89,6 +89,7 @@ afterEach(async () => {
 
 interface StartOptions {
     readonly approvalButtons?: boolean;
+    readonly questionButtons?: boolean;
     /** Close any Identify carrying the interaction intent with this code. */
     readonly rejectInteractionIntents?: number;
 }
@@ -147,6 +148,7 @@ async function startGateway(options: StartOptions = {}): Promise<{
         config: {
             ...config,
             approvalButtons: options.approvalButtons ?? true,
+            questionButtons: options.questionButtons ?? true,
         },
         credentials,
         rest: new FakeRest(server.url),
@@ -210,6 +212,7 @@ describe("qq gateway wrapper", () => {
     it("subscribes only to message intents when buttons are disabled", async () => {
         const { gateway, identify } = await startGateway({
             approvalButtons: false,
+            questionButtons: false,
         });
         await gateway.start(handlers([]));
         expect(identify()).toMatchObject({
@@ -217,6 +220,18 @@ describe("qq gateway wrapper", () => {
         });
         expect(gateway.interactionAvailable()).toBe(false);
         expect(gateway.health().state).toBe("online");
+    });
+
+    it("subscribes to interactions when only question buttons are enabled", async () => {
+        const { gateway, identify } = await startGateway({
+            approvalButtons: false,
+            questionButtons: true,
+        });
+        await gateway.start(handlers([]));
+        expect(identify()).toMatchObject({
+            intents: QQ_GROUP_AND_C2C_AND_INTERACTION_INTENTS,
+        });
+        expect(gateway.interactionAvailable()).toBe(true);
     });
 
     it("forwards normalized messages and interactions", async () => {

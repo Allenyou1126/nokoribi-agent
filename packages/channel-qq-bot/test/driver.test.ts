@@ -2,6 +2,7 @@ import {
     NonRetryableDeliveryError,
     PassiveReplyExpiredError,
     type ChannelHealth,
+    type FileAttachmentRef,
     type InboundMessage,
     type OutboundContent,
 } from "@nokoribi/channel-core";
@@ -28,11 +29,28 @@ interface SentRequest {
     readonly body: Record<string, unknown>;
 }
 
+interface SentUpload {
+    readonly scope: "c2c" | "group";
+    readonly targetId: string;
+    readonly body: Record<string, unknown>;
+}
+
 class FakeRest implements QqRestClient {
     readonly requests: SentRequest[] = [];
     readonly acks: { interactionId: string; code: 0 | 1 }[] = [];
     readonly errors: unknown[] = [];
+    readonly downloads: {
+        url: string;
+        maxBytes: number;
+        timeoutMs: number;
+    }[] = [];
+    readonly uploads: SentUpload[] = [];
     ackError: unknown;
+    downloadError: unknown;
+    downloadData = new Uint8Array([1, 2, 3, 4]);
+    downloadMime: string | undefined = "image/png";
+    uploadError: unknown;
+    uploadFileInfo = "file-info-1";
 
     async send(
         scope: "c2c" | "group",
@@ -51,6 +69,30 @@ class FakeRest implements QqRestClient {
     async ackInteraction(interactionId: string, code: 0 | 1): Promise<void> {
         this.acks.push({ interactionId, code });
         if (this.ackError !== undefined) throw this.ackError;
+    }
+
+    async downloadImage(
+        url: string,
+        options: { maxBytes: number; timeoutMs: number }
+    ): Promise<{ data: Uint8Array; mime?: string }> {
+        this.downloads.push({ url, ...options });
+        if (this.downloadError !== undefined) throw this.downloadError;
+        return {
+            data: this.downloadData,
+            ...(this.downloadMime === undefined
+                ? {}
+                : { mime: this.downloadMime }),
+        };
+    }
+
+    async uploadMedia(
+        scope: "c2c" | "group",
+        targetId: string,
+        body: Record<string, unknown>
+    ): Promise<{ file_info: string }> {
+        this.uploads.push({ scope, targetId, body });
+        if (this.uploadError !== undefined) throw this.uploadError;
+        return { file_info: this.uploadFileInfo };
     }
 
     async getGatewayUrl(): Promise<string> {
@@ -198,6 +240,7 @@ function setup(
     options: {
         config?: Partial<QqBotConfig>;
         now?: () => number;
+        readFile?: (file: FileAttachmentRef) => AsyncIterable<Uint8Array>;
     } = {}
 ): {
     driver: QqBotDriver;
@@ -223,6 +266,9 @@ function setup(
         logger: createLogger("qq-test", () => undefined),
         now: clock,
         limiter,
+        ...(options.readFile === undefined
+            ? {}
+            : { readFile: options.readFile }),
     });
     return {
         driver,
@@ -535,13 +581,99 @@ describe("qq bot driver", () => {
 
     it("disables action capabilities and rendering when buttons are off", async () => {
         const { driver, gateway, rest } = setup({
-            config: { approvalButtons: false },
+            config: { approvalButtons: false, questionButtons: false },
         });
         expect(driver.capabilities.outboundActions).toBe(false);
         expect(driver.capabilities.inboundActions).toBe(false);
         expect(gateway.interactions).toBe(true);
         await driver.send("c2c:u1", content({ actions: actions() }));
         expect(rest.requests[0]?.body.keyboard).toBeUndefined();
+    });
+
+    it("renders question keyboards on C2C and gates them by config", async () => {
+        const enabled = setup();
+        await enabled.driver.send(
+            "c2c:u1",
+            content({
+                actions: actions(),
+                actionKind: "question",
+            })
+        );
+        expect(enabled.rest.requests[0]?.body.keyboard).toBeDefined();
+
+        const disabled = setup({
+            config: { questionButtons: false },
+        });
+        expect(disabled.driver.capabilities.outboundActions).toBe(true);
+        await disabled.driver.send(
+            "c2c:u1",
+            content({
+                actions: actions(),
+                actionKind: "question",
+            })
+        );
+        expect(disabled.rest.requests[0]?.body.keyboard).toBeUndefined();
+        await disabled.driver.send(
+            "c2c:u1",
+            content({
+                actions: actions(),
+                actionKind: "approval",
+            })
+        );
+        expect(disabled.rest.requests[1]?.body.keyboard).toBeDefined();
+
+        const approvalOnly = setup({
+            config: { approvalButtons: false },
+        });
+        await approvalOnly.driver.send(
+            "c2c:u1",
+            content({
+                actions: actions(),
+                actionKind: "question",
+            })
+        );
+        expect(approvalOnly.rest.requests[0]?.body.keyboard).toBeDefined();
+    });
+
+    it("strips question keyboards in group chats", async () => {
+        const { driver, rest } = setup();
+        await driver.send(
+            "group:g1",
+            content({ actions: actions(), actionKind: "question" })
+        );
+        expect(rest.requests[0]?.body.keyboard).toBeUndefined();
+    });
+
+    it("accepts question button callbacks as interactions", async () => {
+        const { driver, gateway, rest } = setup();
+        const received: InboundMessage[] = [];
+        await driver.start({
+            onInbound: (message) => {
+                received.push(message);
+            },
+        });
+        await gateway.emitInteraction(
+            interactionEvent({
+                id: "interaction-question-1",
+                data: {
+                    type: 11,
+                    resolved: {
+                        button_data: JSON.stringify({
+                            k: "question-token",
+                            t: "选项一",
+                        }),
+                        button_id: "question-token",
+                    },
+                },
+            })
+        );
+        expect(rest.acks).toEqual([
+            { interactionId: "interaction-question-1", code: 0 },
+        ]);
+        expect(received[0]?.action).toMatchObject({
+            id: "question-token",
+            messageId: "interaction-question-1",
+        });
     });
 
     it("reports gateway health and active-message detail", async () => {
@@ -557,5 +689,270 @@ describe("qq bot driver", () => {
             state: "connecting",
             detail: "active-messages-unavailable",
         });
+    });
+});
+
+async function waitFor(
+    predicate: () => boolean,
+    timeoutMs = 5000
+): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+        if (Date.now() > deadline) throw new Error("timed out waiting");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+}
+
+const IMAGE_FILE = {
+    attachmentId: "file-1",
+    name: "report.txt",
+    bytes: 6,
+} as unknown as FileAttachmentRef;
+
+function readFileBytes(
+    data: Uint8Array
+): (file: FileAttachmentRef) => AsyncIterable<Uint8Array> {
+    return () => {
+        return (async function* () {
+            yield data;
+        })();
+    };
+}
+
+describe("qq bot inbound images", () => {
+    it("downloads image attachments and forwards bytes", async () => {
+        const { driver, gateway, rest } = setup();
+        const received: InboundMessage[] = [];
+        await driver.start({
+            onInbound: (message) => {
+                received.push(message);
+            },
+        });
+        gateway.handlers?.onInbound(
+            sdkMessage({
+                content: "look",
+                attachments: [
+                    {
+                        content_type: "image/png",
+                        url: "https://example.test/a.png",
+                    },
+                ],
+            })
+        );
+        await waitFor(() => received.length > 0);
+        expect(rest.downloads).toEqual([
+            {
+                url: "https://example.test/a.png",
+                maxBytes: 10 * 1024 * 1024,
+                timeoutMs: 15000,
+            },
+        ]);
+        expect(received[0]?.text).toBe("look");
+        expect(received[0]?.images).toEqual([
+            { mime: "image/png", data: rest.downloadData },
+        ]);
+    });
+
+    it("forwards an image-only message", async () => {
+        const { driver, gateway } = setup();
+        const received: InboundMessage[] = [];
+        await driver.start({
+            onInbound: (message) => {
+                received.push(message);
+            },
+        });
+        gateway.handlers?.onInbound(
+            sdkMessage({
+                content: "",
+                attachments: [
+                    {
+                        content_type: "image/jpeg",
+                        url: "https://example.test/a.jpg",
+                    },
+                ],
+            })
+        );
+        await waitFor(() => received.length > 0);
+        expect(received[0]?.text).toBeUndefined();
+        expect(received[0]?.images?.[0]?.mime).toBe("image/png");
+    });
+
+    it("appends a download-failure note and degrades to text", async () => {
+        const { driver, gateway, rest } = setup();
+        rest.downloadError = new Error("network down");
+        const received: InboundMessage[] = [];
+        await driver.start({
+            onInbound: (message) => {
+                received.push(message);
+            },
+        });
+        gateway.handlers?.onInbound(
+            sdkMessage({
+                content: "caption",
+                attachments: [
+                    {
+                        content_type: "image/png",
+                        url: "https://example.test/a.png",
+                    },
+                ],
+            })
+        );
+        await waitFor(() => received.length > 0);
+        expect(received[0]?.text).toBe("caption\n[图片下载失败，已忽略]");
+        expect(received[0]?.images).toBeUndefined();
+    });
+
+    it("delivers the failure note alone for an image-only message", async () => {
+        const { driver, gateway, rest } = setup();
+        rest.downloadError = new Error("network down");
+        const received: InboundMessage[] = [];
+        await driver.start({
+            onInbound: (message) => {
+                received.push(message);
+            },
+        });
+        gateway.handlers?.onInbound(
+            sdkMessage({
+                content: "",
+                attachments: [
+                    {
+                        content_type: "image/png",
+                        url: "https://example.test/a.png",
+                    },
+                ],
+            })
+        );
+        await waitFor(() => received.length > 0);
+        expect(received[0]?.text).toBe("[图片下载失败，已忽略]");
+    });
+
+    it("ignores images when inbound images are disabled", async () => {
+        const { driver, gateway } = setup({
+            config: { inboundImages: false },
+        });
+        const received: InboundMessage[] = [];
+        await driver.start({
+            onInbound: (message) => {
+                received.push(message);
+            },
+        });
+        gateway.handlers?.onInbound(
+            sdkMessage({
+                content: "",
+                attachments: [
+                    {
+                        content_type: "image/png",
+                        url: "https://example.test/a.png",
+                    },
+                ],
+            })
+        );
+        gateway.handlers?.onInbound(
+            sdkMessage({
+                messageId: "in-2",
+                content: "text only",
+                attachments: [
+                    {
+                        content_type: "image/png",
+                        url: "https://example.test/b.png",
+                    },
+                ],
+            })
+        );
+        expect(received).toHaveLength(1);
+        expect(received[0]?.text).toBe("text only");
+        expect(received[0]?.images).toBeUndefined();
+    });
+});
+
+describe("qq bot outbound files", () => {
+    it("uploads a C2C file and sends msg_type=7 after the text", async () => {
+        const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+        const { driver, rest } = setup({ readFile: readFileBytes(bytes) });
+        const sent = await driver.send(
+            "c2c:u1",
+            content({
+                text: "here it is",
+                files: [IMAGE_FILE],
+                reply: { messageId: "in-1", receivedAt: 1_000_000, seq: 1 },
+            })
+        );
+        expect(rest.requests[0]?.body).toMatchObject({
+            msg_type: 2,
+            msg_id: "in-1",
+            msg_seq: 1,
+        });
+        expect(rest.uploads).toHaveLength(1);
+        expect(rest.uploads[0]?.scope).toBe("c2c");
+        expect(rest.uploads[0]?.body).toMatchObject({
+            file_type: 4,
+            srv_send_msg: false,
+            file_name: "report.txt",
+            file_data: Buffer.from(bytes).toString("base64"),
+        });
+        expect(rest.requests[1]?.body).toMatchObject({
+            msg_type: 7,
+            media: { file_info: "file-info-1" },
+            msg_id: "in-1",
+            msg_seq: 1,
+        });
+        expect(sent.messageId).toBe("sent-2");
+    });
+
+    it("sends a file-only entry without a text message", async () => {
+        const { driver, rest } = setup({
+            readFile: readFileBytes(new Uint8Array([9, 9, 9, 9, 9, 9])),
+        });
+        await driver.send(
+            "c2c:u1",
+            content({
+                text: "",
+                files: [IMAGE_FILE],
+                reply: { messageId: "in-1", receivedAt: 1_000_000, seq: 2 },
+            })
+        );
+        expect(rest.requests).toHaveLength(1);
+        expect(rest.requests[0]?.body).toMatchObject({
+            msg_type: 7,
+            msg_id: "in-1",
+            msg_seq: 2,
+        });
+    });
+
+    it("drops group files and keeps the text fallback", async () => {
+        const { driver, rest } = setup({
+            readFile: readFileBytes(new Uint8Array([1, 1, 1, 1, 1, 1])),
+        });
+        await driver.send(
+            "group:g1",
+            content({ text: "text fallback", files: [IMAGE_FILE] })
+        );
+        expect(rest.uploads).toHaveLength(0);
+        expect(rest.requests).toHaveLength(1);
+        expect(rest.requests[0]?.body).toMatchObject({
+            msg_type: 2,
+            markdown: { content: "text fallback" },
+        });
+    });
+
+    it("rejects file-only group entries as non-retryable", async () => {
+        const { driver } = setup({
+            readFile: readFileBytes(new Uint8Array([1, 1, 1, 1, 1, 1])),
+        });
+        await expect(
+            driver.send("group:g1", content({ text: "", files: [IMAGE_FILE] }))
+        ).rejects.toMatchObject({
+            reason: "group-rich-media-unsupported",
+        });
+    });
+
+    it("classifies upload failures for retry", async () => {
+        const { driver, rest } = setup({
+            readFile: readFileBytes(new Uint8Array([1, 1, 1, 1, 1, 1])),
+        });
+        rest.uploadError = apiError(50055001);
+        await expect(
+            driver.send("c2c:u1", content({ text: "", files: [IMAGE_FILE] }))
+        ).rejects.toThrow(/delivery failed/);
     });
 });

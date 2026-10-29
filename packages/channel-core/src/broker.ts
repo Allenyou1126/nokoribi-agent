@@ -9,6 +9,7 @@ import {
     UserQuestionError,
     type AskUserQuestionAnswer,
     type AskUserQuestionAnswerItem,
+    type AskUserQuestionItem,
     type AskUserQuestionRequest,
 } from "@deepseek-ai/dsh-user-questions";
 import type { Logger, OutboundAction } from "@nokoribi/shared";
@@ -38,6 +39,7 @@ export interface InteractionBrokerOptions {
         readonly text: string;
         readonly interactionId: string;
         readonly actions?: readonly OutboundAction[];
+        readonly actionKind?: "approval" | "question";
     }) => Promise<void>;
     readonly sendNotice: (text: string) => Promise<void>;
     readonly onTerminal?: (interactionId: string) => void;
@@ -66,9 +68,24 @@ interface ApprovalInteraction extends BaseInteraction {
 }
 
 interface ApprovalActionToken {
+    readonly kind: "approval";
     readonly interactionId: string;
     readonly outcome: ApprovalOutcome;
 }
+
+interface QuestionActionToken {
+    readonly kind: "question";
+    readonly interactionId: string;
+    readonly questionIndex: number;
+    readonly optionIndex: number;
+}
+
+type ActionToken = ApprovalActionToken | QuestionActionToken;
+
+/** Maximum option buttons rendered for one question (QQ row limits). */
+const MAX_QUESTION_BUTTONS = 10;
+/** Maximum keyboard label length accepted by QQ. */
+const MAX_QUESTION_LABEL = 10;
 
 interface QuestionInteraction extends BaseInteraction {
     readonly kind: "question";
@@ -77,9 +94,29 @@ interface QuestionInteraction extends BaseInteraction {
     readonly reject: (error: Error) => void;
     index: number;
     readonly answers: AskUserQuestionAnswerItem[];
+    /** Cached actions for the question at `actionIndex`. */
+    actions: readonly OutboundAction[] | undefined;
+    actionIndex: number;
 }
 
 type Interaction = ApprovalInteraction | QuestionInteraction;
+
+/** Whether one question can be answered from explicit option buttons. */
+function questionHasButtons(question: AskUserQuestionItem): boolean {
+    const options = question.options ?? [];
+    return (
+        question.multiSelect !== true &&
+        options.length > 0 &&
+        options.length <= MAX_QUESTION_BUTTONS
+    );
+}
+
+/** Truncate one button label to the QQ keyboard limit. */
+function questionActionLabel(label: string): string {
+    const chars = Array.from(label.trim());
+    if (chars.length <= MAX_QUESTION_LABEL) return chars.join("");
+    return `${chars.slice(0, MAX_QUESTION_LABEL - 1).join("")}…`;
+}
 
 function interactionId(): string {
     return `i-${randomUUID()}`;
@@ -111,7 +148,7 @@ export class InteractionBroker {
     private readonly queue: Interaction[] = [];
     private readonly terminalIds = new Set<string>();
     private readonly terminalOrder: string[] = [];
-    private readonly actionTokens = new Map<string, ApprovalActionToken>();
+    private readonly actionTokens = new Map<string, ActionToken>();
     private readonly tokensByInteraction = new Map<string, Set<string>>();
     private active: Interaction | undefined;
     private closed = false;
@@ -174,6 +211,8 @@ export class InteractionBroker {
                 reject,
                 index: 0,
                 answers: [],
+                actions: undefined,
+                actionIndex: -1,
             };
             this.enqueue(question);
         });
@@ -216,23 +255,17 @@ export class InteractionBroker {
             selected: parsed.selected,
             ...(parsed.custom === undefined ? {} : { custom: parsed.custom }),
         };
-        active.answers.push(answer);
-        active.index += 1;
-        if (active.index >= active.request.questions.length) {
-            this.resolveQuestion(active);
-            return true;
-        }
-        await this.presentQuestion(active);
+        await this.applyAnswer(active, answer);
         return true;
     }
 
     /**
-     * Route one inbound button callback to the active approval.
+     * Route one inbound button callback to the active approval or question.
      *
-     * Actions are authoritative: the payload token is the only approval
-     * signal. Unknown, malformed, stale or already-consumed actions are not
-     * interpreted as text replies and never reach the model.
-     * @returns true when the broker settled the active approval.
+     * Actions are authoritative: the payload token is the only signal.
+     * Unknown, malformed, stale or already-consumed actions are not interpreted
+     * as text replies and never reach the model.
+     * @returns true when the broker consumed the callback.
      */
     async handleAction(action: InboundAction): Promise<boolean> {
         const token = this.actionToken(action);
@@ -242,14 +275,27 @@ export class InteractionBroker {
         const active = this.active;
         if (
             active === undefined ||
-            active.kind !== "approval" ||
             !active.shown ||
             active.settled ||
             active.id !== entry.interactionId
         ) {
             return false;
         }
-        this.settleApproval(active, entry.outcome);
+        if (entry.kind === "approval") {
+            if (active.kind !== "approval") return false;
+            this.settleApproval(active, entry.outcome);
+            return true;
+        }
+        if (active.kind !== "question") return false;
+        if (entry.questionIndex !== active.index) return false;
+        const question = active.request.questions[active.index];
+        if (question === undefined) {
+            this.failQuestion(active, "question index is out of range");
+            return true;
+        }
+        const label = question.options?.[entry.optionIndex]?.label;
+        if (label === undefined) return false;
+        await this.applyAnswer(active, { id: question.id, selected: [label] });
         return true;
     }
 
@@ -380,6 +426,7 @@ export class InteractionBroker {
             text,
             interactionId: interaction.id,
             actions,
+            actionKind: "approval",
         });
     }
 
@@ -398,9 +445,13 @@ export class InteractionBroker {
             question,
             timeoutSeconds: Math.ceil(this.options.questionTimeoutMs / 1000),
         });
+        const actions = this.questionActions(interaction);
         await this.options.sendPrompt({
             text,
             interactionId: interaction.id,
+            ...(actions === undefined
+                ? {}
+                : { actions, actionKind: "question" }),
         });
     }
 
@@ -411,12 +462,14 @@ export class InteractionBroker {
         const actions =
             interaction.kind === "approval"
                 ? this.createApprovalActions(interaction)
-                : undefined;
+                : this.questionActions(interaction);
+        const actionKind =
+            interaction.kind === "approval" ? "approval" : "question";
         try {
             await this.options.sendPrompt({
                 text,
                 interactionId: interaction.id,
-                ...(actions === undefined ? {} : { actions }),
+                ...(actions === undefined ? {} : { actions, actionKind }),
             });
         } catch (error) {
             this.options.logger.warn("interaction reprompt failed", {
@@ -478,7 +531,11 @@ export class InteractionBroker {
         outcome: ApprovalOutcome
     ): string {
         const token = randomBytes(16).toString("base64url");
-        this.actionTokens.set(token, { interactionId, outcome });
+        this.actionTokens.set(token, {
+            kind: "approval",
+            interactionId,
+            outcome,
+        });
         let tokens = this.tokensByInteraction.get(interactionId);
         if (tokens === undefined) {
             tokens = new Set<string>();
@@ -507,11 +564,78 @@ export class InteractionBroker {
         return id === "" ? undefined : id;
     }
 
-    private forgetApprovalActions(interactionId: string): void {
+    private forgetActionTokens(interactionId: string): void {
         const tokens = this.tokensByInteraction.get(interactionId);
         if (tokens === undefined) return;
         for (const token of tokens) this.actionTokens.delete(token);
         this.tokensByInteraction.delete(interactionId);
+    }
+
+    /**
+     * Generate or reuse the option buttons for the current question.
+     *
+     * Buttons are only produced for single-select questions with 1..10 explicit
+     * options; every other shape keeps the text fallback. Tokens are scoped to
+     * the interaction and question index so a click on an old row cannot answer
+     * a later question.
+     */
+    private questionActions(
+        interaction: QuestionInteraction
+    ): readonly OutboundAction[] | undefined {
+        const question = interaction.request.questions[interaction.index];
+        if (question === undefined || !questionHasButtons(question)) {
+            this.forgetActionTokens(interaction.id);
+            interaction.actions = undefined;
+            interaction.actionIndex = -1;
+            return undefined;
+        }
+        if (
+            interaction.actions !== undefined &&
+            interaction.actionIndex === interaction.index
+        ) {
+            return interaction.actions;
+        }
+        this.forgetActionTokens(interaction.id);
+        const actions = (question.options ?? []).map((option, optionIndex) => {
+            const token = randomBytes(16).toString("base64url");
+            this.actionTokens.set(token, {
+                kind: "question",
+                interactionId: interaction.id,
+                questionIndex: interaction.index,
+                optionIndex,
+            });
+            let tokens = this.tokensByInteraction.get(interaction.id);
+            if (tokens === undefined) {
+                tokens = new Set<string>();
+                this.tokensByInteraction.set(interaction.id, tokens);
+            }
+            tokens.add(token);
+            const label = questionActionLabel(option.label);
+            return {
+                id: token,
+                label,
+                kind: "callback" as const,
+                payload: JSON.stringify({ k: token, t: label }),
+                style: "default" as const,
+            };
+        });
+        interaction.actions = actions;
+        interaction.actionIndex = interaction.index;
+        return actions;
+    }
+
+    /** Record one answer, then advance or settle the question batch. */
+    private async applyAnswer(
+        interaction: QuestionInteraction,
+        answer: AskUserQuestionAnswerItem
+    ): Promise<void> {
+        interaction.answers.push(answer);
+        interaction.index += 1;
+        if (interaction.index >= interaction.request.questions.length) {
+            this.resolveQuestion(interaction);
+            return;
+        }
+        await this.presentQuestion(interaction);
     }
 
     private startTimer(interaction: Interaction): void {
@@ -597,7 +721,7 @@ export class InteractionBroker {
     }
 
     private finish(interaction: Interaction, skipNext = false): void {
-        this.forgetApprovalActions(interaction.id);
+        this.forgetActionTokens(interaction.id);
         if (this.active === interaction) this.active = undefined;
         if (
             interaction.signal !== undefined &&

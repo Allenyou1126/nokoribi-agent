@@ -21,22 +21,50 @@ export function normalizeText(value: string): string {
     return value.replace(/^\s*<@!?[^>]+>\s*/, "").trim();
 }
 
+/** One inbound image URL the driver downloads before delivery. */
+export interface InboundImageSource {
+    readonly mime: string;
+    readonly url: string;
+}
+
+/** Normalized inbound message plus image URLs not yet downloaded. */
+export interface NormalizedInboundMessage extends InboundMessage {
+    readonly imageSources?: readonly InboundImageSource[];
+}
+
+/** Collect image attachments as download sources (other media is ignored). */
+function imageSourcesOf(
+    message: SdkInboundMessage
+): readonly InboundImageSource[] {
+    const attachments = message.attachments ?? [];
+    const sources: InboundImageSource[] = [];
+    for (const attachment of attachments) {
+        const mime = (attachment.content_type ?? "").trim().toLowerCase();
+        const url = (attachment.url ?? "").trim();
+        if (!mime.startsWith("image/") || url === "") continue;
+        sources.push({ mime, url });
+    }
+    return sources;
+}
+
 /**
  * Map one SDK-normalized QQ event to channel core's inbound shape.
  *
  * Only C2C messages and group @ mentions are accepted. Group full-message
- * events, bot self-messages, attachment-only messages, interaction events and
- * every other event type are ignored.
+ * events, bot self-messages, interaction events and every other event type are
+ * ignored. Messages carrying images are forwarded with `message.imageSources`
+ * (the driver downloads them; core's `InboundMessage.images` holds bytes).
  */
 export function normalizeInbound(
     message: SdkInboundMessage
-): InboundMessage | null {
+): NormalizedInboundMessage | null {
     if (!ACCEPTED_EVENTS.has(message.rawEventType)) return null;
     if (message.senderIsBot === true) return null;
     if (message.messageId.trim() === "") return null;
 
     const text = normalizeText(message.content ?? "");
-    if (text === "") return null;
+    const imageSources = imageSourcesOf(message);
+    if (text === "" && imageSources.length === 0) return null;
 
     if (message.kind === "c2c") {
         const userId = message.senderId.trim();
@@ -46,8 +74,9 @@ export function normalizeInbound(
             chatId: `c2c:${userId}`,
             senderId: userId,
             messageId: message.messageId,
-            text,
+            ...(text === "" ? {} : { text }),
             receivedAt: parseTimestamp(message.timestamp),
+            ...(imageSources.length === 0 ? {} : { imageSources }),
             ...(message.refMsgIdx === undefined
                 ? {}
                 : { replyTo: message.refMsgIdx }),
@@ -63,8 +92,9 @@ export function normalizeInbound(
             chatId: `group:${groupId}`,
             senderId: memberId,
             messageId: message.messageId,
-            text,
+            ...(text === "" ? {} : { text }),
             receivedAt: parseTimestamp(message.timestamp),
+            ...(imageSources.length === 0 ? {} : { imageSources }),
             ...(message.refMsgIdx === undefined
                 ? {}
                 : { replyTo: message.refMsgIdx }),

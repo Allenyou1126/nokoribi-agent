@@ -172,6 +172,11 @@ async function setup(
 
     await mountAgentLoopTestDependencies(ctx, { workingDirectory: true });
     ctx.provide("shell", { sandboxMode: "danger-full-access" });
+    ctx.provide("attachments", {
+        saveImages: async () => [],
+        saveFile: async () => ({ attachmentId: "", name: "", bytes: 0 }),
+        readFileStream: async function* () {},
+    });
     await ctx.plugin(Commands);
     await ctx.plugin(UserQuestionService);
     await ctx.plugin(ApprovalService, { policy: "never" });

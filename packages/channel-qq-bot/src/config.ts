@@ -19,6 +19,14 @@ export interface QqBotConfig {
     readonly activeMessageFallback: QqActiveMessageFallback;
     /** Render and accept C2C approval button callbacks. */
     readonly approvalButtons: boolean;
+    /** Render and accept C2C question button callbacks (default true). */
+    readonly questionButtons?: boolean;
+    /** Download and forward inbound images (default true). */
+    readonly inboundImages?: boolean;
+    /** Maximum bytes for one downloaded inbound image (default 10 MiB). */
+    readonly inboundImageMaxBytes?: number;
+    /** Timeout for one inbound image download (default 15000 ms). */
+    readonly inboundImageTimeoutMs?: number;
     readonly reconnectBaseMs: number;
     readonly reconnectMaxMs: number;
     /** How long an unavailable active-message state is remembered. */
@@ -59,6 +67,31 @@ export function resolveTokenBaseUrl(config: QqBotConfig): string {
 export function resolveGatewayUrl(config: QqBotConfig): string | undefined {
     const value = config.gatewayUrl?.trim();
     return value === undefined || value === "" ? undefined : value;
+}
+
+/** Whether inbound image download/forward is enabled. */
+export function resolveInboundImages(config: QqBotConfig): boolean {
+    return config.inboundImages ?? true;
+}
+
+/** Effective maximum bytes for one inbound image. */
+export function resolveInboundImageMaxBytes(config: QqBotConfig): number {
+    return config.inboundImageMaxBytes ?? 10 * 1024 * 1024;
+}
+
+/** Effective inbound image download timeout. */
+export function resolveInboundImageTimeoutMs(config: QqBotConfig): number {
+    return config.inboundImageTimeoutMs ?? 15000;
+}
+
+/** Whether question buttons are enabled. */
+export function resolveQuestionButtons(config: QqBotConfig): boolean {
+    return config.questionButtons ?? true;
+}
+
+/** Whether any interactive button surface (approval or question) is enabled. */
+export function resolveInteractionButtons(config: QqBotConfig): boolean {
+    return config.approvalButtons || resolveQuestionButtons(config);
 }
 
 /** Effective passive-window safety margin. */

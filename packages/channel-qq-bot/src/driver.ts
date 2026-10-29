@@ -2,6 +2,7 @@ import type {
     ChannelCapabilities,
     ChannelDriver,
     ChannelHealth,
+    FileAttachmentRef,
     InboundMessage,
     OutboundContent,
     ReplyContext,
@@ -14,6 +15,7 @@ import {
 import type { Logger, OutboundAction } from "@nokoribi/shared";
 import type {
     ChatScope,
+    InboundMessage as SdkInboundMessage,
     InlineKeyboard,
     InteractionEvent,
     KeyboardButton,
@@ -21,6 +23,11 @@ import type {
 
 import {
     resolveActiveMessageDisableMs,
+    resolveInboundImageMaxBytes,
+    resolveInboundImages,
+    resolveInboundImageTimeoutMs,
+    resolveInteractionButtons,
+    resolveQuestionButtons,
     resolveReplyWindowMarginMs,
     type QqBotConfig,
 } from "./config.js";
@@ -34,6 +41,7 @@ import {
     interactionAckCode,
     normalizeInbound,
     normalizeInteraction,
+    type InboundImageSource,
 } from "./normalize.js";
 import type { QqGatewayClient, QqRestClient } from "./transport.js";
 
@@ -64,6 +72,33 @@ export interface QqBotDriverOptions {
     readonly logger: Logger;
     readonly now?: () => number;
     readonly limiter?: SendLimiter;
+    /** Read one stored outbound file's bytes from the attachment service. */
+    readonly readFile?: (file: FileAttachmentRef) => AsyncIterable<Uint8Array>;
+}
+
+const SUPPORTED_IMAGE_MIME: ReadonlySet<string> = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+]);
+
+/** Map one declared/returned content type onto the attachment vocabulary. */
+function normalizeImageMime(mime: string | undefined): string | undefined {
+    const base = mime?.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (base === "image/jpg") return "image/jpeg";
+    return SUPPORTED_IMAGE_MIME.has(base) ? base : undefined;
+}
+
+/** QQ rich-media file type code for one stored file name. */
+export function mediaFileTypeFor(name: string): 1 | 2 | 3 | 4 {
+    const ext = name.includes(".")
+        ? name.slice(name.lastIndexOf(".") + 1).toLowerCase()
+        : "";
+    if (["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(ext)) return 1;
+    if (["mp4", "mov", "m4v", "avi", "mkv"].includes(ext)) return 2;
+    if (["silk", "amr", "wav", "mp3", "ogg"].includes(ext)) return 3;
+    return 4;
 }
 
 function readBodyText(body: Record<string, unknown>): string | undefined {
@@ -220,8 +255,14 @@ export class QqBotDriver implements ChannelDriver {
     private readonly logger: Logger;
     private readonly now: () => number;
     private readonly limiter: SendLimiter;
+    private readonly readFile:
+        | ((file: FileAttachmentRef) => AsyncIterable<Uint8Array>)
+        | undefined;
     private readonly windowMarginMs: number;
     private readonly activeDisableMs: number;
+    private readonly inboundImages: boolean;
+    private readonly inboundImageMaxBytes: number;
+    private readonly inboundImageTimeoutMs: number;
     private stopped = false;
     private started = false;
     private activeDisabledUntil = 0;
@@ -237,16 +278,23 @@ export class QqBotDriver implements ChannelDriver {
         this.limiter = options.limiter ?? new SendLimiter({ now: this.now });
         this.windowMarginMs = resolveReplyWindowMarginMs(options.config);
         this.activeDisableMs = resolveActiveMessageDisableMs(options.config);
+        this.inboundImages = resolveInboundImages(options.config);
+        this.inboundImageMaxBytes = resolveInboundImageMaxBytes(options.config);
+        this.inboundImageTimeoutMs = resolveInboundImageTimeoutMs(
+            options.config
+        );
+        this.readFile = options.readFile;
     }
 
     get capabilities(): ChannelCapabilities {
         const interactions =
-            this.config.approvalButtons && this.gateway.interactionAvailable();
+            resolveInteractionButtons(this.config) &&
+            this.gateway.interactionAvailable();
         return {
             markdown: this.config.markdown,
             maxTextLength: this.config.maxTextLength,
-            inboundImages: false,
-            outboundFiles: false,
+            inboundImages: this.inboundImages,
+            outboundFiles: true,
             outboundActions: interactions,
             inboundActions: interactions,
             activeMessages: this.activeAvailable(),
@@ -261,16 +309,7 @@ export class QqBotDriver implements ChannelDriver {
         this.started = true;
         this.stopped = false;
         await this.gateway.start({
-            onInbound: (message) => {
-                const normalized = normalizeInbound(message);
-                if (normalized === null) {
-                    this.logger.debug("ignored qq bot inbound", {
-                        event: message.rawEventType,
-                    });
-                    return;
-                }
-                handler.onInbound(normalized);
-            },
+            onInbound: (message) => this.acceptInbound(message, handler),
             onInteraction: (event) => this.handleInteraction(event, handler),
         });
     }
@@ -280,6 +319,116 @@ export class QqBotDriver implements ChannelDriver {
         this.stopped = true;
         this.limiter.close();
         await this.gateway.stop();
+    }
+
+    /** Normalize one SDK event and download its images before delivery. */
+    private acceptInbound(
+        message: SdkInboundMessage,
+        handler: { onInbound(message: InboundMessage): void }
+    ): void {
+        const normalized = normalizeInbound(message);
+        if (normalized === null) {
+            this.logger.debug("ignored qq bot inbound", {
+                event: message.rawEventType,
+            });
+            return;
+        }
+        const { imageSources, ...base } = normalized;
+        if (
+            !this.inboundImages ||
+            imageSources === undefined ||
+            imageSources.length === 0
+        ) {
+            this.deliverTextOnly(imageSources);
+            if (base.text !== undefined) handler.onInbound(base);
+            return;
+        }
+        void this.deliverWithImages(base, imageSources)
+            .then((delivered) => {
+                if (delivered !== undefined) handler.onInbound(delivered);
+            })
+            .catch((error: unknown) => {
+                this.logger.warn(
+                    "qq bot inbound image handling failed",
+                    safeErrorFields(error)
+                );
+                if (base.text !== undefined) handler.onInbound(base);
+            });
+    }
+
+    /** Log and drop image sources when the driver cannot forward them. */
+    private deliverTextOnly(
+        imageSources: readonly InboundImageSource[] | undefined
+    ): void {
+        if (imageSources === undefined || imageSources.length === 0) return;
+        this.logger.debug("qq bot ignored inbound images", {
+            count: imageSources.length,
+            enabled: this.inboundImages,
+        });
+    }
+
+    /**
+     * Download every image source and build the final inbound message.
+     * @returns the message to deliver, or undefined when nothing is left.
+     */
+    private async deliverWithImages(
+        base: InboundMessage,
+        sources: readonly InboundImageSource[]
+    ): Promise<InboundMessage | undefined> {
+        const images: { mime: string; data: Uint8Array }[] = [];
+        let failures = 0;
+        for (const source of sources) {
+            try {
+                const image = await this.downloadImage(source);
+                if (image !== undefined) images.push(image);
+            } catch (error) {
+                failures += 1;
+                this.logger.warn(
+                    "qq bot inbound image download failed",
+                    safeErrorFields(error)
+                );
+            }
+        }
+        const note = "[图片下载失败，已忽略]";
+        if (failures > 0) {
+            const text =
+                base.text === undefined || base.text === ""
+                    ? note
+                    : `${base.text}\n${note}`;
+            return {
+                ...base,
+                text,
+                ...(images.length === 0 ? {} : { images }),
+            };
+        }
+        if (images.length === 0) {
+            this.logger.debug("qq bot ignored unsupported inbound images");
+            return base.text === undefined ? undefined : base;
+        }
+        return { ...base, images };
+    }
+
+    /** Fetch one inbound image with bounded timeout/bytes and mime filter. */
+    private async downloadImage(
+        source: InboundImageSource
+    ): Promise<{ mime: string; data: Uint8Array } | undefined> {
+        const download = this.rest.downloadImage;
+        if (download === undefined) {
+            throw new Error("QQ REST client cannot download images");
+        }
+        const result = await download.call(this.rest, source.url, {
+            maxBytes: this.inboundImageMaxBytes,
+            timeoutMs: this.inboundImageTimeoutMs,
+        });
+        const mime =
+            normalizeImageMime(result.mime) ?? normalizeImageMime(source.mime);
+        if (mime === undefined) {
+            this.logger.debug("qq bot ignored unsupported image mime", {
+                declared: source.mime,
+            });
+            return undefined;
+        }
+        return { mime, data: result.data };
     }
 
     async send(chatId: string, content: OutboundContent): Promise<SentRef> {
@@ -292,8 +441,21 @@ export class QqBotDriver implements ChannelDriver {
             );
         }
         await this.limiter.acquire(chat.scope, chatId);
+        const files = content.files ?? [];
+        if (files.length > 0) {
+            return await this.sendFiles(chatId, chat, content, files);
+        }
+        return await this.sendText(chatId, chat, content);
+    }
+
+    /** Send one text-only message (with an optional keyboard). */
+    private async sendText(
+        chatId: string,
+        chat: ParsedQqChat,
+        content: OutboundContent
+    ): Promise<SentRef> {
         const keyboard =
-            chat.scope === "c2c" && this.config.approvalButtons
+            chat.scope === "c2c" && this.keyboardEnabled(content.actionKind)
                 ? buildKeyboard(content.actions, this.logger)
                 : undefined;
         if (
@@ -331,6 +493,177 @@ export class QqBotDriver implements ChannelDriver {
         );
     }
 
+    /** Whether the configured button surface covers one interaction kind. */
+    private keyboardEnabled(
+        actionKind: "approval" | "question" | undefined
+    ): boolean {
+        if (actionKind === "question") {
+            return resolveQuestionButtons(this.config);
+        }
+        return this.config.approvalButtons;
+    }
+
+    /**
+     * Send text (when present) followed by one `msg_type=7` message per file.
+     *
+     * Rich media is implemented for C2C only. Group chats keep the text path
+     * and drop files because group rich-media delivery is not verified yet
+     * (documented limitation in .spec/23); a file-only group entry fails as
+     * non-retryable instead of looping.
+     */
+    private async sendFiles(
+        chatId: string,
+        chat: ParsedQqChat,
+        content: OutboundContent,
+        files: readonly FileAttachmentRef[]
+    ): Promise<SentRef> {
+        if (chat.scope !== "c2c") {
+            if (content.text.trim() === "") {
+                throw new NonRetryableDeliveryError(
+                    "group-rich-media-unsupported",
+                    "QQ group chats do not support rich-media files yet"
+                );
+            }
+            this.logger.warn("qq bot dropped group files; c2c only", {
+                count: files.length,
+            });
+            return await this.sendText(chatId, chat, content);
+        }
+        let sent: SentRef | undefined;
+        if (content.text.trim() !== "") {
+            sent = await this.sendText(chatId, chat, content);
+        }
+        let index = 0;
+        for (const file of files) {
+            sent = await this.sendFile(
+                chat,
+                file,
+                content,
+                index === 0 ? content.reply : undefined,
+                files.length
+            );
+            index += 1;
+        }
+        if (sent === undefined) {
+            throw new NonRetryableDeliveryError(
+                "empty-content",
+                "refusing to send an empty QQ message"
+            );
+        }
+        return sent;
+    }
+
+    /** Upload and send one stored file as a C2C rich-media message. */
+    private async sendFile(
+        chat: ParsedQqChat,
+        file: FileAttachmentRef,
+        content: OutboundContent,
+        reply: ReplyContext | undefined,
+        count: number
+    ): Promise<SentRef> {
+        const upload = this.rest.uploadMedia;
+        if (upload === undefined) {
+            throw new NonRetryableDeliveryError(
+                "rich-media-unsupported",
+                "QQ REST client cannot upload rich media"
+            );
+        }
+        if (this.readFile === undefined) {
+            throw new NonRetryableDeliveryError(
+                "attachments-unavailable",
+                "attachment service is not available for outbound files"
+            );
+        }
+        if (reply !== undefined && !this.passiveValid(chat.scope, reply)) {
+            throw new PassiveReplyExpiredError();
+        }
+        if (reply === undefined && !this.activeAvailable()) {
+            throw new NonRetryableDeliveryError(
+                "active-unavailable",
+                "QQ active messages are unavailable"
+            );
+        }
+        const data = await this.readFileBytes(file);
+        const fileType = mediaFileTypeFor(file.name);
+        try {
+            const uploaded = await upload.call(
+                this.rest,
+                chat.scope,
+                chat.targetId,
+                {
+                    file_type: fileType,
+                    srv_send_msg: false,
+                    file_data: Buffer.from(data).toString("base64"),
+                    ...(fileType === 4 ? { file_name: file.name } : {}),
+                }
+            );
+            const body: Record<string, unknown> = {
+                msg_type: 7,
+                media: { file_info: uploaded.file_info },
+                ...(reply === undefined
+                    ? {}
+                    : { msg_id: reply.messageId, msg_seq: reply.seq }),
+            };
+            const response = await this.rest.send(
+                chat.scope,
+                chat.targetId,
+                body
+            );
+            this.logger.info("qq bot sent rich-media file", {
+                count,
+                bytes: file.bytes,
+                fileType,
+            });
+            return {
+                channelId: this.id,
+                chatId: `c2c:${chat.targetId}`,
+                messageId: response.id,
+            };
+        } catch (error) {
+            const kind = classifySendError(error);
+            if (kind === "passive-expired") {
+                throw new PassiveReplyExpiredError();
+            }
+            if (kind === "active-unavailable") {
+                this.markActiveUnavailable(error);
+                throw new NonRetryableDeliveryError(
+                    "active-unavailable",
+                    "QQ active messages are unavailable"
+                );
+            }
+            throw toDeliveryError(kind, error);
+        }
+    }
+
+    /** Collect one stored file's bytes with a defensive size check. */
+    private async readFileBytes(file: FileAttachmentRef): Promise<Uint8Array> {
+        const readFile = this.readFile;
+        if (readFile === undefined) {
+            throw new NonRetryableDeliveryError(
+                "attachments-unavailable",
+                "attachment service is not available for outbound files"
+            );
+        }
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        for await (const chunk of readFile(file)) {
+            total += chunk.length;
+            chunks.push(chunk);
+        }
+        if (total !== file.bytes) {
+            throw new Error(
+                `attachment byte mismatch for ${file.attachmentId}`
+            );
+        }
+        const data = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+            data.set(chunk, offset);
+            offset += chunk.length;
+        }
+        return data;
+    }
+
     canDeliver(
         chatId: string,
         content: Pick<OutboundContent, "kind" | "reply">
@@ -362,7 +695,7 @@ export class QqBotDriver implements ChannelDriver {
     ): Promise<void> {
         if (this.stopped) return;
         if (event.id.trim() === "") return;
-        const code: 0 | 1 = this.config.approvalButtons
+        const code: 0 | 1 = resolveInteractionButtons(this.config)
             ? interactionAckCode(event)
             : 1;
         try {

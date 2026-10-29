@@ -66,6 +66,19 @@ async function startServer(): Promise<FakeServer> {
                 response.end(JSON.stringify({ url: "wss://gateway.test" }));
                 return;
             }
+            if (path.includes("/files")) {
+                response.writeHead(200, {
+                    "content-type": "application/json",
+                });
+                response.end(
+                    JSON.stringify({
+                        file_uuid: "uuid-1",
+                        file_info: "file-info-1",
+                        ttl: 600,
+                    })
+                );
+                return;
+            }
             if (failNextSend) {
                 failNextSend = false;
                 response.writeHead(401, {
@@ -128,6 +141,35 @@ const credentials: QqCredentials = {
     appId: "app-1",
     clientSecret: "secret-1",
 };
+
+/** Start a plain byte server for inbound image download tests. */
+async function startImageServer(
+    bytes: Uint8Array,
+    contentType = "image/png"
+): Promise<{ url: string; close(): Promise<void> }> {
+    const server = createServer((_request, response) => {
+        response.writeHead(200, {
+            "content-type": contentType,
+            "content-length": Buffer.byteLength(bytes),
+        });
+        response.end(Buffer.from(bytes));
+    });
+    await new Promise<void>((resolve) => {
+        server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+        throw new Error("image server did not bind a TCP port");
+    }
+    return {
+        url: `http://127.0.0.1:${String(address.port)}/image.png`,
+        async close(): Promise<void> {
+            await new Promise<void>((resolve) => {
+                server.close(() => resolve());
+            });
+        },
+    };
+}
 
 const servers: FakeServer[] = [];
 
@@ -235,6 +277,64 @@ describe("qq REST wrapper", () => {
                 body: { code: 1 },
             },
         ]);
+    });
+
+    it("uploads rich media and returns the platform file_info", async () => {
+        const { rest: client, server } = await rest();
+        const result = await client.uploadMedia("c2c", "user-1", {
+            file_type: 4,
+            srv_send_msg: false,
+            file_data: "AA==",
+            file_name: "a.txt",
+        });
+        expect(result.file_info).toBe("file-info-1");
+        const upload = server.requests.find((request) =>
+            request.path.endsWith("/files")
+        );
+        expect(upload?.path).toBe("/v2/users/user-1/files");
+        expect(upload?.body).toMatchObject({
+            file_type: 4,
+            srv_send_msg: false,
+            file_name: "a.txt",
+        });
+    });
+
+    it("downloads an inbound image within the byte cap", async () => {
+        const { rest: client } = await rest();
+        const image = await startImageServer(new Uint8Array([1, 2, 3, 4]));
+        try {
+            const result = await client.downloadImage(image.url, {
+                maxBytes: 1024,
+                timeoutMs: 2000,
+            });
+            expect(Array.from(result.data)).toEqual([1, 2, 3, 4]);
+            expect(result.mime).toBe("image/png");
+        } finally {
+            await image.close();
+        }
+    });
+
+    it("rejects oversized and non-http inbound images", async () => {
+        const { rest: client } = await rest();
+        const image = await startImageServer(
+            new Uint8Array([1, 2, 3, 4, 5, 6])
+        );
+        try {
+            await expect(
+                client.downloadImage(image.url, {
+                    maxBytes: 4,
+                    timeoutMs: 2000,
+                })
+            ).rejects.toThrow(/byte limit|too large/i);
+        } finally {
+            await image.close();
+        }
+        await expect(
+            client.downloadImage("file:///etc/passwd", {
+                maxBytes: 1024,
+                timeoutMs: 2000,
+            })
+        ).rejects.toThrow(/http/i);
     });
 
     it("stops without throwing when called twice", async () => {
