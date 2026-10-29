@@ -10,6 +10,57 @@ import {
 import { writeJsonAtomic } from "@nokoribi/shared";
 
 const PROFILE_NAME = "nokoribi-agent";
+/** Bundles mounted by every deployment, before any optional backend bundle. */
+const BASE_BUNDLES = ["@nokoribi/bundle"] as const;
+const OPENVIKING_BUNDLE = "@openviking/dsh-memory-plugin";
+
+/**
+ * Bundles mounted by the runtime profile. OpenViking is an explicit opt-in
+ * backend (D175): its package is installed with the distribution but its Cordis
+ * layer only loads when the deployment enables the backend.
+ */
+function resolveProfileBundles(env: NodeJS.ProcessEnv): readonly string[] {
+    if ((env.NOKORIBI_OPENVIKING_ENABLED ?? "false") !== "true") {
+        return BASE_BUNDLES;
+    }
+    return [...BASE_BUNDLES, OPENVIKING_BUNDLE];
+}
+
+/**
+ * Map `memory.openviking.*` configuration to the environment the plugin's
+ * credential chain reads. The NixOS module sets `NOKORIBI_OPENVIKING_*`; a
+ * manual deployment may instead set the `OPENVIKING_*` names directly.
+ *
+ * Enabling OpenViking is mutually exclusive with local memory (D175): the local
+ * memory tool, storage, snapshot and curator stay off so exactly one backend
+ * owns memory.
+ */
+function applyOpenVikingEnvironment(env: NodeJS.ProcessEnv): void {
+    if ((env.NOKORIBI_OPENVIKING_ENABLED ?? "false") !== "true") return;
+    env.NOKORIBI_MEMORY_ENABLED = "false";
+    const endpoint = env.NOKORIBI_OPENVIKING_ENDPOINT?.trim();
+    if (endpoint !== undefined && endpoint !== "") {
+        env.OPENVIKING_URL ??= endpoint;
+    }
+    const keySource =
+        env.NOKORIBI_OPENVIKING_API_KEY_ENV?.trim() || "OPENVIKING_API_KEY";
+    const apiKey = env[keySource]?.trim();
+    if (apiKey !== undefined && apiKey !== "") {
+        env.OPENVIKING_API_KEY ??= apiKey;
+    }
+    const peerId = env.NOKORIBI_OPENVIKING_PEER_ID?.trim();
+    if (peerId !== undefined && peerId !== "") {
+        env.OPENVIKING_PEER_ID ??= peerId;
+    }
+    const workspacePeer = env.NOKORIBI_OPENVIKING_WORKSPACE_PEER?.trim();
+    if (workspacePeer !== undefined && workspacePeer !== "") {
+        env.OPENVIKING_WORKSPACE_PEER ??= workspacePeer;
+    }
+    const recallMaxTokens = env.NOKORIBI_OPENVIKING_RECALL_MAX_TOKENS?.trim();
+    if (recallMaxTokens !== undefined && recallMaxTokens !== "") {
+        env.OPENVIKING_RECALL_MAX_TOKENS ??= recallMaxTokens;
+    }
+}
 
 interface CliOptions {
     readonly patches: readonly string[];
@@ -95,6 +146,14 @@ function helpText(version: string): string {
         "  NOKORIBI_WEB_ENABLED        register web_search/web_fetch (default true)",
         "  NOKORIBI_WEB_SEARCH_PROVIDER pinned search provider (default deepseek-official)",
         "  NOKORIBI_WEB_FETCH_PROVIDER pinned fetch provider (default http)",
+        "  NOKORIBI_SESSION_SEARCH_ENABLED session_search/session_event_* tools (default true)",
+        "  NOKORIBI_SESSION_SEARCH_OPEN_AT FTS index open: first-search|startup|never",
+        "  NOKORIBI_SESSION_SEARCH_MAX_RESULTS per-call search result cap (default 100)",
+        "  NOKORIBI_SESSION_SEARCH_TIMEOUT_MS search deadline ms (default 30000)",
+        "  NOKORIBI_SKILL_ENABLED     load local SKILL.md skills (default true)",
+        "  NOKORIBI_SKILL_DIRS        colon-separated extra read-only skill roots",
+        "  NOKORIBI_BUNDLED_SKILLS    bundled read-only skill root (Nix share/skills)",
+        "  NOKORIBI_SKILL_DESCRIPTION_MAX catalog description cap (default 500)",
         "  NOKORIBI_GOAL_PROVIDER      goal child provider (default: main provider)",
         "  NOKORIBI_GOAL_MODEL         goal child model (default: main model)",
         "  NOKORIBI_GOAL_REASONING_EFFORT goal child reasoning effort (optional)",
@@ -108,6 +167,18 @@ function helpText(version: string): string {
         "  NOKORIBI_MEMORY_REASONING_EFFORT memory curator reasoning effort (optional)",
         "  NOKORIBI_MEMORY_CURATOR     enable best-effort memory extraction (default true)",
         "  NOKORIBI_MEMORY_CURATOR_TIMEOUT_MS memory curator bound (default 60000)",
+        "  NOKORIBI_MEMORY_ENABLED     mount local memory tool/store/snapshot (default true)",
+        "  NOKORIBI_MEMORY_INJECT_ENABLED inject the pinned memory snapshot (default true)",
+        "  NOKORIBI_MEMORY_INJECT_MAX_CHARS snapshot character budget (default 3000)",
+        "  NOKORIBI_MEMORY_INJECT_MAX_ENTRIES snapshot entry budget (default 20)",
+        "  NOKORIBI_MEMORY_INJECT_MAIN_ONLY inject only for the main session (default true)",
+        "  NOKORIBI_MEMORY_INJECT_AUTO_TAGS comma-separated auto-included tags",
+        "  NOKORIBI_OPENVIKING_ENABLED enable the OpenViking memory backend (default false)",
+        "  NOKORIBI_OPENVIKING_ENDPOINT OpenViking server URL",
+        "  NOKORIBI_OPENVIKING_API_KEY_ENV env var holding the OpenViking bearer key",
+        "  NOKORIBI_OPENVIKING_PEER_ID explicit OpenViking actor peer",
+        "  NOKORIBI_OPENVIKING_WORKSPACE_PEER workspace-derived peer ('0' disables)",
+        "  NOKORIBI_OPENVIKING_RECALL_MAX_TOKENS server-assembled recall token budget",
         "  NOKORIBI_GOAL_DEFAULT_MAX_ROUNDS default goal round cap (default 256)",
         "  NOKORIBI_LOG_LEVEL          debug|info|warn|error (default info)",
         "  NOKORIBI_SYSTEMD_NOTIFY     systemd-notify helper path (default: PATH)",
@@ -149,6 +220,7 @@ async function main(): Promise<void> {
     process.env.NOKORIBI_INSTALL_ANCHOR = anchor;
     process.env.NOKORIBI_VERSION ??= version;
     process.env.NOKORIBI_SHUTDOWN_TIMEOUT_MS ??= "30000";
+    applyOpenVikingEnvironment(process.env);
 
     await applyDevDefaults(launcherDir);
 
@@ -163,7 +235,7 @@ async function main(): Promise<void> {
     await writeJsonAtomic(resolve(profileDir, "package.json"), {
         name: PROFILE_NAME,
         private: true,
-        dsh: { profile: { bundles: ["@nokoribi/bundle"] } },
+        dsh: { profile: { bundles: resolveProfileBundles(process.env) } },
     });
     await writeFile(resolve(profileDir, "cordis.patch.yml"), "[]\n", {
         mode: 0o600,
@@ -174,6 +246,28 @@ async function main(): Promise<void> {
         for (const skipped of profile.skippedBundles) {
             process.stderr.write(
                 `nokoribi-agent: skipped bundle ${skipped.packageName}: ${skipped.reason}\n`
+            );
+        }
+    }
+    // OpenViking replaces local memory entirely (D175), so a deployment that
+    // asked for it but silently lost its bundle would run without any memory
+    // backend. Fail loud instead of starting in a degraded configuration.
+    if ((process.env.NOKORIBI_OPENVIKING_ENABLED ?? "false") === "true") {
+        const skipped = profile.skippedBundles.find(
+            (entry) => entry.packageName === OPENVIKING_BUNDLE
+        );
+        if (skipped !== undefined) {
+            throw new Error(
+                `OpenViking memory backend is enabled but its bundle failed to load: ${skipped.reason}`
+            );
+        }
+        if (
+            !profile.layers.some(
+                (layer) => layer.packageName === OPENVIKING_BUNDLE
+            )
+        ) {
+            throw new Error(
+                `OpenViking memory backend is enabled but ${JSON.stringify(OPENVIKING_BUNDLE)} is not part of the profile; reinstall the package`
             );
         }
     }
