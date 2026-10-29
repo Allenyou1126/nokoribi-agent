@@ -358,6 +358,8 @@
 
 ## 14.12 后置（v1 之外与 M9/M10 之外）
 
+> 外部对标（Hermes Agent）与后续能力方向/优先级建议见 [notes/hermes-agent-gap-analysis.md](notes/hermes-agent-gap-analysis.md)（2026-10-27 快照，2026-10-29 更新）；后置项的排期与取舍需结合该对比由用户决策。
+
 - **SSH host**（原 M7/M9，因 D149/D165 顺延）：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。
 - **交互按钮扩展**：群聊按钮、`ask_user_question` 选项按钮、按钮点击后的消息编辑/撤回、流式消息；M9 只做 C2C 审批按钮。
 - **真实 IM 适配器（第二平台）**：Telegram/Discord 等其他 `ChannelDriver` 实现；sender/chat 白名单细化；图片下载；平台限速/长消息。
