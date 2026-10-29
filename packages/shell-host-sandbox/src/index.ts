@@ -14,7 +14,11 @@ export {
     createSandboxTools,
 } from "./tools.js";
 export { GUARDED_COMMANDS, ensurePathGuard } from "./guard.js";
-export { buildSandboxCommand, shellQuote } from "./command.js";
+export {
+    buildSandboxCommand,
+    buildSandboxTerminalArgv,
+    shellQuote,
+} from "./command.js";
 
 /** Plugin name used by Cordis diagnostics. */
 export const name: string = "shell-host-sandbox";

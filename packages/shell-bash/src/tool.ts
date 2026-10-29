@@ -34,6 +34,12 @@ export interface BashToolDependencies {
     readonly shellEnv: ShellEnvRegistry;
     readonly workingDirectory: WorkingDirectoryService;
     readonly jobs?: JobRegistry | undefined;
+    /**
+     * Whether a terminal backend is registered for one host. The terminal
+     * service is optional at this layer, so prompt/discovery output uses this
+     * predicate instead of the provider's static capability bit.
+     */
+    readonly terminalAvailable?: ((hostId: string) => boolean) | undefined;
 }
 
 /** Background bash result shown to the model. */
@@ -52,6 +58,7 @@ export interface ShellDiscoveryValue {
         readonly description: string;
         readonly background: boolean;
         readonly workdir: "local" | "remote";
+        readonly terminal: boolean;
     }[];
 }
 
@@ -348,7 +355,7 @@ export function createBashTool(deps: BashToolDependencies): ToolDefinition {
  * @returns the tool definition registered by {@link apply}.
  */
 export function createHostDiscoveryTool(
-    deps: Pick<BashToolDependencies, "shellHosts">
+    deps: Pick<BashToolDependencies, "shellHosts" | "terminalAvailable">
 ): ToolDefinition {
     return defineTool({
         name: DISCOVERY_TOOL_NAME,
@@ -382,6 +389,10 @@ export function createHostDiscoveryTool(
                                     required: true,
                                     enum: ["local", "remote"],
                                 },
+                                terminal: {
+                                    type: "boolean",
+                                    required: true,
+                                },
                             },
                         },
                     },
@@ -400,6 +411,9 @@ export function createHostDiscoveryTool(
                     description: host.description,
                     background: host.capabilities.background,
                     workdir: host.capabilities.workdir,
+                    terminal:
+                        host.capabilities.terminal &&
+                        (deps.terminalAvailable?.(host.id) ?? true),
                 })),
             };
         },
@@ -425,13 +439,22 @@ export const inject: string[] = [
  * @param ctx - Cordis context carrying every required service.
  */
 export function apply(ctx: Context): void {
+    const terminalTypes = (): ReadonlySet<string> => {
+        const terminals = ctx.get("terminals") as
+            | { listBackends(): string[] }
+            | undefined;
+        return new Set(terminals?.listBackends() ?? []);
+    };
+    const terminalAvailable = (hostId: string): boolean =>
+        terminalTypes().has(hostId);
     ctx.systemPrompt.section({
         name: HOSTS_SECTION_NAME,
         order: HOSTS_SECTION_ORDER,
         text: () =>
             renderHostsPrompt(
                 ctx.shellHosts.defaultHost,
-                ctx.shellHosts.list()
+                ctx.shellHosts.list(),
+                terminalTypes().size > 0
             ),
         interpolate: false,
     });
@@ -446,6 +469,7 @@ export function apply(ctx: Context): void {
         shellEnv: ctx.shellEnv,
         workingDirectory: ctx.workingDirectory,
         jobs: ctx.jobs,
+        terminalAvailable,
     };
     ctx.tools.register(createBashTool(deps));
     ctx.tools.register(createHostDiscoveryTool(deps));

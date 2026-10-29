@@ -38,6 +38,7 @@ function status(overrides: Partial<SandboxStatus> = {}): SandboxStatus {
         idleTtlMs: 1_800_000,
         activeCommands: 0,
         backgroundCommands: 0,
+        terminalSessions: 0,
         allowRuntimePackages: true,
         ...overrides,
     };

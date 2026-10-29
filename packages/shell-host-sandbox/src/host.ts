@@ -12,9 +12,15 @@ import type {
     ShellHostCapabilities,
     ShellHostExecRequest,
     ShellHostProvider,
+    ShellTerminalLaunch,
+    ShellTerminalLaunchRequest,
 } from "@nokoribi/shell-bash";
 
-import { buildSandboxCommand, shellQuote } from "./command.js";
+import {
+    buildSandboxCommand,
+    buildSandboxTerminalArgv,
+    shellQuote,
+} from "./command.js";
 import { ensurePathGuard } from "./guard.js";
 import type { SandboxMeta } from "./meta.js";
 import {
@@ -65,6 +71,7 @@ export interface SandboxStatus {
     readonly idleTtlMs: number;
     readonly activeCommands: number;
     readonly backgroundCommands: number;
+    readonly terminalSessions: number;
     readonly allowRuntimePackages: boolean;
 }
 
@@ -84,6 +91,7 @@ interface Instance {
     dir: string;
     active: number;
     background: number;
+    pins: number;
     readonly handles: Set<ShellExecution>;
 }
 
@@ -109,6 +117,7 @@ export class SandboxHost implements ShellHostProvider {
         background: true,
         sandbox: false,
         workdir: "local",
+        terminal: true,
     };
 
     private readonly config: SandboxHostConfig;
@@ -180,15 +189,85 @@ export class SandboxHost implements ShellHostProvider {
         });
     }
 
+    /** Launch a persistent terminal pinned to one session's sandbox. */
+    async terminal(
+        request: ShellTerminalLaunchRequest
+    ): Promise<ShellTerminalLaunch> {
+        const sessionId = request.sessionId;
+        if (sessionId === undefined || sessionId === "") {
+            throw new Error(
+                `sandbox host "${this.id}" requires an agent session ` +
+                    "for a persistent terminal"
+            );
+        }
+        return await this.terminalLaunch(sessionId, request);
+    }
+
+    /**
+     * Pin one sandbox instance for a persistent terminal.
+     * @param sessionId - owning agent session.
+     * @param request - launch directory request and cancellation.
+     * @returns argv, fixed sandbox cwd, restricted env and a release hook.
+     */
+    async terminalLaunch(
+        sessionId: string,
+        request: ShellTerminalLaunchRequest
+    ): Promise<ShellTerminalLaunch> {
+        assertSessionId(sessionId);
+        request.signal?.throwIfAborted();
+        return await this.withLock(sessionId, async () => {
+            const instance = await this.ensureLocked(sessionId);
+            const base = await this.requireBaseEnvironment();
+            const hostBash = await this.requireBash();
+            const setpriv = await this.requireSetpriv();
+            const packages = instance.meta.packages;
+            const nix =
+                packages.length > 0 ? await this.requireNix() : undefined;
+            const argv = buildSandboxTerminalArgv({
+                hostBash,
+                setpriv,
+                ...(nix === undefined ? {} : { nix }),
+                baseEnvironment: base,
+                packages,
+            });
+            const guardDir = join(instance.dir, ".path-guard");
+            instance.pins += 1;
+            let released = false;
+            const release = async (): Promise<void> => {
+                if (released) return;
+                released = true;
+                await this.withLock(sessionId, async () => {
+                    const current = this.instances.get(sessionId);
+                    if (current === undefined) return;
+                    current.pins = Math.max(0, current.pins - 1);
+                    await this.touch(current);
+                });
+            };
+            return {
+                argv,
+                cwd: instance.dir,
+                env: {
+                    PATH: `${guardDir}${delimiter}${join(base, "bin")}`,
+                    DSH_SANDBOX_DIR: instance.dir,
+                    DSH_WORKSPACE_DIR: this.config.workspace,
+                },
+                release,
+            };
+        });
+    }
+
     /** Reset one session's sandbox; refuses while commands are active. */
     async reset(sessionId: string): Promise<void> {
         assertSessionId(sessionId);
         await this.withLock(sessionId, async () => {
             const instance = this.instances.get(sessionId);
-            if (instance !== undefined && instance.active > 0) {
+            if (
+                instance !== undefined &&
+                (instance.active > 0 || instance.pins > 0)
+            ) {
                 throw new Error(
-                    `sandbox for "${sessionId}" has active commands; ` +
-                        "stop them before reset"
+                    `sandbox for "${sessionId}" has active commands or ` +
+                        "persistent terminals; stop them before reset"
                 );
             }
             const paths = sandboxPaths(this.config.root, sessionId);
@@ -230,6 +309,12 @@ export class SandboxHost implements ShellHostProvider {
         await this.withLock(sessionId, async () => {
             const paths = sandboxPaths(this.config.root, sessionId);
             const instance = this.instances.get(sessionId);
+            if (instance !== undefined && instance.pins > 0) {
+                throw new Error(
+                    `sandbox for "${sessionId}" has open persistent ` +
+                        "terminal sessions; close them before disposal"
+                );
+            }
             this.instances.delete(sessionId);
             if (instance !== undefined) {
                 for (const handle of instance.handles) {
@@ -324,7 +409,10 @@ export class SandboxHost implements ShellHostProvider {
         await mkdir(this.config.root, { recursive: true, mode: 0o700 });
         const now = this.now();
         const existing = this.instances.get(sessionId);
-        if (existing !== undefined && existing.active > 0) {
+        if (
+            existing !== undefined &&
+            (existing.active > 0 || existing.pins > 0)
+        ) {
             existing.meta = {
                 ...existing.meta,
                 lastUsedAt: new Date(now).toISOString(),
@@ -350,6 +438,7 @@ export class SandboxHost implements ShellHostProvider {
                 dir: paths.dir,
                 active: 0,
                 background: 0,
+                pins: 0,
                 handles: new Set(),
             };
             this.instances.set(sessionId, instance);
@@ -507,10 +596,18 @@ export class SandboxHost implements ShellHostProvider {
                 const sessionId = entry.name.slice(0, -".json".length);
                 assertSessionId(sessionId);
                 const instance = this.instances.get(sessionId);
-                if (instance !== undefined && instance.active > 0) continue;
+                if (
+                    instance !== undefined &&
+                    (instance.active > 0 || instance.pins > 0)
+                ) {
+                    continue;
+                }
                 await this.withLock(sessionId, async () => {
                     const current = this.instances.get(sessionId);
-                    if (current !== undefined && current.active > 0) {
+                    if (
+                        current !== undefined &&
+                        (current.active > 0 || current.pins > 0)
+                    ) {
                         return;
                     }
                     const meta = await this.loadMeta(sessionId);
@@ -547,6 +644,7 @@ export class SandboxHost implements ShellHostProvider {
             idleTtlMs: this.config.idleTtlMs,
             activeCommands: instance?.active ?? 0,
             backgroundCommands: instance?.background ?? 0,
+            terminalSessions: instance?.pins ?? 0,
             allowRuntimePackages: this.config.allowRuntimePackages,
         });
     }

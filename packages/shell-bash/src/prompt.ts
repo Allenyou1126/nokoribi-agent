@@ -20,11 +20,14 @@ export const BASH_SECTION_PROMPT: string =
  * values such as sandbox generation stay out of the system prompt (09.3).
  * @param defaultHost - host used when the model omits `host`.
  * @param hosts - currently registered hosts, sorted by the registry.
+ * @param terminalEnabled - whether a terminal backend is registered; defaults
+ * to true for callers without a terminal service.
  * @returns the hosts prompt section.
  */
 export function renderHostsPrompt(
     defaultHost: string,
-    hosts: readonly ShellHostInfo[]
+    hosts: readonly ShellHostInfo[],
+    terminalEnabled: boolean = true
 ): string {
     const lines = [
         "## Shell hosts",
@@ -35,8 +38,15 @@ export function renderHostsPrompt(
         "- sandbox 内不能 sudo；需要提权时显式用 local host，并向用户说明原因。",
         "- bash 在 sandbox 中会提供 `DSH_SANDBOX_DIR`、`DSH_WORKSPACE_DIR`；read/write/edit 等文件工具仍按主机路径工作，sandbox 内文件用 cp/rsync 搬运。",
         "- sandbox 与 workspace 是不同视图；不要把 sandbox 当持久存储。",
-        "- 不确定可用 host 时调用 `get_available_shell_host`，不要猜测 host 名称。",
     ];
+    if (terminalEnabled) {
+        lines.push(
+            "- 持久交互终端用 `terminal_*` 工具；`terminal_open.type` 填 host id，且该 host 必须在 `get_available_shell_host` 中显示 `terminal: true`。"
+        );
+    }
+    lines.push(
+        "- 不确定可用 host 时调用 `get_available_shell_host`，不要猜测 host 名称。"
+    );
     if (hosts.length > 0) {
         lines.push("", "已注册 host：");
         for (const host of hosts) {

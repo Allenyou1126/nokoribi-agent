@@ -2,7 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { LocalBashExecutor } from "@deepseek-ai/dsh-bash-local";
 import Schema from "@deepseek-ai/schemastery";
 
-import { ShellHostRegistry } from "./hosts.js";
+import { ShellHostRegistry, TERMINAL_BASH_ARGS } from "./hosts.js";
 import type {
     ShellHostCapabilities,
     ShellHostExecRequest,
@@ -12,11 +12,13 @@ import type {
     ShellHostRegistryOptions,
     ShellHostRunner,
     ShellHostStarter,
+    ShellTerminalLaunch,
+    ShellTerminalLaunchRequest,
 } from "./hosts.js";
 import { ShellRouter } from "./router.js";
 import type { ShellRouterConfig } from "./router.js";
 
-export { ShellHostRegistry };
+export { ShellHostRegistry, TERMINAL_BASH_ARGS };
 export type {
     ShellHostCapabilities,
     ShellHostExecRequest,
@@ -26,6 +28,8 @@ export type {
     ShellHostRegistryOptions,
     ShellHostRunner,
     ShellHostStarter,
+    ShellTerminalLaunch,
+    ShellTerminalLaunchRequest,
 };
 export { ShellRouter };
 export type { ShellRouterConfig };

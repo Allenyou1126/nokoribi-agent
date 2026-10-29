@@ -345,6 +345,72 @@ describe("SandboxHost", () => {
         ).rejects.toThrow(/must not start with a nix option/);
     });
 
+    it("launches a pinned terminal with restricted argv, cwd, and env", async () => {
+        const test = await fixture();
+        const launch = await test.host.terminal({
+            sessionId: "main-1",
+            cwd: "/workspace",
+        });
+        expect(launch.argv).toEqual([
+            "/usr/bin/setpriv",
+            "--no-new-privs",
+            "--",
+            "/usr/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-i",
+        ]);
+        expect(launch.cwd).toBe(join(test.root, "main-1"));
+        expect(launch.env).toMatchObject({
+            PATH: `${join(test.root, "main-1", ".path-guard")}:${join(test.env, "bin")}`,
+            DSH_SANDBOX_DIR: join(test.root, "main-1"),
+            DSH_WORKSPACE_DIR: test.config.workspace,
+        });
+        expect((await test.host.status("main-1")).terminalSessions).toBe(1);
+        await launch.release?.();
+        expect((await test.host.status("main-1")).terminalSessions).toBe(0);
+    });
+
+    it("adds a nix shell layer for terminal packages", async () => {
+        const test = await fixture();
+        await test.host.addPackages("main-1", ["nixpkgs#hello"]);
+        const launch = await test.host.terminal({ sessionId: "main-1" });
+        expect(launch.argv.slice(0, 7)).toEqual([
+            "/usr/bin/nix",
+            "shell",
+            test.env,
+            "nixpkgs#hello",
+            "--command",
+            "/usr/bin/setpriv",
+            "--no-new-privs",
+        ]);
+        await launch.release?.();
+    });
+
+    it("protects pinned terminals from reset, TTL sweep, and disposal", async () => {
+        const test = await fixture();
+        const launch = await test.host.terminal({ sessionId: "main-1" });
+        await expect(test.host.reset("main-1")).rejects.toThrow(
+            /persistent terminals/
+        );
+        await expect(test.host.disposeSession("main-1")).rejects.toThrow(
+            /open persistent terminal/
+        );
+        test.setNow(2000);
+        await test.host.sweepNow();
+        expect((await test.host.status("main-1")).exists).toBe(true);
+        await launch.release?.();
+        await test.host.reset("main-1");
+        expect((await test.host.status("main-1")).generation).toBe(2);
+    });
+
+    it("requires a session for terminal launches", async () => {
+        const test = await fixture();
+        await expect(test.host.terminal({})).rejects.toThrow(
+            /requires an agent session/
+        );
+    });
+
     it("disposes a session directory and sidecar", async () => {
         const test = await fixture();
         await test.host.run({ command: "echo hi", sessionId: "main-1" });

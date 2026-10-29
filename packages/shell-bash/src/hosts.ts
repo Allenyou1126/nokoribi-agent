@@ -19,6 +19,13 @@ export const SHELL_HOST_KINDS: readonly ShellHostKind[] = [
     "client",
 ];
 
+/** Interactive shell arguments shared by every host terminal launch. */
+export const TERMINAL_BASH_ARGS: readonly string[] = [
+    "--noprofile",
+    "--norc",
+    "-i",
+];
+
 /** Capabilities a host advertises to the model-facing tool layer. */
 export interface ShellHostCapabilities {
     /** Whether `run_in_background` is supported. */
@@ -27,6 +34,8 @@ export interface ShellHostCapabilities {
     readonly sandbox: false;
     /** Whether `workdir` values are host-local or remote paths. */
     readonly workdir: "local" | "remote";
+    /** Whether the host can launch a persistent interactive terminal. */
+    readonly terminal: boolean;
 }
 
 /** One execution request routed through `ctx.shellHosts`. */
@@ -61,6 +70,28 @@ export type ShellHostStarter = (
     request: ShellHostExecRequest
 ) => Promise<ShellExecution>;
 
+/** One host-owned launch of a persistent interactive terminal. */
+export interface ShellTerminalLaunchRequest {
+    /** Owning session; required by per-session hosts such as sandbox. */
+    readonly sessionId?: string | undefined;
+    /** Initial working directory requested by the terminal tool. */
+    readonly cwd?: string | undefined;
+    /** Cancellation of the unpublished launch. */
+    readonly signal?: AbortSignal | undefined;
+}
+
+/** Fully resolved terminal launch returned by a host provider. */
+export interface ShellTerminalLaunch {
+    /** Executable and arguments for the PTY; never a shell string. */
+    readonly argv: readonly string[];
+    /** Working directory in the host execution world. */
+    readonly cwd: string;
+    /** Host-owned environment entries merged after the upstream env. */
+    readonly env?: Readonly<Record<string, string>> | undefined;
+    /** Idempotent release of host-owned pins or leases after PTY teardown. */
+    readonly release?: (() => void | Promise<void>) | undefined;
+}
+
 /**
  * A host provider registered with the router (07.2).
  *
@@ -91,6 +122,12 @@ export interface ShellHostProvider {
     /** Release all resources of one session (for `/clear` and goal archive). */
     readonly disposeSession?:
         | ((sessionId: string) => Promise<void>)
+        | undefined;
+    /** Launch a persistent interactive terminal; requires `capabilities.terminal`. */
+    readonly terminal?:
+        | ((
+              request: ShellTerminalLaunchRequest
+          ) => Promise<ShellTerminalLaunch>)
         | undefined;
     /**
      * Default working directory when a request omits one.
@@ -176,6 +213,12 @@ function validateCapabilities(
                 'as "local" or "remote"'
         );
     }
+    if (typeof capabilities.terminal !== "boolean") {
+        throw new Error(
+            `shell host "${id}" must declare capabilities.terminal ` +
+                "as a boolean"
+        );
+    }
 }
 
 function presentHost(provider: ShellHostProvider): ShellHostInfo {
@@ -203,6 +246,7 @@ function describeIds(ids: readonly string[]): string {
  */
 export class ShellHostRegistry extends Service {
     private readonly hosts: Map<string, ShellHostProvider> = new Map();
+    private readonly changeListeners: Set<() => void> = new Set();
     private readonly defaultHostId: string;
     private readonly bashSpawner:
         | ((request: ShellExecRequest) => Promise<ShellExecution>)
@@ -249,6 +293,21 @@ export class ShellHostRegistry extends Service {
                     "but does not implement start()"
             );
         }
+        if (provider.capabilities.terminal && provider.terminal === undefined) {
+            throw new Error(
+                `shell host "${provider.id}" declares terminal support ` +
+                    "but does not implement terminal()"
+            );
+        }
+        if (
+            !provider.capabilities.terminal &&
+            provider.terminal !== undefined
+        ) {
+            throw new Error(
+                `shell host "${provider.id}" implements terminal() but ` +
+                    "declares capabilities.terminal: false"
+            );
+        }
         if (this.hosts.has(provider.id)) {
             throw new Error(
                 `duplicate shell host id "${provider.id}"; ` +
@@ -256,11 +315,58 @@ export class ShellHostRegistry extends Service {
             );
         }
         this.hosts.set(provider.id, provider);
+        this.notifyChange();
         return () => {
             if (this.hosts.get(provider.id) === provider) {
                 this.hosts.delete(provider.id);
+                this.notifyChange();
             }
         };
+    }
+
+    /**
+     * Observe host registrations and unregistrations.
+     * @param listener - called after every successful registry change.
+     * @returns disposer that removes exactly this listener.
+     */
+    onChange(listener: () => void): () => void {
+        this.changeListeners.add(listener);
+        return () => {
+            this.changeListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Launch one persistent terminal through a host provider.
+     * @param hostId - target host id.
+     * @param request - session, directory, and cancellation.
+     * @returns the host-owned terminal launch.
+     * @throws when the host is unknown or does not implement terminals.
+     */
+    async terminalLaunch(
+        hostId: string,
+        request: ShellTerminalLaunchRequest
+    ): Promise<ShellTerminalLaunch> {
+        const provider = this.hosts.get(hostId);
+        if (provider === undefined) {
+            throw new Error(
+                `unknown shell host "${hostId}" (registered: ` +
+                    `${describeIds(this.list().map((host) => host.id))})`
+            );
+        }
+        if (
+            !provider.capabilities.terminal ||
+            provider.terminal === undefined
+        ) {
+            const capable = this.list()
+                .filter((host) => host.capabilities.terminal)
+                .map((host) => host.id);
+            throw new Error(
+                `shell host "${hostId}" does not support persistent ` +
+                    `terminals (terminal-capable: ${describeIds(capable)})`
+            );
+        }
+        return await provider.terminal(request);
     }
 
     /**
@@ -426,6 +532,16 @@ export class ShellHostRegistry extends Service {
                 failures,
                 `failed to dispose shell host sessions for "${sessionId}"`
             );
+        }
+    }
+
+    private notifyChange(): void {
+        for (const listener of Array.from(this.changeListeners)) {
+            try {
+                listener();
+            } catch {
+                // Host registration stays atomic even when an observer fails.
+            }
         }
     }
 

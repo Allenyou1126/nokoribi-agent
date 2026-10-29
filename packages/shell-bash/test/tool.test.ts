@@ -93,6 +93,7 @@ function localProvider(
             background: true,
             sandbox: false,
             workdir: "local",
+            terminal: false,
         },
         run: async (request) => {
             onRun?.(request);
@@ -121,6 +122,7 @@ function sandboxProvider(
             background: true,
             sandbox: false,
             workdir: "local",
+            terminal: false,
         },
         run: async (request) => {
             onStart?.(request);
@@ -314,6 +316,7 @@ describe("bash tool", () => {
                     background: false,
                     sandbox: false,
                     workdir: "local",
+                    terminal: false,
                 },
                 start: undefined,
             },
@@ -394,6 +397,7 @@ describe("host discovery tool", () => {
                     description: "local host",
                     background: true,
                     workdir: "local",
+                    terminal: false,
                 },
                 {
                     id: "sandbox:default",
@@ -401,6 +405,7 @@ describe("host discovery tool", () => {
                     description: "sandbox host",
                     background: true,
                     workdir: "local",
+                    terminal: false,
                 },
             ],
         });
@@ -408,5 +413,30 @@ describe("host discovery tool", () => {
         expect((blocks[0] as { text: string }).text).toContain(
             '"sandbox:default"'
         );
+    });
+
+    it("hides terminal support when no backend is registered", async () => {
+        const registry = makeRegistry("local:workspace", [
+            {
+                ...localProvider(),
+                capabilities: {
+                    background: true,
+                    sandbox: false,
+                    workdir: "local",
+                    terminal: true,
+                },
+                terminal: async () => ({
+                    argv: ["bash", "-i"],
+                    cwd: "/work",
+                }),
+            },
+        ]);
+        const tool = createHostDiscoveryTool({
+            shellHosts: registry,
+            terminalAvailable: () => false,
+        });
+        const value = await tool.execute({}, fakeExec(false));
+        const hosts = (value as { hosts: { terminal: boolean }[] }).hosts;
+        expect(hosts[0]?.terminal).toBe(false);
     });
 });

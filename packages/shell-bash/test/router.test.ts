@@ -81,6 +81,7 @@ function registerLocal(ctx: Context): () => void {
             background: true,
             sandbox: false,
             workdir: "local",
+            terminal: false,
         },
         start,
         run: async (request) => await (await start(request)).result(),
@@ -150,6 +151,7 @@ describe("ShellRouter", () => {
                 background: true,
                 sandbox: false,
                 workdir: "local",
+                terminal: false,
             },
             start: async () => {
                 throw new Error("not used");

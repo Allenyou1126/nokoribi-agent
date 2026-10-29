@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSandboxCommand, shellQuote } from "../src/command.js";
+import {
+    buildSandboxCommand,
+    buildSandboxTerminalArgv,
+    shellQuote,
+} from "../src/command.js";
 
 const base = {
     guardDir: "/sandbox/.path-guard",
@@ -70,6 +74,61 @@ describe("sandbox command wrapper", () => {
         expect(() =>
             buildSandboxCommand({
                 ...base,
+                packages: ["nixpkgs#hello"],
+            })
+        ).toThrow(/require a resolved nix binary/);
+    });
+
+    it("builds a setpriv terminal without a temporary package layer", () => {
+        expect(
+            buildSandboxTerminalArgv({
+                hostBash: "/nix/store/bash/bin/bash",
+                setpriv: "/nix/store/setpriv/bin/setpriv",
+                baseEnvironment: "/nix/store/env",
+                packages: [],
+            })
+        ).toEqual([
+            "/nix/store/setpriv/bin/setpriv",
+            "--no-new-privs",
+            "--",
+            "/nix/store/bash/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-i",
+        ]);
+    });
+
+    it("builds a nix shell terminal layer for temporary packages", () => {
+        expect(
+            buildSandboxTerminalArgv({
+                hostBash: "/nix/store/bash/bin/bash",
+                setpriv: "/nix/store/setpriv/bin/setpriv",
+                nix: "/nix/store/nix/bin/nix",
+                baseEnvironment: "/nix/store/env",
+                packages: ["nixpkgs#hello"],
+            })
+        ).toEqual([
+            "/nix/store/nix/bin/nix",
+            "shell",
+            "/nix/store/env",
+            "nixpkgs#hello",
+            "--command",
+            "/nix/store/setpriv/bin/setpriv",
+            "--no-new-privs",
+            "--",
+            "/nix/store/bash/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-i",
+        ]);
+    });
+
+    it("rejects terminal packages without a nix binary", () => {
+        expect(() =>
+            buildSandboxTerminalArgv({
+                hostBash: "/bin/bash",
+                setpriv: "/usr/bin/setpriv",
+                baseEnvironment: "/nix/store/env",
                 packages: ["nixpkgs#hello"],
             })
         ).toThrow(/require a resolved nix binary/);

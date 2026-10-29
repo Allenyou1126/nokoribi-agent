@@ -59,6 +59,7 @@ function localProvider(
             background: false,
             sandbox: false,
             workdir: "local",
+            terminal: false,
         },
         run: async (request) => runResult(request.command),
         ...overrides,
@@ -77,6 +78,7 @@ function sandboxProvider(
             background: true,
             sandbox: false,
             workdir: "local",
+            terminal: false,
         },
         run: async (request) => runResult(request.command),
         start: async (request) => execution(request.command),
@@ -191,6 +193,7 @@ describe("ShellHostRegistry", () => {
                     background: false,
                     sandbox: true,
                     workdir: "local",
+                    terminal: false,
                 })
             )
         ).toThrow(/sandbox: false/);
@@ -200,9 +203,20 @@ describe("ShellHostRegistry", () => {
                     background: false,
                     sandbox: false,
                     workdir: "somewhere",
+                    terminal: false,
                 })
             )
         ).toThrow(/workdir/);
+        expect(() =>
+            registry.register(
+                withCapabilities({
+                    background: false,
+                    sandbox: false,
+                    workdir: "local",
+                    terminal: "yes",
+                })
+            )
+        ).toThrow(/capabilities.terminal/);
         expect(() => registry.register(localProvider({ title: " " }))).toThrow(
             /non-empty title/
         );
@@ -216,10 +230,102 @@ describe("ShellHostRegistry", () => {
                         background: true,
                         sandbox: false,
                         workdir: "local",
+                        terminal: false,
                     },
                 })
             )
         ).toThrow(/does not implement start/);
+    });
+
+    it("validates and forwards persistent terminal launches", async () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+        });
+        const requests: string[] = [];
+        registry.register(
+            localProvider({
+                capabilities: {
+                    background: false,
+                    sandbox: false,
+                    workdir: "local",
+                    terminal: true,
+                },
+                terminal: async (request) => {
+                    requests.push(request.sessionId ?? "-");
+                    return {
+                        argv: ["bash", "-i"],
+                        cwd: "/work",
+                        env: { PATH: "/bin" },
+                    };
+                },
+            })
+        );
+        await expect(
+            registry.terminalLaunch("local:workspace", {
+                sessionId: "main-1",
+                cwd: "/work",
+            })
+        ).resolves.toEqual({
+            argv: ["bash", "-i"],
+            cwd: "/work",
+            env: { PATH: "/bin" },
+        });
+        expect(requests).toEqual(["main-1"]);
+        await expect(
+            registry.terminalLaunch("sandbox:default", {})
+        ).rejects.toThrow(/unknown shell host/);
+    });
+
+    it("rejects terminal capability and implementation mismatches", () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+        });
+        expect(() =>
+            registry.register(
+                localProvider({
+                    capabilities: {
+                        background: false,
+                        sandbox: false,
+                        workdir: "local",
+                        terminal: true,
+                    },
+                })
+            )
+        ).toThrow(/does not implement terminal/);
+        expect(() =>
+            registry.register(
+                localProvider({
+                    terminal: async () => ({ argv: ["bash"], cwd: "/" }),
+                })
+            )
+        ).toThrow(/capabilities.terminal: false/);
+    });
+
+    it("notifies terminal observers on registration changes", () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+        });
+        let changes = 0;
+        const disposeListener = registry.onChange(() => {
+            changes += 1;
+        });
+        const disposeHost = registry.register(localProvider());
+        expect(changes).toBe(1);
+        disposeHost();
+        expect(changes).toBe(2);
+        disposeListener();
+        registry.register(localProvider());
+        expect(changes).toBe(2);
+    });
+
+    it("rejects terminal launches for hosts without terminal support", async () => {
+        const registry = new ShellHostRegistry(new Context(), {
+            defaultHost: "local:workspace",
+        });
+        registry.register(localProvider());
+        await expect(
+            registry.terminalLaunch("local:workspace", {})
+        ).rejects.toThrow(/does not support persistent terminals/);
     });
 
     it("requires the default host to exist", () => {

@@ -89,6 +89,7 @@ describe("shell-host-local", () => {
             background: true,
             sandbox: false,
             workdir: "local",
+            terminal: true,
         });
     });
 
@@ -112,6 +113,7 @@ describe("shell-host-local", () => {
                     background: true,
                     sandbox: false,
                     workdir: "local",
+                    terminal: true,
                 },
             },
         ]);
@@ -137,10 +139,12 @@ describe("shell-host-local", () => {
             enabled: boolean;
             id: string;
             extraPackages: string[];
+            terminalBashPath: string;
         };
         expect(parsed.enabled).toBe(true);
         expect(parsed.id).toBe(LOCAL_HOST_ID);
         expect(parsed.extraPackages).toEqual([]);
+        expect(parsed.terminalBashPath).toBe("bash");
         const withPackages = Config({
             extraPackages: ["/nix/store/x/bin"],
         }) as unknown as { extraPackages: string[] };
@@ -213,6 +217,40 @@ describe("shell-host-local", () => {
             onExpiry: "none",
             signal: controller.signal,
         });
+    });
+
+    it("launches a persistent terminal with argv, cwd, and PATH", async () => {
+        const ctx = createHostContext();
+        apply(ctx, {
+            workspace: "/srv/workspace",
+            extraPackages: ["/opt/extra/bin"],
+        });
+        const launch = await ctx.shellHosts.terminalLaunch(LOCAL_HOST_ID, {
+            sessionId: "main-1",
+        });
+        expect(launch.argv).toEqual(["bash", "--noprofile", "--norc", "-i"]);
+        expect(launch.cwd).toBe("/srv/workspace");
+        expect(launch.env?.PATH).toBe(
+            `/opt/extra/bin:${process.env.PATH ?? ""}`
+        );
+        expect(launch.release).toBeUndefined();
+    });
+
+    it("resolves a relative terminal cwd and honors terminalBashPath", async () => {
+        const ctx = createHostContext();
+        apply(ctx, {
+            workspace: "/srv/workspace",
+            terminalBashPath: "/bin/zsh",
+        });
+        const launch = await ctx.shellHosts.terminalLaunch(LOCAL_HOST_ID, {
+            cwd: "sub/dir",
+        });
+        expect(launch.argv[0]).toBe("/bin/zsh");
+        expect(launch.cwd).toBe("/srv/workspace/sub/dir");
+        const absolute = await ctx.shellHosts.terminalLaunch(LOCAL_HOST_ID, {
+            cwd: "/tmp",
+        });
+        expect(absolute.cwd).toBe("/tmp");
     });
 
     it("loads as a Cordis plugin and disposes with its fiber", async () => {

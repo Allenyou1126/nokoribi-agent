@@ -1,12 +1,15 @@
-import { delimiter } from "node:path";
+import { delimiter, isAbsolute, resolve } from "node:path";
 
 import type { Context } from "@deepseek-ai/cordis";
 import type { ShellExecution, ShellRunResult } from "@deepseek-ai/dsh-shell";
 import Schema from "@deepseek-ai/schemastery";
+import { TERMINAL_BASH_ARGS } from "@nokoribi/shell-bash";
 import type {
     ShellHostCapabilities,
     ShellHostExecRequest,
     ShellHostProvider,
+    ShellTerminalLaunch,
+    ShellTerminalLaunchRequest,
 } from "@nokoribi/shell-bash";
 
 /** Plugin name used by Cordis diagnostics. */
@@ -30,6 +33,7 @@ export const LOCAL_HOST_CAPABILITIES: ShellHostCapabilities = {
     background: true,
     sandbox: false,
     workdir: "local",
+    terminal: true,
 };
 
 type ObjectSchema = ReturnType<typeof Schema.object>;
@@ -44,6 +48,8 @@ export interface Config {
     readonly workspace?: string | undefined;
     /** Extra executable directories prepended to PATH (D77). */
     readonly extraPackages?: readonly string[] | undefined;
+    /** Interactive shell for persistent terminals; ignored by `bash(host)`. */
+    readonly terminalBashPath?: string | undefined;
 }
 
 /** Local host configuration schema; the id has a stable default. */
@@ -61,6 +67,11 @@ export const Config: ObjectSchema = Schema.object({
         .default([])
         .description(
             "Directories prepended to PATH for local commands (Nix makeBinPath output)."
+        ),
+    terminalBashPath: Schema.string()
+        .default("bash")
+        .description(
+            "Interactive shell executable for persistent terminals; bash(host) is unaffected."
         ),
 });
 
@@ -135,9 +146,26 @@ export const apply: (ctx: Context, config?: Config) => () => void = (
     ): Promise<ShellRunResult> => {
         return await (await start(request)).result();
     };
+    const terminal = async (
+        request: ShellTerminalLaunchRequest
+    ): Promise<ShellTerminalLaunch> => {
+        const base = config.workspace ?? process.cwd();
+        const cwd =
+            request.cwd === undefined
+                ? base
+                : isAbsolute(request.cwd)
+                  ? request.cwd
+                  : resolve(base, request.cwd);
+        return {
+            argv: [config.terminalBashPath ?? "bash", ...TERMINAL_BASH_ARGS],
+            cwd,
+            env: { PATH: localPath(extraPackages, undefined) },
+        };
+    };
     return ctx.shellHosts.register({
         ...createLocalHostProvider(id, config.workspace),
         run,
         start,
+        terminal,
     });
 };

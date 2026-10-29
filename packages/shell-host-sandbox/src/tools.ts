@@ -33,6 +33,7 @@ function formatStatus(status: SandboxStatus): string {
         `idleTtlMs: ${status.idleTtlMs}`,
         `activeCommands: ${status.activeCommands}`,
         `backgroundCommands: ${status.backgroundCommands}`,
+        `terminalSessions: ${status.terminalSessions}`,
         `runtimePackages: ${yesNo(status.allowRuntimePackages)}`,
         `packages: ${
             status.packages.length === 0 ? "(none)" : status.packages.join(", ")

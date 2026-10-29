@@ -1,3 +1,5 @@
+import { TERMINAL_BASH_ARGS } from "@nokoribi/shell-bash";
+
 /** Quote one argument for a POSIX shell command line. */
 export function shellQuote(value: string): string {
     return `'${value.replaceAll("'", "'\\''")}'`;
@@ -60,4 +62,51 @@ export function buildSandboxCommand(input: SandboxCommandInput): string {
         `exec ${shellQuote(input.nix)} shell ${installables} ` +
         `--command ${shellQuote(input.setpriv)} --no-new-privs -- ${tail}`
     );
+}
+
+/** Inputs for one sandbox persistent-terminal argv. */
+export interface SandboxTerminalArgvInput {
+    /** Absolute host bash used for the interactive shell. */
+    readonly hostBash: string;
+    /** Absolute setpriv used to set no_new_privs. */
+    readonly setpriv: string;
+    /** Absolute nix binary, required when `packages` is non-empty. */
+    readonly nix?: string | undefined;
+    /** Absolute Nix buildEnv store path. */
+    readonly baseEnvironment: string;
+    /** Temporary package installables; empty means no nix shell layer. */
+    readonly packages: readonly string[];
+}
+
+/**
+ * Build the argv for a sandbox PTY without a shell string.
+ *
+ * Temporary packages add one `nix shell ... --command` layer so their bins are
+ * visible to the interactive shell while `no_new_privs` still wraps it.
+ * @param input - resolved binaries, environment and packages.
+ * @returns argv for `ctx.subprocess.spawnTerminal`.
+ */
+export function buildSandboxTerminalArgv(
+    input: SandboxTerminalArgvInput
+): string[] {
+    const shell = [input.hostBash, ...TERMINAL_BASH_ARGS];
+    if (input.packages.length === 0) {
+        return [input.setpriv, "--no-new-privs", "--", ...shell];
+    }
+    if (input.nix === undefined) {
+        throw new Error(
+            "sandbox terminal temporary packages require a resolved nix binary"
+        );
+    }
+    return [
+        input.nix,
+        "shell",
+        input.baseEnvironment,
+        ...input.packages,
+        "--command",
+        input.setpriv,
+        "--no-new-privs",
+        "--",
+        ...shell,
+    ];
 }

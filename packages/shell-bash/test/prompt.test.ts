@@ -23,6 +23,7 @@ function host(
             background: true,
             sandbox: false,
             workdir: "local",
+            terminal: true,
         },
     };
 }
@@ -47,11 +48,23 @@ describe("hosts prompt", () => {
         expect(text).toContain("`local:workspace`");
         expect(text).toContain("`sandbox:default`");
         expect(text).toContain("cp/rsync");
+        expect(text).toContain("terminal_open.type");
+        expect(text).toContain("terminal: true");
     });
 
     it("keeps discovery guidance when no hosts are listed", () => {
         const text = renderHostsPrompt("sandbox:default", []);
         expect(text).toContain("get_available_shell_host");
         expect(text).not.toContain("已注册 host：");
+    });
+
+    it("omits terminal guidance when no terminal backend is registered", () => {
+        const text = renderHostsPrompt(
+            "sandbox:default",
+            [host("local:workspace", "local", "主机环境")],
+            false
+        );
+        expect(text).not.toContain("terminal_open.type");
+        expect(text).toContain("get_available_shell_host");
     });
 });
