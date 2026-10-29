@@ -23,6 +23,9 @@ nix/
 templates/
 ├─ AGENTS.global.md
 └─ AGENTS.workspace.md
+skills/                 # M12：内置只读技能（nokoribi-deploy / nokoribi-debug）
+├─ nokoribi-deploy/SKILL.md
+└─ nokoribi-debug/SKILL.md
 SOUL.md
 ```
 
@@ -45,7 +48,7 @@ flake outputs：
 - 原生 addon 用 `autoPatchelfHook`；`koffi` 的 musl 预编译文件不用于 NixOS，显式忽略其 musl interpreter 依赖。
 - wrapper 设置 `NODE_ENV=production`，不包含 pnpm/构建工具。
 - **DSH subprocess runner 兼容（D148）**：wrapper 通过 `--require` 预加载 `nix/exec-path-preload.cjs`，并把 `NOKORIBI_NODE_SHIM` 指向包内 `bin/node-shim`（loader + 官方 Node）。`dsh-subprocess-local` 在 Linux 上用 `systemd-run --user --scope` 启动私有 runner，命令取自 `process.execPath`；若该值保持为 loader，runner.js 会被 loader 当作二进制执行并立即失败，所有 `bash(host)` 调用都会报 `subprocess scope exited before its bootstrap consumed the launch request`。修改 wrapper 时必须保留 `--require`、`NOKORIBI_NODE_SHIM` 和 `node-shim`；`nix flake check` 的 package-smoke 有对应断言。
-- store 布局见 04.6；`packages/*/dist`、`SOUL.md`、`templates/`、`vendor/profile-boot/` 与 `node_modules/` 都在发行版内，状态只写 `DSH_HOME`。
+- store 布局见 04.6；`packages/*/dist`、`SOUL.md`、`templates/`、`skills/`（M12）、`vendor/profile-boot/` 与 `node_modules/` 都在发行版内，状态只写 `DSH_HOME`。`skills/` 复制到 `$out/share/skills`，module 默认 `skill.bundledDir` 指向该目录，package-smoke 断言其存在。
 - 任何 native addon（若有）需在 Nix 构建中显式处理；v1 计划不依赖 DSH 的 Landlock/PTY addon（verify）。
 
 ## 12.4 NixOS module 选项（M6 实际）
@@ -208,12 +211,13 @@ services.nokoribi-agent = {
 - memory/schedule 行始终挂载；`memory.curator.enable` 只关闭 goal 终态提炼。`schedule.enable`、`models.subagents`、`hosts.ssh.enable` 不是 M6 选项（D146）。
 - `time.zone = null` 时使用系统时区；非 null 时同时写 time-context overlay 与 systemd `TZ`。
 - 没有 token 预算、没有 heartbeat、没有 web-debug 选项。
+- **M11–M17 新增选项**（2026-10-30，`sessionSearch`/`skill`/`mcp.servers`/`sendFile`/`memory.inject`/`memory.openviking`/`channel.qqBot` 新字段）见 12.15；module 仍生成完整 overlay（行 config 替换），本节 M6 代码块不重复列出。
 
 ## 12.5 生成的运行时配置
 
 module 根据选项生成完整的 `cordis.patch.yml`（store 路径）：
 
-- 覆盖 bundle 中 `nokoribi-agent-app`、`nokoribi-reviewer`、`nokoribi-channel-core`、`nokoribi-channel-local-test`、`nokoribi-channel-qq-bot`（M8）、`nokoribi-prompt`、`nokoribi-shell-*`、`nokoribi-memory`、`nokoribi-terminal-host`（M10）与（时区非 null 时）`time-context` 的完整 config；M10 另覆盖 `web`/`tool-web` 与（停用时）`web-*`/`terminal`/`tool-terminal`/`sandbox-policy` 行。
+- 覆盖 bundle 中 `nokoribi-agent-app`、`nokoribi-reviewer`、`nokoribi-channel-core`、`nokoribi-channel-local-test`、`nokoribi-channel-qq-bot`（M8）、`nokoribi-prompt`、`nokoribi-shell-*`、`nokoribi-memory`、`nokoribi-terminal-host`（M10）与（时区非 null 时）`time-context` 的完整 config；M10 另覆盖 `web`/`tool-web` 与（停用时）`web-*`/`terminal`/`tool-terminal`/`sandbox-policy` 行；M11 覆盖 `session-query`/`tool-session-query`，M12 覆盖 `skill`/`skill-filesystem`/`tool-skill`，M13 追加 `mcp-<name>` client 行（`mcp-resources` 常挂），M16 覆盖 `memory` 行的 `inject.*`。
 - channel-core 行由 overlay 生成：`trustedChannels = lib.optional qqBot.enable "qq-bot"`；`defaultChannelId` 在 localTest 启用时为 `local-test`，否则空串（回退首个 driver）。
 - Cordis patch 是行 config 的替换而非深合并，因此 overlay 生成器必须写全该行字段。
 - 启动器启动时按 bundle patch → `NOKORIBI_PATCH` overlay 组合；没有运行时 override 文件。
@@ -227,6 +231,8 @@ module 根据选项生成完整的 `cordis.patch.yml`（store 路径）：
   - `NOKORIBI_LOG_LEVEL=...`
   - `DEEPSEEK_API_KEY`（来自 EnvironmentFile）
   - `NOKORIBI_QQ_BOT_CLIENT_SECRET`（M8；来自 EnvironmentFile/agenix；overlay 只出现变量名）
+  - `NOKORIBI_OPENVIKING_ENABLED`/`NOKORIBI_MEMORY_ENABLED=false`/`NOKORIBI_OPENVIKING_API_KEY_ENV`/`NOKORIBI_OPENVIKING_ENDPOINT`（及可选 `PEER_ID`/`WORKSPACE_PEER`/`RECALL_MAX_TOKENS`）/`OPENVIKING_STATE_DIR`（M17 启用时；密钥值本身仍来自 EnvironmentFile/agenix）
+  - M11/M12/M13/M14/M15/M16 的运行时配置走 overlay row config，不再逐个注入 env（`mcp.servers` 的密钥 env 名由 overlay `!!js process.env.NAME` 解析，值来自 EnvironmentFile）
 - 测试通道 token 写在 overlay 的 row config，不通过环境变量；明文进 store（D119）。QQ appId 写在 overlay row config（非秘密）；QQ ClientSecret 不进 store/overlay。
 
 ## 12.6 systemd service
@@ -423,12 +429,85 @@ age.secrets.nokoribi-agent-env = {
 - 网络出口：目标机可直连 `api.deepseek.com`（以及搜索 API 基址）；无代理时按环境变量代理策略处理。
 - 门禁对照：G2（目标机 local PTY）、G3（sandbox 终端）、G4（真实搜索）、G5（API provider）、G6（真实公网抓取）见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)；通过前 12.14 只算“代码完成”。
 
-## 12.15 规划中的选项（M16/M17，未实现）
+## 12.15 M11–M17 新增选项（2026-10-30，已实现）
 
-> 状态：**规划口径（D174/D175），代码未实现**；启动对应里程碑时再补实现与 module-eval 断言。里程碑总览见 [14.15](14-roadmap.md)。
+> 状态：**代码完成（2026-10-30）；真实平台/目标机验收按各里程碑门禁待执行**。实现口径见 [D177–D183](03-decision-log.md) 与各里程碑规格 [20](20-session-search.md)–[25](25-openviking-backend.md)。module 仍按 12.5 生成完整 overlay；新增的 `mcp.servers` 动态行、M11/M12/M14/M15/M16/M17 行 config 均由 overlay 写全。
 
-- **M16 `memory.inject.*`**（本地记忆自动注入）：`enable`（默认 `true`）、`maxChars`（默认 3000）、`maxEntries`（默认 20）、`mainOnly`（默认 `true`）、`autoTags`（默认 `["type:person","type:preference"]`）；overlay 接到 `nokoribi-memory` 行，bundle 侧用 `NOKORIBI_MEMORY_INJECT_*` 默认值。
-- **M17 记忆后端开关**：`memory.openviking.enable`（默认 `false`）。启用后 OpenViking 接管，`nokoribi-memory` 行 disabled、`nokoribi-prompt` 不注册 memory 提示词段。
-- **M17 OpenViking 连接配置（仅连接，不打包 server）**：其他跟 OpenViking 连接相关的配置全部放在 `memory.openviking.*`，包括 `endpoint`、`apiKeyEnv`（指向 EnvironmentFile/agenix 变量，不写入 store）、可选 `peerId`/`workspacePeer`/`recallMaxTokens` 等。
-- **M17 前置**：`@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本）作为额外 profile bundle；peer 依赖 `dsh-mcp-client`（M13）与 `dsh-skill-filesystem`（M12），`dsh-skill` 服务需由 M12 挂载。
+```nix
+services.nokoribi-agent = {
+  # M11 会话检索（复用 dsh-tool-session-query + FTS5 派生索引）
+  sessionSearch = {
+    enable = true;                    # false: 工具行停用、openAt=never，精确读取保留
+    maxResults = 100;                 # 单次搜索命中上限
+    searchTimeoutSeconds = 30;        # 协作式 deadline（渲染为 ms）
+  };
+
+  # M12 本地技能（registry + filesystem provider + skill 工具）
+  skill = {
+    enable = true;                    # false: skill/skill-filesystem/tool-skill 三行停用
+    customDirs = [];                  # 额外只读技能根（project roots 之后、$DSH_HOME/skills 之前）
+    bundledDir = null;                # null -> ${package}/share/skills（Nix 打包只读）
+    catalogDescriptionMaxLength = 500;
+  };
+
+  # M13 MCP 客户端（每个 server 生成一行 id=mcp-<name> 的 dsh-mcp-client）
+  mcp.servers = [
+    # {
+    #   name = "github";             # [A-Za-z0-9_-]{1,32}，工具名 mcp__github__*
+    #   transport = "stdio";         # stdio | streamable-http
+    #   command = "npx"; args = [ "-y" "@modelcontextprotocol/server-github" ];
+    #   env = { GITHUB_TOKEN = "GITHUB_TOKEN"; };  # VALUE 是环境变量名，不是密钥
+    #   cwd = null;
+    #   url = null; headers = {};     # streamable-http：VALUE 同样是环境变量名
+    #   toolCallTimeoutSeconds = 60;
+    #   maxInstructionBytes = 32768;
+    #   failOnStartupError = false;   # 默认降级：连接失败仍启动，无工具/日志告警
+    #   reconnect = { enable = true; initialDelayMs = 500; maxDelayMs = 30000; maxAttempts = 10; };
+    # }
+  ];
+
+  # M14 出站文件上限（send_to_user 工具）
+  sendFile.maxBytes = 33554432;       # 32 MiB
+
+  # M14/M15 QQ 媒体与提问按钮（channel.qqBot 新字段；approvalButtons 见 12.4）
+  channel.qqBot = {
+    inboundImages = true;             # C2C/群 @ 图片下载 -> 模型图片；失败降级文本
+    inboundImageMaxBytes = 10485760;  # 10 MiB
+    inboundImageTimeoutSeconds = 15;
+    questionButtons = true;           # 单选提问选项按钮（仅 C2C；文本 fallback 保留）
+  };
+
+  # M16 本地记忆自动注入
+  memory.inject = {
+    enable = true;                    # false: 不注册 runtime context，loop 清理旧快照
+    maxChars = 3000;                  # 快照字符预算
+    maxEntries = 20;                  # 快照条目上限
+    mainOnly = true;                  # 仅主 root agent 注入
+    autoTags = [ "type:person" "type:preference" ];  # 免 pin 自动纳入的 tag
+  };
+
+  # M17 OpenViking 可选记忆后端（默认关闭；启用即停用本地 memory）
+  memory.openviking = {
+    enable = false;
+    endpoint = null;                  # enable=true 时必填且必须 http(s)
+    apiKeyEnv = "OPENVIKING_API_KEY"; # 变量名；值走 environmentFile/agenix，不进 store
+    peerId = null;
+    workspacePeer = null;             # 字面量 "0" 关闭 workspace 派生
+    recallMaxTokens = null;
+  };
+};
+```
+
+说明：
+
+- **M11**：`session-query` 行 FTS 索引固定 `$DSH_HOME/session-search.db`；`sessionSearch.enable=false` 时该行 `openAt=never` 且 `tool-session-query` 停用（`ctx.sessionQuery` 精确读/过滤/trace 保留）。检索工具**不**豁免 Auto review。
+- **M12**：`bundledDir` 默认指向发行版 `share/skills`（本仓库内置 `nokoribi-deploy`/`nokoribi-debug`），`$DSH_HOME/skills` 由上游默认根扫描；`skill.enable=false` 时三行一起停用；`NOKORIBI_SKILL_DIRS` 是 bundle/开发用等价入口。技能正文是模型可见指令，按任务指令信任边界处理（见 21/15）。
+- **M13**：`mcp-resources` 行常挂（无 server 零成本）；`mcp.servers` 为空时不生成任何 client 行。`env`/`headers` 的 value 只写环境变量名，overlay 渲染为 `!!js process.env.NAME`；密钥由 `environmentFile`/agenix 提供。启动失败默认不阻断 daemon（`failOnStartupError=false`）；每个 MCP 工具调用仍过 Auto review。
+- **M14**：入站图片经 driver 下载/解码后交 channel-core 存入 DSH attachment store；出站 `send_to_user` 工具把工作区文件经 attachment store 交给渠道，文件以独立 outbox 条目投递（QQ C2C 富媒体；群聊文本降级、local-test 提供字节下载端点）。真实 QQ 附件 URL/上传门禁未执行。
+- **M15**：`ask_user_question` 单选（1–10 选项）渲染 C2C 按钮，label ≤10 字符；多选/自定义/超限保持文本；`questionButtons=false` 时纯文本；ack/intent 语义沿用 M9，真实平台门禁待执行。
+- **M16**：overlay 把 `inject.*` 写进 `nokoribi-memory` 行（bundle 侧默认值用 `NOKORIBI_MEMORY_INJECT_*`）；`/status full` memory 行显示 pinned/snapshotChars/inject；快照走 runtime context（`required:true`），每轮最多刷新一次。
+- **M17**：启用时 module 注入 systemd env `NOKORIBI_OPENVIKING_ENABLED=true`、`NOKORIBI_MEMORY_ENABLED=false`、`NOKORIBI_OPENVIKING_API_KEY_ENV`、连接项（非 null 时）与 `OPENVIKING_STATE_DIR=$DSH_HOME/openviking-state`；launcher 追加 `@openviking/dsh-memory-plugin` bundle 并把 `NOKORIBI_OPENVIKING_*` 归一为 `OPENVIKING_*`。插件 bundle 缺失/被跳过时 launcher 启动失败；本地 memory 行不靠 overlay 停用（env 开关 owns）。`endpoint` 在启用时必填（assertion）。真实 server spike 待外部部署；见 [25](25-openviking-backend.md)。
+- **module-eval**：`nix flake check` 的 `module-eval` 断言 M11/M12/M13/M14/M15/M16/M17 行/enable 分支、`mcp.servers` 0/1/2 server 矩阵、OpenViking 启用/停用与必填校验；`module-eval-disabled` 覆盖 terminal/web 的停用分支。
+- **依赖与哈希**：M11–M17 新增 `dsh-tool-session-query`/`dsh-skill*`/`dsh-tool-skill`/`dsh-mcp-client`/`dsh-mcp-resources` 与 `@openviking/dsh-memory-plugin@0.5.31`（launcher 依赖，含显式 DSH peer），lock 与 `nix/deps.nix` FOD 哈希已更新；M12 的 `share/skills` 由 `nix/package.nix` 打包，package-smoke 断言存在。
+- **验收**：本地自动化门禁通过（见 13.1 的 M11–M17 记录）；真实平台项（QQ 图片/文件上传、提问按钮、真实 OpenViking server）与目标机 NixOS 部署仍需执行，执行前只标“代码完成”。
 - **不做**：不在 NixOS module 中提供 openviking-server 的 package/systemd unit/模型服务；server 由用户外部部署，本仓库只读取连接配置。

@@ -31,6 +31,18 @@
 | V14 | DeepSeek 搜索 API / 目标机网络出口 | `web_search` 默认走 Messages web_search；切新版 Search/Fetch API 需账号/接口可用 | 真实 key 发一次搜索；目标机 curl 搜索基址；记录延迟/结果 | **待执行（M10 G4/G5/G6）**：fake HTTP 只验证协议形状；失败则 `web.enable=false` 发行或换 provider |
 | V15 | sandbox 终端 pin 与 TTL/reset/`disposeSession` 顺序 | 终端打开时 TTL 回收/`/clear` 会竞争目录删除 | 集成/手工：打开终端后触发 TTL sweep、reset、`/clear`、SIGTERM | **部分验证（M10）**：pin/TTL/reset/dispose 单测 + `/clear` 进程测试（local host）通过；真实 sandbox buildEnv 组合待 G3。失败回退：reset/dispose 在 pin>0 时拒绝；`/clear` 前显式关闭 terminals |
 
+## 15.1.2 M11–M17 待验证项（2026-10-30 实现，自动化门禁已通过；真实平台/目标机待执行）
+
+| # | 验证项 | 为什么 | 验证方式 | 失败时的回退 |
+|---|---|---|---|---|
+| V16 | 真实 QQ 平台附件 URL 下载与出站富媒体上传（M14） | driver 按 .spec/17 记录实现；URL 鉴权/大小/格式/`file_type`/`msg_type=7` 未经真实平台验证 | 真实 Bot：C2C 发图 → 模型收到图片；`send_to_user` 发文件 → 收到文件消息；记录大小/格式/失败码 | 失败降级：入站图片忽略并提示；出站文件仅 C2C，群聊/失败文本降级或非重试失败；必要时关闭 `channel.qqBot.inboundImages` |
+| V17 | QQ 提问按钮（M15）真实平台渲染与回调 | 与 M9 审批按钮相同的 keyboard/INTERACTION 事实，另加多按钮 label/数量限制 | 沿用 notes #15–#20，新增：单选问题收到 keyboard、点击结算、群聊无按钮、超时/重启失效 | 关闭 `channel.qqBot.questionButtons`，全部文本 fallback |
+| V18 | 真实 OpenViking server recall/capture/commit（M17） | fake server 只验证协议形状；真实 server 需要 embedding/VLM provider 与网络 | 外部部署 server：启动 profile 拉取、recall 命中/延迟、capture/commit 可见、断线降级、MCP 工具面 | `memory.openviking.enable=false` 回退本地记忆（不双写，切回需重启）；记录时延/失败率 |
+| V19 | NixOS 目标机 M11–M17 部署复测 | 新行/新 Nix 选项/`share/skills`/OpenViking env 只在本地 eval 验证 | 目标机 `nixos-rebuild switch` 后按 12.12/12.13/12.14 清单执行，补 M11–M17 项 | 回退到上一代构建；`sessionSearch.enable=false`/`skill.enable=false`/`mcp.servers=[]`/`memory.openviking.enable=false` 可逐项关闭 |
+| V20 | 真实视觉模型图片调用（M14 入站 / V8） | 当前默认 DeepSeek 路由的图片能力未验证；DSH 会对 text-only 模型投影占位文本 | 有视觉模型时真实发图，确认模型看到图片；无则确认占位与降级文案 | 无多模态模型时按 D69 明确不支持；能力位/提示词说明 |
+| V21 | MCP streamable-http 真实 server 与重连（M13） | fake stdio 已覆盖；HTTP/OAuth/重连/工具更新只按上游行为 | 真实 HTTP MCP server：启动同步、工具调用、断线重连、工具列表变更 | `failOnStartupError=false` 降级；删除该 server 配置；保留 stdio 路径 |
+| V22 | 会话检索的 FTS 索引规模/延迟（M11） | 历史会话增长后索引重建与查询延迟未知 | 目标机长期运行后测 `session_search` 延迟与索引大小；观察 `$DSH_HOME/session-search.db` | `sessionSearch.enable=false` 或 `openAt` 调整；索引可删除重建（派生库） |
+
 ## 15.2 其他实现期需确认的点
 
 1. `/clear` 时 outbox 中属于旧会话的未发送回复：M1 决定**保留并继续发送**（已写回 06/05）；后续里程碑如改变需再记录。
@@ -78,7 +90,7 @@
 | 子代理审批补丁复杂 | 中 | goal 工具被拒后无法请求用户 | V2 已验证；补丁写 child `ask` 并修正 delegation 文案；仍保留 report 回退 |
 | 多 goal 汇报噪声/token 消耗 | 中 | 主 agent 被刷屏、成本上升 | 提示词约束里程碑汇报；无并发上限（D96）为用户选择 |
 | memory 全局跨项目泄露 | 中 | 项目事实混在一起 | 只全局（D67）；tags 标记；不存秘密 |
-| memory 主动检索的回忆缺口 | 中 | 模型不 search 就“忘记”；`/clear` 后无自动预热 | M11 设计已确认自动注入（D172–D174）：主会话 pinned 快照走 runtime context、每轮最多刷新一次；提示词要求先 search；实现待执行 |
+| memory 主动检索的回忆缺口 | 中 | 模型不 search 就“忘记”；`/clear` 后无自动预热 | M16 已实现自动注入（D172–D174）：主会话 pinned 快照走 runtime context、每轮最多刷新一次；提示词要求先 search |
 | 记忆自动注入的持久化提示注入面（设计已确认，实现待执行） | 中高 | 模型写入的记忆进入上下文后可能长期改变行为，且比一次性外部内容更持久 | 写入仍过 Auto review + secret guard；快照固定“数据非指令”声明；pinned 预算/数量上限；`memory.inject.enable=false` 可关闭；残余风险接受（D174） |
 | 记忆快照 token 与过期（设计已确认，实现待执行） | 中 | 快照常驻上下文；旧快照留在历史，精确信息可能过期 | 默认 3000 字符/20 条；每轮最多追加一次；标题+单行摘要（全文用 `memory search/read`）；超预算 footer；可配置 |
 | schedule 存储/交付失败 | 中 | 存储损坏阻止启动；崩溃可能重复交付 | fail loud；at-least-once 已接受；`/clear` 删除旧任务；进程测试覆盖逾期 |
@@ -106,6 +118,19 @@
 | M10：Web 工具豁免审查（代码已实现，真实门禁待执行） | 中高 | 外部内容注入且无 reviewer 兜底 | provider 自带 SSRF/大小/重定向限制；结果标记不可信；豁免列表可配置；G7 回归通过；风险接受（D170） |
 | M10：Web provider API/网络不可用（代码已实现，真实门禁待执行） | 中 | `web_search`/`web_fetch` 失败影响任务 | 结构化错误返回模型；可切 provider/关闭 web；V14/G4–G6 门禁；目标机网络前置 |
 | 本地测试通道不是真实 IM | 中 | 无法验证真实平台行为 | v1 明确后置；真实适配器需单独里程碑 |
+| M11：历史会话内容进入模型上下文（已实现） | 中 | 旧会话/外部文本可能携带提示注入 | 工具只读；`nokoribi:safety` 声明历史内容是不可信数据；仍过 Auto review 的会话读取路径（工具不豁免）；残余风险接受 |
+| M12：技能正文是模型可见指令（已实现） | 中高 | 恶意/错误 SKILL.md 可长期改变行为 | 技能根受部署控制（打包只读/DSH_HOME/自定义目录）；写入仍过 Auto review；信任边界登记；不做远程 hub |
+| M12：未知斜杠命令透传（已实现） | 低 | 误把命令当普通文本交给模型，产生额外 token/歧义回复 | 只影响未注册命令；已注册命令不变；`/skill-name` 机制依赖它，权衡接受 |
+| M13：外部 MCP server 权限与数据出界（已实现） | 中高 | server 进程以服务用户权限运行；工具参数/结果可能含敏感数据 | 只配置可信 server；env/header 值只写变量名；每次 MCP 工具调用过 Auto review；`failOnStartupError=false` 降级；配置审计 |
+| M13：MCP 工具污染/命名冲突（已实现） | 中 | 恶意 server 伪造工具描述诱导操作 | 工具名按 server 命名空间稳定；审查覆盖；只加可信 server；不接受远程替换同名工具（上游冲突拒绝） |
+| M14：入站图片提示注入（已实现） | 中高 | 图片内文字/元数据可诱导模型 | 图片作为用户输入数据处理；提示词声明视觉内容不可信；reviewer 覆盖工具动作；模型视觉能力待 V20 |
+| M14：QQ 媒体大小/格式/上传失败（已实现，门禁待测） | 中 | 大图/非白名单格式被拒或上传失败 | 下载/上传有大小/超时/格式限制；失败降级文本；真实门禁 V16 校准；可关闭 inboundImages |
+| M14：文件以独立 outbox 条目投递（实现偏差） | 低中 | 多次平台发送、部分失败可能重复文本或顺序变化（at-least-once） | 每条独立 replySeq/重试身份；文件-only 失败非重试；文档记录；at-least-once 已接受 |
+| M15：提问按钮平台限制（已实现，门禁待测） | 中 | 多按钮 keyboard 限制、label 截断、旧按钮误点 | label ≤10、选项 ≤10、token 绑定 interaction+question、失效提示；`questionButtons` 可关；文本 fallback 保留 |
+| M16：记忆快照持久化提示注入面（已实现） | 中高 | pinned 内容进入每轮上下文，比一次性注入更持久 | 写入过 Auto review + secret guard；快照固定“数据非指令”声明；预算/数量上限；`memory.inject.enable=false` 可关；残余风险接受（D174） |
+| M16：快照 token/过期/刷新（已实现） | 中 | 快照常驻、旧快照留在历史、精确信息可能过期 | 默认 3000 字符/20 条；每轮最多追加一次；标题+单行摘要；超预算 footer；可配置关闭 |
+| M17：OpenViking 数据出界与额外 provider 密钥面（已实现，spike 待执行） | 高 | 记忆/对话发往外部 server；server 侧 embedding/VLM 密钥与合规由用户承担 | 默认关闭；显式 `memory.openviking.enable`；只保留连接配置（密钥不进 store）；server 不打包；文档明确无本地 fallback；V18 记录 |
+| M17：插件版本/API 漂移（已实现） | 中 | `@openviking/dsh-memory-plugin` 升级可能破坏注入/工具面 | pin `0.5.31`；DSH 固定 `0.2.1-rc.3`；升级时回归 fake server/no-server 进程测试与真实 spike；失败可切回本地记忆 |
 
 ## 15.4 已接受的残余风险（汇总）
 
@@ -116,7 +141,7 @@
 - sandbox 不是安全隔离；只是干净/可重置环境 + 禁提权。
 - 无真实 IM、无 web UI、无 VM 测试、无 CI。
 - 全局 memory、无加密、root 可读。
-- memory 在 M11 设计中改为自动注入 pinned 快照（D172–D174，实现待执行）：快照可能过期、旧快照留在历史、精确信息仍需主动检索；记忆内容作为长期上下文存在持久化提示注入风险（缓解后接受）。
+- memory 在 M16 中改为自动注入 pinned 快照（D172–D174，已实现）：快照可能过期、旧快照留在历史、精确信息仍需主动检索；记忆内容作为长期上下文存在持久化提示注入风险（缓解后接受）。M17 启用 OpenViking 后该注入面转移为插件 recall 内容。
 - schedule 是 at-least-once，崩溃可能重复交付；存储损坏 fail loud。
 - 发行版运行时依赖官方 Node 二进制（D145）；Node/DSH 升级时必须复测 native addon，且该二进制不受 nixpkgs 补丁覆盖。
 - NixOS 12.12 手工验收尚未在当前 Arch 开发机执行；在目标机记录前不能把 M6 视为生产验收完成。
@@ -131,6 +156,14 @@
 - M10 的持久终端是**进程内**的：daemon 重启、`/clear`、agent 释放即丢失 shell 状态；跨重启恢复不在范围。M10 代码已实现；真实门禁 G2–G6 未执行前不能称验收通过。
 - M10 的 Web 工具豁免 Auto review（代码已实现）：外部内容可能注入模型且无 reviewer 兜底；依赖 fetch provider 自身限制、结果“不可信内容”标记与可配置豁免列表（D170）；真实 API/网络门禁未执行。
 - M10 的终端复用依赖上游 `BashTerminalBackend` 公开导出面（实现期已验证够用、未触发 vendoring）；DSH 升级可能破坏该注入点，失败时按 D168 回退 vendoring。
+- M11 的会话检索把历史原文交给模型：旧会话/外部内容可能包含提示注入；只读工具 + “历史内容不可信”提示词 + Auto review 仍是唯一缓解，残余风险接受。
+- M12 的技能正文是模型可见的长期指令：部署者必须只放可信 SKILL.md；打包只读根、DSH_HOME、custom dirs 都属部署者控制面，不做远程 hub。未知斜杠命令透传会让拼错的命令进入模型（少量 token/歧义），权衡接受。
+- M13 的 MCP server 以服务用户权限运行，且工具参数/结果可能出界：只配置可信 server、密钥只写环境变量名、每次工具调用仍过 Auto review；不做 OAuth/egress 隔离。
+- M14 的入站图片可携带提示注入；出站文件以独立 outbox 条目投递（at-least-once，重复/顺序变化可能出现）；QQ 群聊富媒体不支持（文本降级），真实平台附件门禁（V16）未执行前只能称“代码完成”。
+- M15 的提问按钮复用 M9 平台事实；多选/自定义/群聊仍是文本；平台限制（V17）未执行前只能称“代码完成”。
+- M16 的快照是持久化提示注入面（模型写入、每轮注入）；缓解为 Auto review + secret guard + 数据非指令声明 + 预算上限 + 可关闭；快照可能过期、旧快照留在历史，精确信息仍需 `memory search/read`。
+- M17 启用 OpenViking 后记忆数据出界到用户外部部署的 server（AGPL，含 embedding/VLM provider）；无本地 fallback，server 不可用时记忆能力降级；默认关闭，切换需重启；真实 server spike（V18）未执行前只能称“代码完成”。
+- M11–M17 的本地自动化门禁通过不代表真实平台验收：QQ 图片/文件/提问按钮（V16/V17）、真实 OpenViking（V18）、NixOS 目标机（V19）、视觉模型（V20）、HTTP MCP（V21）、FTS 规模（V22）仍需执行并记录。
 
 ## 15.5 停止/回退条件（建议）
 

@@ -32,6 +32,17 @@ M9 落点（已实现，2026-10-29）：`packages/channel-core/test/` 覆盖 bro
 
 M10 落点（已实现，2026-10-29）：`packages/shell-bash/test/` 覆盖 `ShellTerminalLaunch` 协议、`terminal` 能力位双向校验与 `terminalLaunch` 路由、`onChange`、发现工具 `terminal` 字段按实际注册 backend 隐藏、hosts 提示词终端指引；`packages/terminal-host/test/` 5 文件/33 测试用注入的 fake `spawnTerminal` 覆盖 per-host backend 注册/注销/串行、launch 规格（argv/cwd/env）、上游 env 透传、release 幂等与失败清理、缺 owner 上下文报错、`enabled=false`；`packages/shell-host-*` 覆盖 local launch 与 sandbox `pins`/TTL/reset/dispose 拒绝/`terminalSessions`/`buildSandboxTerminalArgv`；`packages/reviewer/test/` 覆盖 `exemptTools` schema 默认与自定义解析；`packages/agent-app/test/terminal-cleanup.test.ts` 覆盖 5s 有界清理与失败降级；`tests/process/m10-terminal.test.ts` 用真实 `dsh-subprocess-local` PTY（local host）4 场景验证 open/send/read/list/close、状态持久、`/clear` 清理、`enabled=false` 不暴露工具与提示、SIGTERM；`tests/process/m10-web.test.ts` 用 fake LLM + 本地 fake DeepSeek 搜索 HTTP 2 场景覆盖 web 工具不触发 reviewer、`bash` 仍审查、非公网 fetch 被拒、空豁免列表恢复全审。sandbox 终端与真实搜索/API/公网抓取走手工门禁（[12.14](12-nixos-deployment.md) 与 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)）。实测（本次施工观察，2026-10-29 21:42）：`pnpm test:unit` **56 文件/438 测试**；`pnpm test` **60 文件/458 测试**；`pnpm test:process` **10 文件/64 场景**；`pnpm check`、`nix flake check`、`nix build .#default`、`nix run .#default -- --version` 均通过（2026-10-29 最终门禁）。flake unit 不跑真实 PTY 测试。
 
+M11–M17 落点（已实现，2026-10-30）：
+
+- **M11 会话检索**：`tests/process/m11-session-search.test.ts`（2 场景，真实 sqlite + fake LLM：历史会话 sentinel 在 `/clear` 后经 `session_search` 命中且工具结果进入后续请求、索引文件创建；停用 env 隐藏工具且不建索引）。
+- **M12 技能**：`tests/process/m12-skills.test.ts`（3 场景：bundled 目录 → durable catalog → `skill` 工具加载正文；`/nokoribi-debug` 用户消息经未知斜杠透传注入 `<skill_content>`；`skill.enable=false` 无 catalog/tool）。`packages/prompt/test/` 覆盖 `memorySection`/safety 段。
+- **M13 MCP**：`tests/process/m13-mcp.test.ts`（1 场景：测试生成的 patch 插入 mcp-client 行 → 零依赖 fake MCP stdio server（`support/fake-mcp.ts`，JSON-RPC initialize/tools/list/tools/call）→ fake LLM 调用 `mcp__fake__echo` → 结果回传且 reviewer 观察到审查）。streamable-http fake 变体未自动化（22.9 记录）。
+- **M14 消息媒体**：`packages/channel-core/test/service-media.test.ts`（7）、`channel-qq-bot/test/driver.test.ts`（图片/文件新增 10）、`channel-local-test/test/http.test.ts`（图片注入 + 附件下载）、`tests/integration/m14-*`（2）、`tests/process/m14-message-media.test.ts`（4：local-test 图片 → 模型请求/session JSONL 含 image block、存储失败降级文本、fake QQ WS 图片下载 → 模型、`send_to_user` 文件 → local-test 元数据 + `/v1/attachments/<id>` 字节一致）。
+- **M15 提问按钮**：`packages/channel-core/test/broker.test.ts`（新增 7 单选 action/结算/token 作用域/fallback/截断/超时清理）、`channel-qq-bot/test/{driver,gateway}.test.ts`（question keyboard/C2C/门禁/ack）、`tests/integration/m15-*`（3）、`tests/process/m15-question-buttons.test.ts`（2：local-test action 回调结算 `ask_user_question`、数字文本 fallback 仍结算）。
+- **M16 记忆注入**：`packages/memory/test/`（6 文件/91 测试：frontmatter pinned 兼容、snapshot 10、inject 11、store/tool/secret）、`packages/prompt/test/`（26）、`packages/agent-app/test/status.test.ts`（4）、`tests/process/m16-memory-inject.test.ts`（6：pinned 写入 → 下轮快照 + `/status full` 字段、main-only vs goal child、注入关闭、超预算 footer、重启不重复、`NOKORIBI_MEMORY_ENABLED=false` 无 memory 段/工具）；m5 进程回归 7/7。
+- **M17 OpenViking**：`tests/process/m17-openviking.test.ts`（2：不可达 endpoint 启动不崩 + 本地 memory 工具/存储关闭；零依赖 fake server（`support/fake-openviking.ts`）下 `/health`/recall (`/api/v1/search/search`) 注入模型请求、`/api/v1/sessions/*/messages` capture、正常回复与关闭）；真实 server spike 未自动化的部分见 V18。
+- **实测（2026-10-30 最终门禁）**：`pnpm check` 通过；`pnpm test:unit` **60 文件/512 测试**；`pnpm test` **66 文件/537 测试**；`pnpm test:process` **17 文件/84 场景**；`nix flake check --offline`（package/unit/package-smoke/module-eval ×4）通过；`nix build --offline .#default` 与 `nix run --offline .#default -- --version`（`nokoribi-agent 0.1.0`）通过。真实平台/目标机项（V16–V22）仍待执行，不进入 flake。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站（含 `kind/reply/actions`），可配置 `capabilities`、`canDeliver`、`health`、一次性/永久失败；M7 集成用双 driver 验证 per-turn 路由与通知回退。
@@ -41,6 +52,9 @@ M10 落点（已实现，2026-10-29）：`packages/shell-bash/test/` 覆盖 `She
 - **fake terminal spawn（M10 已实现）**：向 `BashTerminalBackend` 注入的 `spawnTerminal` stub，记录 argv/cwd/env 并返回可控 `SubprocessTerminalHandle`；用于 backend/launch/pin 单测，不需要真实 PTY。
 - **fake PTY（M10 已实现）**：真实 `dsh-subprocess-local` PTY 仅用于本地进程测试（`tests/process/m10-terminal.test.ts`）；flake unit 与无 PTY 环境不跑。
 - **fake web provider（M10 已实现，进程层）**：本地 fake DeepSeek Messages 搜索 HTTP（`tests/process/support/fake-web-search.ts`）与 non-public fetch 用例；用于 web 工具注册/豁免/阻断断言，禁止真实网络。未单独为 `ctx.web` 写单元 fake provider 包。
+- **fake MCP stdio server（M13 已实现）**：零依赖 JSON-RPC 2.0 stdio 进程（`tests/process/support/fake-mcp.ts`），覆盖 initialize/tools/list/tools/call；用于 `mcp__<server>__<tool>` 桥接与 reviewer 审查断言。
+- **fake OpenViking server（M17 已实现）**：零依赖 HTTP server（`tests/process/support/fake-openviking.ts`），覆盖 `/health`、sessions、system-status、fs-ls/content-read、skills、`/api/v1/search/*`、`sessions/*/messages|commit`；用于无 server 启动与 recall/capture 断言。
+- **fake attachment service（M14）**：`tests/integration/{m2,m7,m8,m9}.test.ts` 向 channel-core 的 `attachments` 静态注入提供 fake（图片保存/文件流）；进程测试用真实 `dsh-attachment-local`。
 - **临时 DSH_HOME**：每个测试用独立目录，结束后清理；保证并发测试隔离。
 - **测试 kit**：如 DSH 提供的 `dsh-agent-loop-testkit` 可用则复用；否则自建最小 harness。
 
@@ -67,7 +81,14 @@ M10 落点（已实现，2026-10-29）：`packages/shell-bash/test/` 覆盖 `She
 | action/按钮（M9 已实现） | broker action 生成/handle、token 生命周期、service action 路由、outbox actions 透传 | QQ C2C keyboard body/群聊剥离、interaction 归一化/ack、local-test action 注入 | 审批按钮端到端、文本 fallback、超时/重启失效、intent 降级 |
 | terminal-host（M10 已实现） | per-host backend 注册/注销、launch 规格（argv/cwd/env）、release 幂等/pin、封装 handle 清理、fake spawnTerminal | local 真实 PTY（open/send/read/list/close、状态持久、`/clear`、disabled、SIGTERM）、sandbox launch/pin 单测 | daemon 清理顺序、`/clear`/goal archive/重启无残留；owner 隔离由上游 registry |
 | web（M10 已实现） | tool 注册/参数校验、provider pin/切换（配置层）、错误码、截断、`exemptTools` schema | fake 搜索 HTTP + fake LLM：web 不审、bash 仍审、空列表恢复全审、非公网 fetch 阻断 | 真实搜索/抓取/API provider（手工门禁 G4–G6）、网络失败降级 |
-| NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12 / 12.13） |
+| session search（M11 已实现） | 工具注册/配置、FTS 派生索引路径与 openAt | 真实 sqlite 跨会话检索、停用分支、workspace 授权 | 历史会话 sentinel 命中 + 索引文件/无索引断言（进程测试） |
+| skill（M12 已实现） | 目录发现/frontmatter/catalog 渲染、`/name` 透传 | durable catalog、`skill` 工具加载、`<skill_content>` 注入、停用 | bundled 根 + `NOKORIBI_SKILL_*`（进程测试） |
+| MCP client（M13 已实现） | 配置/命名（`mcp__<server>__<tool>`）、env 间接 | fake stdio MCP server 工具发现/调用 + reviewer 审查 | daemon patch 插入 client 行（进程测试） |
+| message media（M14 已实现） | 图片 → attachment → image block、files/actionKind outbox、QQ 下载/上传、local-test 端点 | local-test/QQ fake 图片入站、`send_to_user` 文件 e2e | 进程：模型 request image block、文件字节一致；真实平台 V16 手工 |
+| question buttons（M15 已实现） | broker 单选 action/token/结算/fallback、QQ keyboard/门禁 | action 回调与文本 fallback 双向结算 | local-test action 进程测试；真实平台 V17 手工 |
+| memory inject（M16 已实现） | pinned/snapshot 渲染/预算/footer、inject 刷新/失效/mainOnly | fake LLM 下快照出现/隔离/关闭、/status full 字段 | 跨轮/重启/停用本地记忆（进程测试） |
+| OpenViking（M17 已实现） | launcher bundle/env 映射、无 server 降级 | fake server recall/capture、本地 memory 互斥 | 不可达 + fake server 两场景；真实 server V18 手工 |
+| NixOS module | option schema/eval | overlay 生成快照（含 mcp 动态行） | 手工（12.12 / 12.13 / M11–M17 项） |
 
 ## 13.4 关键场景
 
@@ -83,13 +104,20 @@ M10 落点（已实现，2026-10-29）：`packages/shell-bash/test/` 覆盖 `She
 10. **QQ 按钮审批（M9 已实现）**：fake reviewer deny → 审批提示（C2C 带 keyboard）→ fake WS 推 `INTERACTION_CREATE` type=11 → PUT ack → broker 结算 → 工具执行/拒绝；文本回复路径回归；超时/daemon 重启后点击旧按钮提示失效；群聊提示不带 keyboard；`approvalButtons=false` 或 intent 受限时降级文本。
 11. **持久终端（M10 已实现）**：local host `terminal_open` → `terminal_send` 改变 cwd/env → 后续 `terminal_send`/`terminal_list` 看到持久状态 → `terminal_close` 清理进程树；`/clear`、daemon SIGTERM 前 terminals 关闭且 sandbox `disposeSession` 不因 pin 失败（进程测试已覆盖）；goal child 归档与 main/child owner 隔离由上游 owner scope + goal 清理接线保证（未单列进程场景）。
 12. **Web 工具（M10 已实现）**：fake 搜索 HTTP 下 `web_search` 合并 query/上限、`web_fetch` 非公网 URL 返回 blocked；`web_search`/`web_fetch` 不触发 fake reviewer，`bash` 仍触发；`NOKORIBI_REVIEW_EXEMPT_TOOLS=""` 恢复全审（已覆盖）。真实 provider 的缺 key/歧义/截断错误由上游行为；真实搜索与公网抓取走手工门禁（G4–G6）。
+13. **会话检索（M11 已实现）**：先建一条含唯一 sentinel 的主会话 → `/clear` → 新会话让模型调用 `session_search` → 命中旧会话并把工具结果带入后续请求；`NOKORIBI_SESSION_SEARCH_ENABLED=false` 时不暴露工具且不建 FTS 索引。
+14. **技能（M12 已实现）**：bundled 技能出现在 durable catalog → `skill` 工具加载全文；`/skill-name` 用户消息经未知斜杠透传注入 `<skill_content>`；`NOKORIBI_SKILL_ENABLED=false` 时无 catalog/工具。
+15. **MCP（M13 已实现）**：测试 patch 插入 `mcp__fake__echo` client 行 → fake stdio JSON-RPC server → 模型调用工具 → 结果回传且 reviewer 观察到审查（daemon-ready 与 MCP discovery 有 100–300ms 竞态，测试用消息轮询等待工具出现）。
+16. **消息媒体（M14 已实现）**：local-test/QQ 入站图片 → session JSONL/模型请求出现 image block（无法保存时降级纯文本）；`send_to_user` 工作区文件 → local-test outbox 元数据 + `/v1/attachments/<id>` 字节与源文件一致。
+17. **提问按钮（M15 已实现）**：单选问题带 C2C keyboard → local-test 注入 action 回调 → `ask_user_question` 结算；数字文本 fallback 仍结算；群聊/多选保持文本。
+18. **记忆注入（M16 已实现）**：memory 工具写 pinned → 下一轮主会话请求出现快照且 `/status full` 显示 pinned/snapshotChars/inject；goal child 无快照；关闭/超预算/重启去重/停用本地记忆均覆盖。
+19. **OpenViking（M17 已实现）**：`NOKORIBI_OPENVIKING_ENABLED=true` + 不可达 endpoint → daemon ready、本地 memory 工具/提示词关闭、无崩溃；fake server 下 `/health`、recall 注入、capture 写入均观察。真实 server 与 NixOS 目标机走 V18/V19 手工门禁。
 
 ## 13.5 flake checks
 
 - `checks.<system>.package`：构建发行版（official Node runtime + 生产依赖）。
-- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加 SDK `./protocol` 从生产闭包导入、运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）；M10 增加 `dsh-terminal`/`dsh-terminal-bash`/`dsh-web`/`dsh-tool-web`/`@nokoribi/terminal-host` 从生产闭包导入断言。
+- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加 SDK `./protocol` 从生产闭包导入、运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）；M10 增加 `dsh-terminal`/`dsh-terminal-bash`/`dsh-web`/`dsh-tool-web`/`@nokoribi/terminal-host` 从生产闭包导入断言；**M11–M17** 增加 `share/skills/nokoribi-{deploy,debug}/SKILL.md` 存在、`dsh-tool-session-query`/`dsh-skill`/`dsh-skill-filesystem`/`dsh-tool-skill`/`dsh-mcp-client`/`dsh-mcp-resources` 与 launcher anchor 的 `@openviking/dsh-memory-plugin` 导入断言。
 - `checks.<system>.unit`：`pnpm build` + `pnpm test:unit`；只跑 `packages/*/test`（不含 `tests/integration`，后者在本地 `pnpm test` 运行；M7 起用 `vitest.unit.config.ts` 固定该边界；M10 的 real-PTY 进程测试不进 flake）。
-- `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`（M8 增加 `nokoribi-channel-qq-bot` 行与 `trustedChannels`；M10 增加 terminal/web/reviewer exempt 行与 `DEEPSEEK_SEARCH_BASE_URL` 断言，并新增 `module-eval-disabled` 断言 `terminal.enable=false`/`web.enable=false` 时相关行 `disabled` 且 local host 仍启用）。
+- `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`（M8 增加 `nokoribi-channel-qq-bot` 行与 `trustedChannels`；M10 增加 terminal/web/reviewer exempt 行与 `DEEPSEEK_SEARCH_BASE_URL` 断言，并新增 `module-eval-disabled` 断言 `terminal.enable=false`/`web.enable=false` 时相关行 `disabled` 且 local host 仍启用；**M11–M17** 增加 `module-eval-openviking`（启用/停用 env + endpoint 必填 + 本地 memory 开关）与 `module-eval-mcp-single`（`mcp.servers` 0/1/2 行矩阵），并断言 sessionSearch/skill/sendFile/QQ 新 config 与无字面密钥）。
 - 本地运行：`nix flake check`（当前系统）。NixOS VM 测试不做（D130）；12.12/12.13 手工清单仍必须执行。
 
 ## 13.6 日志
@@ -114,7 +142,7 @@ M10 落点（已实现，2026-10-29）：`packages/shell-bash/test/` 覆盖 `She
   - 每个 goal：短 id、phase、rounds、model、child 运行状态、sandbox generation/TTL/active；
   - 每个 sandbox：session、目录、存在性、generation、activity、`terminals=N`（活动持久终端数，M10）、TTL、临时包、最近使用；
   - active schedule：id/title/kind/scheduledAt/state；
-  - memory：active/archived/invalid/bytes；
+  - memory：active/archived/invalid/bytes；M16 增加 pinned、snapshotChars、inject=enabled|disabled（本地 memory 停用/OpenViking 后端时显示 disabled）；
   - 最近 10 条 warn/error（进程内存环形缓冲，不持久化，不含字段值）；
   - last restart reason/时间、lastVersion、workspace/state/lock/storage 路径；
   - reviewer 两档与超时；DSH/app 版本。

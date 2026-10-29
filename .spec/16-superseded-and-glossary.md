@@ -28,6 +28,10 @@
 | M8 的“按钮审批后置” | D166/D167：M9 在 C2C 审批落地按钮（契约 D163 不变；2026-10-29 代码完成，真实门禁待执行） | 平台内联键盘 + interaction 回调已具备，core 补生产者/解释器即可 |
 | D143 M5 不做 memory 自动注入 | D172–D174：M16 增加 pinned 快照自动注入（runtime context、每轮最多刷新一次、仅主会话） | 单主会话长期存在，需要跨会话记住用户偏好；快照机制不影响静态 system prompt/缓存；主动检索与“不做每轮自动检索”保留 |
 | D172 本地记忆不引入外部 provider | D175：OpenViking 作为可选后端（默认关闭；启用即停用本地 memory 组件；只保留连接配置，server 不打包；前置 M12 Skill + M13 MCP） | 用户确认可单独接入、单独配置；本地仍是默认实现，外部后端在 M17 排期 |
+| D155 图片/附件链路后置 V8 | D180：M14 落地入站图片 + 出站文件（2026-10-30 代码完成；真实 QQ 平台附件门禁待执行） | 用户把富媒体双向链路纳入 M14；入站走 attachment store → 模型 image block，出站走 `send_to_user` + QQ 富媒体 |
+| M9 的“`ask_user_question` 选项按钮后置” | D181：M15 落地单选提问选项按钮（2026-10-30 代码完成；真实平台门禁待执行） | M9 action/token 基础设施可复用；多选/自定义仍文本，群聊按钮仍后置 |
+| D143 的“memory 自动注入后移”实现状态 | D182：M16 已实现 pinned 快照 runtime context 自动注入（2026-10-30） | 设计 D172–D174 已确认；实现口径 D182 |
+| 12.15“规划中的选项（M16/M17，未实现）” | 12.15 M11–M17 新增选项（2026-10-30 已实现） | M16/M17 选项随实现落地，见 [12.15](12-nixos-deployment.md) |
 
 ## 16.2 被否决的方案（未采用，但讨论过）
 
@@ -53,7 +57,8 @@
 - 控制台/fake 作为产品渠道（最终只做本地测试通道用于验收）。
 - 流式输出/编辑消息（用户未选；v1 不做）。
 - M9 用平台卡片模板/自定义 Markdown 卡片替代内联键盘按钮（只用通用 `OutboundAction` + 内联键盘；卡片模板不复用）。
-- M9 群聊按钮与 `ask_user_question` 选项按钮（M9 只做 C2C 审批按钮；其余后置）。
+- M9 群聊按钮与 `ask_user_question` 选项按钮：审批按钮只做 C2C；**提问按钮已由 M15 落地（单选/C2C，2026-10-30 代码完成）**，群聊按钮仍后置。
+- M14 自研图片管线（附件字节直接塞进模型请求）：改为复用 DSH attachment store + llm 图片投影，不重复实现大小/格式/文本降级逻辑。
 - M9 的“始终允许”按钮（DSH `ApprovalOutcome` 无持久 grant，不做）。
 - M10 直接 vendoring `dsh-terminal-bash`（默认用公开导出 `BashTerminalBackend` 注入；仅失败时回退 vendoring）。
 - M10 用 DSH 权限沙箱（`ctx.sandbox`/workspace-write）承载持久终端（与 M2/M3 的“不使用 DSH 权限沙箱”冲突，不采用）。
@@ -187,6 +192,21 @@
 | terminal launch（M10） | host provider 新增的 PTY 启动规格（argv/cwd/env/release）；registry 暴露 `terminalLaunch()` |
 | terminal pin（M10） | sandbox 内有持久终端时阻止 TTL 回收/reset/dispose 的引用计数；PTY 退出/关闭释放 |
 | exemptTools（M10） | vendored auto-review 的工具名豁免列表；默认 `web_search`/`web_fetch`（D170） |
+| session-search index（M11） | session-query-sqlite 的 FTS5 派生索引（`$DSH_HOME/session-search.db`）；只读历史检索，可重建，不与 session 源库混用 |
+| session_search（M11） | 上游 `dsh-tool-session-query` 的 5 个只读工具族（search/event_search/trace/event_trace/event_read）；workspace 授权 = cwd 全等、排除调用者会话 |
+| bundled skill（M12） | 发行版 `share/skills` 下的只读 SKILL.md 技能（本仓库 `nokoribi-deploy`/`nokoribi-debug`）；`$DSH_HOME/skills` 与 `skill.customDirs` 是其他根 |
+| skill catalog（M12） | `dsh-tool-skill` 注入的 durable `<available_skills>` 消息；模型按名调用 `skill` 工具加载正文 |
+| slash passthrough（M12） | channel-core 对未注册斜杠命令不再回复“未知命令”，按普通用户消息投递给 agent（支持 `/skill-name`） |
+| MCP client row（M13） | Nix `mcp.servers` 每项生成的一行 `dsh-mcp-client`（id `mcp-<name>`）；工具名 `mcp__<server>__<tool>`，仍逐次 Auto review |
+| MCP env indirection（M13） | overlay 里 `env`/`headers` 的值只写环境变量名，渲染为 `!!js process.env.NAME`；密钥走 EnvironmentFile/agenix |
+| InboundMessage.images（M14） | driver 下载/解码后的 `{mime,data}` 数组；channel-core 存入 attachment store 后作为 image content block 注入主会话 |
+| send_to_user（M14） | agent 主动发送文本/文件的工具（M14 起支持 path → attachment → outbox files）；常规回复仍走自动镜像 |
+| outbox files（M14） | `OutboundContent.files`/outbox 条目持久化的 `FileAttachmentRef[]`；文件以独立空文本条目投递，deferred 不带附件 |
+| question button（M15） | `ask_user_question` 单选选项的 callback action；QQ C2C keyboard 渲染，点击结算问题，文本 fallback 保留 |
+| pinned snapshot（M16） | 主会话每轮冻结注入的 runtime context（`nokoribi:memory`）：pinned + `type:person`/`type:preference`，有字符/条数预算与“数据非指令”声明 |
+| pin / unpin（M16） | memory 工具新增 action；pin 后条目进入下一轮快照，unpin 后退出 |
+| OpenViking backend（M17） | 可选外部记忆后端（`@openviking/dsh-memory-plugin` 作为 profile bundle）；启用即停用本地 memory，server 外部部署，只保留连接配置 |
+| OPENVIKING_STATE_DIR（M17） | 插件本地状态（去重/降级缓存/待写队列）目录；NixOS 默认 `$DSH_HOME/openviking-state` |
 | defaultChatId（driver） | driver 在无入站上下文时可寻址的 chat，用于通知的 active-capable 回退 |
 | trusted channel | channel-core 跳过静态 allowlist、由 driver 自行保证准入的渠道（M8：`qq-bot`） |
 | ingress | 入站处理管线（allowlist/去重/命令/注入） |

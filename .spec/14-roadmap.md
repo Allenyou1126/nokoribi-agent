@@ -402,21 +402,21 @@
 - 手工验收清单（12.12）执行并记录结果。
 - M9/M10 是 v1 后增强，不改变上述 v1 完成定义；其验收标准分别见 [18.6](18-qq-button-approval.md) 与 [19.5](19-persistent-terminal-and-web.md)。
 
-## 14.15 下一阶段里程碑（规划，2026-10-29 确认）
+## 14.15 下一阶段里程碑（M11–M17 代码完成，2026-10-30）
 
-> 状态：**规划已确认（D176），代码未实现**。本节记录 M11–M17 的目标、依赖、范围与验收口径；每个里程碑启动时先写决策/规格再实现，并按 AGENTS.md 回写本文与相关文档。M16 的本地记忆设计见 [09.5](09-prompt-and-memory.md) 自动注入（D172–D174）；M17 的 OpenViking 后端见 [D175](03-decision-log.md)。M11–M17 均为 v1 后增强，不改变 [14.14](14-roadmap.md) 的 v1 完成定义。
+> 状态：**M11–M17 代码完成（2026-10-30），真实平台/目标机门禁待执行**（QQ 图片/文件上传、提问按钮真实平台、真实 OpenViking server、NixOS 目标机；各里程碑只可标“代码完成”）。本节记录 M11–M17 的目标、依赖、范围、验收口径与实现记录；每个里程碑的完整规格见 [20](20-session-search.md)–[25](25-openviking-backend.md)（M16 见 [09.5](09-prompt-and-memory.md)）。实现口径见 [D177–D183](03-decision-log.md)。M11–M17 均为 v1 后增强，不改变 [14.14](14-roadmap.md) 的 v1 完成定义。
 
 **当前顺序（2026-10-29 调整）**：M11 → M12 → M13 → M14 → M15 → M16 → M17。**记忆与 OpenViking 放在最后**（M16/M17）；M17 固定晚于 M12（Skill）与 M13（MCP）；其余里程碑可在启动前按优先级调整（D176）。
 
 | # | 里程碑 | 目标 | 依赖 | 状态 |
 |---|---|---|---|---|
-| M11 | 会话检索 | `session_search` / `session_read`，复用 `ctx.sessionQuery`（sqlite FTS） | 无（`session-query` 行已挂载） | 待实现 |
-| M12 | Skill 技能系统 | `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`；本地 skills 目录与 Nix 打包 | 无 | 待实现 |
-| M13 | MCP 客户端 | `dsh-mcp-client` + `dsh-mcp-resources`；Nix `mcp.servers` | 无 | 待实现 |
-| M14 | 消息图片 | 入站附件 → 模型图片；出站附件/富媒体与发送工具 | V8 模型视觉、QQ 门禁 #14 | 待实现（分两阶段） |
-| M15 | 提问按钮 | `ask_user_question` 选项按钮（core action + QQ C2C keyboard + 文本 fallback） | M9 action 基础设施、QQ 门禁 #15–#20 | 待实现 |
-| M16 | 记忆本地自动注入 | pinned 快照 + runtime context 注入 + `pin`/`unpin` + 配置/观测/测试 | 无 | 待实现 |
-| M17 | OpenViking 可选后端 | 开关 + 连接配置；启用即停用本地记忆，OpenViking 接管 | M12 + M13 | 待实现 |
+| M11 | 会话检索 | `session_search` 等 5 个只读工具（上游 `dsh-tool-session-query`）+ `ctx.sessionQuery` FTS5 派生索引 | 无 | 代码完成 |
+| M12 | Skill 技能系统 | `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`；本地 skills 目录与 Nix 打包 | 无 | 代码完成 |
+| M13 | MCP 客户端 | `dsh-mcp-client` + `dsh-mcp-resources`；Nix `mcp.servers` | 无 | 代码完成（HTTP fake 变体在 22 记录） |
+| M14 | 消息图片 | 入站附件 → 模型图片；出站附件/富媒体与发送工具 | V8 模型视觉、QQ 门禁 #14 | 代码完成（真实平台门禁待执行） |
+| M15 | 提问按钮 | `ask_user_question` 选项按钮（core action + QQ C2C keyboard + 文本 fallback） | M9 action 基础设施、QQ 门禁 #15–#20 | 代码完成（真实平台门禁待执行） |
+| M16 | 记忆本地自动注入 | pinned 快照 + runtime context 注入 + `pin`/`unpin` + 配置/观测/测试 | 无 | 代码完成 |
+| M17 | OpenViking 可选后端 | 开关 + 连接配置；启用即停用本地记忆，OpenViking 接管 | M12 + M13 | 代码完成（真实 server spike 待执行） |
 
 ### M11 会话检索
 
@@ -474,3 +474,18 @@
 - **前置**：M12 Skill 与 M13 MCP（插件 peer：`dsh-skill`/`dsh-skill-filesystem`/`dsh-mcp-client`）；插件已验证兼容 DSH `0.2.1-rc.3`。
 - **验收**：module-eval（启用时本地行 disabled、`memory.openviking.*` 连接 env 注入、校验必填）；无 server 启动不崩；fake server recall/capture/commit 测试；真实 server spike（外部部署，embedding + VLM provider）记录召回/延迟/降级；许可与部署边界写入文档。
 - **风险**：额外 provider/密钥面；记忆数据出界；AGPL server 部署责任；插件版本/API 漂移；启用后无本地 fallback（需文档明确）。
+
+### M11–M17 实现记录（2026-10-30）
+
+> 口径：M11–M17 **代码完成**（本地自动化门禁待最终整合验证），真实平台/目标机门禁未执行；实现细节见各规格，口径决策见 [D177–D183](03-decision-log.md)，测试记录见 [13.1](13-testing-and-ops.md)。
+
+- **M11 会话检索**：bundle `session-query` 打开 FTS5 派生索引 `$DSH_HOME/session-search.db`（`openAt=first-search`，停用为 `never`），新增 `tool-session-query` 行挂载上游 `@deepseek-ai/dsh-tool-session-query`（5 个只读工具、`maxSearchResults=100`、`searchTimeoutMs=30000`）；`NOKORIBI_SESSION_SEARCH_*` 开发开关与 Nix `sessionSearch.*`；精确读取服务保留；检索工具仍过 Auto review；`nokoribi:safety` 声明历史内容为不可信数据。规格 [20](20-session-search.md)。
+- **M12 Skill**：挂载 `dsh-skill`/`dsh-skill-filesystem`/`dsh-tool-skill`，技能根 = 打包只读 `share/skills`（内置 `nokoribi-deploy`/`nokoribi-debug`）+ `$DSH_HOME/skills` + `skill.customDirs`；`skill.enable=false` 三行停用；channel-core 未知斜杠命令改为透传，支持 `/skill-name` 用户显式调用；Nix 打包 `skills/` 与 `$out/share/skills` 断言。规格 [21](21-skills.md)。
+- **M13 MCP**：`mcp-resources` 常挂；Nix `mcp.servers` 每 server 生成 `mcp-<name>` client 行（stdio/streamable-http、env/header 值只写环境变量名、超时/重连/启动降级）；工具名 `mcp__<server>__<tool>` 仍逐次 Auto review；零依赖 fake MCP stdio 进程测试 + module-eval 0/1/2 server 断言。规格 [22](22-mcp-clients.md)。
+- **M14 消息图片**：入站 driver 下载/解码 → `InboundMessage.images` → core `ctx.attachments.saveImages` → `[text, image…]` content blocks（失败降级纯文本）；QQ 下载有 http(s)/大小/超时限制与失败提示；出站新增 `send_to_user` 工具（32MiB 上限）+ `OutboundContent.files` 持久化，文件以独立 outbox 条目排在最后文本之后（每平台消息独立 replySeq/重试身份；偏差已记录）；QQ C2C 富媒体上传（`msg_type=7`），群聊文本降级；local-test 暴露元数据 + `GET /v1/attachments/<id>`。规格 [23](23-message-images.md)。真实平台附件门禁待执行。
+- **M15 提问按钮**：单选 1–10 选项生成 callback action（token 绑定 interaction+question、label ≤10），点击经 `handleAction` 结算/推进批次，多选/自定义/超限保持文本；QQ 仅 C2C + `questionButtons` 门禁；ack/intent 语义沿用 M9；broker/service/QQ/进程测试覆盖按钮与文本 fallback。规格 [24](24-question-buttons.md)。真实平台门禁沿用 M9 #15–#20 并新增提问按钮事实。
+- **M16 记忆自动注入**：`pinned` frontmatter + `pin`/`unpin` + write `pinned`；快照渲染（pinned + `type:person`/`type:preference`，3000 字符/20 条预算、超预算 footer、单行 ≤300、数据非指令声明）；`nokoribi:memory` runtime context（`required:true`）+ `agent/pre-step` 每轮冻结刷新 + 目录 stat freshness + 写入失效；仅主 root agent；`memory.inject.*` Nix 与 `/status full` pinned/snapshotChars/inject；context 关闭时不注册。规格 [09.5](09-prompt-and-memory.md)。
+- **M17 OpenViking**：launcher 按 `NOKORIBI_OPENVIKING_ENABLED` 追加 `@openviking/dsh-memory-plugin@0.5.31` bundle 并归一 `OPENVIKING_*` 连接 env、强制本地 memory 关闭、插件 bundle 缺失时启动失败；`memory.openviking.*` Nix 选项 + systemd env + `OPENVIKING_STATE_DIR`；无 server 启动不崩 + fake server recall/capture 进程测试；真实 server spike 与本地 entries 迁移仅文档。规格 [25](25-openviking-backend.md)。
+- **依赖**：新增 `dsh-tool-session-query`/`dsh-skill`/`dsh-skill-filesystem`/`dsh-tool-skill`/`dsh-mcp-client`/`dsh-mcp-resources` 与 `@openviking/dsh-memory-plugin@0.5.31`（launcher 依赖含显式 DSH peer）；lock 与 `nix/deps.nix` FOD 哈希更新；`skills/` 进发行版 `share/skills`。
+- **最终本地门禁（2026-10-30）**：`pnpm check` 通过；`pnpm test:unit` **60 文件/512 测试**；`pnpm test` **66 文件/537 测试**；`pnpm test:process` **17 文件/84 场景**（新增 M11 2、M12 3、M13 1、M14 4、M15 2、M16 6、M17 2）；`nix flake check --offline`（package/unit/package-smoke/module-eval、module-eval-disabled、module-eval-openviking、module-eval-mcp-single）通过；`nix build --offline .#default` 与 `nix run --offline .#default -- --version`（`nokoribi-agent 0.1.0`）通过。测试记录见 [13.1](13-testing-and-ops.md)。
+- **未完成（不阻塞“代码完成”）**：QQ 真实平台图片/文件/提问按钮门禁（V16/V17）、真实 OpenViking server spike（V18）、NixOS 目标机部署复测（V19）、V20 真实视觉模型调用、V21 MCP streamable-http fake/真实 server、V22 FTS 规模延迟；M13 streamable-http fake 变体在 22 记录。

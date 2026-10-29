@@ -47,6 +47,7 @@ nokoribi-agent/
 ├─ vendor/profile-boot/       # 上游启动逻辑副本 + LICENSE + 版本标识
 ├─ nix/                       # flake、package、NixOS module
 ├─ templates/                 # AGENTS.md 全局/工作区种子、SOUL.md 占位
+├─ skills/                    # M12：内置只读技能（nokoribi-deploy / nokoribi-debug）
 ├─ tests/                     # 跨包集成与进程级恢复测试
 ├─ SOUL.md                    # 用户提供的人设文本（源码仓库、Nix 打包）
 ├─ README.md
@@ -97,16 +98,16 @@ nokoribi-agent/
 - `dsh-commands`、`dsh-command-compact`。
 - `dsh-compaction-basic`、`dsh-compaction-tool-result-pruner`、`dsh-token-meter`。
 - `dsh-goal`、`dsh-tool-goal`、`dsh-goal-round-driver`（不挂 `dsh-command-goal`，`/goal` 由我们实现）。
-- `dsh-session-query-sqlite`（`openAt:"never"`，只为 `ctx.subagents.listChildren`）。
+- `dsh-session-query-sqlite`（M1–M10 `openAt:"never"` 只为 `ctx.subagents.listChildren`；**M11 起**打开 FTS5 派生索引供 `dsh-tool-session-query` 检索，停用时回到 `never`）。
 - `dsh-schedule`。
 - `dsh-subagent`、`dsh-subagent-spawn-in-process`、`dsh-tool-subagent`、`dsh-tool-subagent-control`。rc.3 没有可用的独立 report 包；汇报用 `send_message` + `subagent/end` 结算。
 - `dsh-permission-presets`、`dsh-working-directory`、patched `experimental-auto-review`。
 - `dsh-tool-todo`、`dsh-tool-present`（present 用于交付物；是否启用可在配置层覆盖）。
 - `dsh-attachment`（能力/类型包）+ `dsh-attachment-local`（存储 provider）；M1 不启用入站图片。
-- `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`（技能能力保留，v1 不重点使用）。
+- `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`（M12 已挂载，技能能力保留；见 21）。
 - `dsh-spill-local` + `dsh-spill-policy`、`dsh-session-checkpoint-policy`、`dsh-tool-call-timeout-policy`（实际名）、`dsh-repeat-tool-reminder` 等辅助行。
 - `dsh-scope`、`dsh-atomic-write` 是库而不是可加载行；作为编译期/运行期依赖保留。
-- 可选：`dsh-mcp-client`（v1 不纳入，后续可加）。
+- `dsh-mcp-resources`（M13 常挂，无 server 零成本）+ 每个 `mcp.servers` 动态生成一行 `dsh-mcp-client`（见 22）。
 - **M10 已实现**：`dsh-web` + `dsh-tool-web` + `dsh-web-search-deepseek` + `dsh-web-fetch-http` + `dsh-web-deepseek-api`（双 provider 挂载、默认 pin `deepseek-official`/`http`）；`dsh-terminal` + `dsh-tool-terminal` + `dsh-terminal-bash`（仅类导入）+ `dsh-sandbox-policy`（`danger-full-access`，只作为 backend 前置策略服务）。
 
 ### 自研行
@@ -149,6 +150,12 @@ nokoribi-agent/
 - **M6 新增/调整**：没有新增 bundle 行；host/channel 增加 `enabled` 配置，`agent-app` 增加 `goalDefaultMaxRounds`；Nix overlay 覆盖已有稳定行 id。运行时新增 `SystemdNotifier` 与 `NOKORIBI_LOG_LEVEL`。
 - **M9 新增/调整（已实现）**：不新增上游行；`channel-core` 增加 action 生产/路由，`channel-qq-bot` 能力位与 `approvalButtons` 配置，`channel-local-test` 支持 inbound action；bundle 行 config 与 NixOS `channel.qqBot.approvalButtons` 同步。
 - **M10 新增行（已实现）**：`web`、`web-search-deepseek`、`web-fetch-http`、`web-deepseek-api`、`tool-web`；`terminal`、`tool-terminal`、`sandbox-policy`；自研 `nokoribi-terminal-host`。`dsh-terminal-bash` 不加载为行（只用其导出的 `BashTerminalBackend` 类）。
+- **M11 新增/调整（已实现）**：`session-query` 打开 FTS5 派生索引（`$DSH_HOME/session-search.db`，`openAt=first-search`/`never`）；新行 `tool-session-query`（`@deepseek-ai/dsh-tool-session-query`，5 个只读工具）。见 20。
+- **M12 新增行（已实现）**：`skill`、`skill-filesystem`（`bundledSkillDir` = 发行版 `share/skills`，`customSkillDirs`/`$DSH_HOME/skills` 默认根）、`tool-skill`；`skills/` 目录进发行版。见 21。
+- **M13 新增行（已实现）**：`mcp-resources` 常挂；Nix `mcp.servers` 每项生成 `mcp-<name>` 的 `dsh-mcp-client` 行（stdio/streamable-http）。见 22。
+- **M14/M15（已实现）**：不新增上游行；`channel-core` 增加 attachment 注入/图片 content block、`OutboundContent.files`/`actionKind`、问题选项 action；`channel-qq-bot` 增加 inboundImages/富媒体上传/questionButtons；`channel-local-test` 支持图片注入、附件下载端点与 action；`agent-app` 新增 `send_to_user` 工具。见 23/24。
+- **M16（已实现）**：`nokoribi-memory` 行增加 `inject.*` 配置并在插件内注册 `nokoribi:memory` runtime context；`nokoribi-prompt` 增加 `memorySection`。见 09.5。
+- **M17（已实现）**：不新增 bundle 行；launcher 按 `NOKORIBI_OPENVIKING_ENABLED` 追加 `@openviking/dsh-memory-plugin` bundle 层，本地 memory 行/prompt 段/curator 由 `NOKORIBI_MEMORY_ENABLED=false` 停用。见 25。
 
 ## 4.5 薄启动器
 
