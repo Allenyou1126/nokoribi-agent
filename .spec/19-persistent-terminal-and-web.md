@@ -1,6 +1,6 @@
 # 19 持久终端与 Web（M10）
 
-> 状态：**代码完成（2026-10-29），真实门禁待执行**。本文是 M10 的实施规格：host-aware 持久终端（`terminal_*`）与 Web Search/Fetch。排期见 D165，终端/Web/豁免/依赖决策见 D168–D171（[03](03-decision-log.md)）；M9（QQ 按钮审批）不在本文范围。实现记录与偏差见 19.11；G1–G7 门禁记录见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。标“已核实”的是对照 rc.3 包元数据/源码/本次实现确认的事实；标“设计选择”的是本规格取舍。实现前标注 🧪 的项已按 rc.3 实际签名/默认值复核，结论回写在 19.2.2 与 19.10；真实平台门禁（sandbox PTY、真实 API、目标机）仍未执行。
+> 状态：**代码完成（2026-10-29），G2/G3/G4/G6 目标机用户态通过，G5 与 systemd 12.14 验收待执行**。本文是 M10 的实施规格：host-aware 持久终端（`terminal_*`）与 Web Search/Fetch。排期见 D165，终端/Web/豁免/依赖决策见 D168–D171（[03](03-decision-log.md)）；M9（QQ 按钮审批）不在本文范围。实现记录与偏差见 19.11；G1–G7 门禁记录见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。标“已核实”的是对照 rc.3 包元数据/源码/本次实现确认的事实；标“设计选择”的是本规格取舍。实现前标注 🧪 的项已按 rc.3 实际签名/默认值复核，结论回写在 19.2.2 与 19.10；目标机用户态验证见 19.6 与 fact-gate。
 
 ## 19.1 需求与范围
 
@@ -14,7 +14,7 @@
 
 **非目标**：跨 daemon 重启的终端持久（不引 tmux/screen/dtach，不做 attach/detach）；默认 vendoring `dsh-terminal-bash`（优先注入 `spawnTerminal`，失败才回退，19.8）；DSH 权限沙箱（`dsh-sandbox-policy` 只作解析前置，`mode=danger-full-access`，D31/D34/[07.11](07-shell-hosts-and-sandbox.md)）；SSH host 终端（D149→D165 顺延）；终端 UI/Web 前端/浏览器渲染/登录态抓取；不改变 `bash(host)` “每次新进程”语义。
 
-**完成定义**：`pnpm check`/`pnpm test`/`pnpm test:process`/`nix flake check` 通过；19.5 自动化场景与 19.6 可执行门禁通过，其余门禁（真实 API/sandbox/NixOS PTY）记录在 [.spec/notes/m10-fact-gate.md](notes/m10-fact-gate.md)。**当前状态**：应用测试层（`pnpm test:unit`/`pnpm test`/`pnpm test:process`）、`pnpm check`、`nix flake check`、`nix build .#default` 与 `nix run --version` 均已通过（2026-10-29 最终门禁，19.11），G1/G7 自动化门禁通过；G2–G6 真实平台/目标机门禁仍未执行——因此 M10 只能标“代码完成”，不能标“验收通过”。
+**完成定义**：`pnpm check`/`pnpm test`/`pnpm test:process`/`nix flake check` 通过；19.5 自动化场景与 19.6 可执行门禁通过，其余门禁（真实 API/sandbox/NixOS PTY）记录在 [.spec/notes/m10-fact-gate.md](notes/m10-fact-gate.md)。**当前状态**：应用测试层（`pnpm test:unit`/`pnpm test`/`pnpm test:process`）、`pnpm check`、`nix flake check`、`nix build .#default` 与 `nix run --version` 均已通过（2026-10-29 最终门禁，19.11），G1/G7 自动化门禁通过；G2/G3/G4/G6 已在 hkg-dog-darell 用户态临时环境通过，G5 与 systemd 12.14 完整目标机验收仍未执行——因此 M10 只能标“代码完成/目标机用户态已验证”，不能标“完整验收通过”。
 
 ## 19.2 现状与差距
 
@@ -72,7 +72,7 @@ PTY 原语（精确签名已核实）：`ctx.subprocess.spawnTerminal(spec: Subp
 | 无 Web | 双 provider + 工具 + pin | 19.4.1–19.4.2 |
 | reviewer 无豁免 | `exemptTools` + vendor patch + 配置 | 19.4.3 |
 
-> 上述差距均已在实现中关闭（代码完成，2026-10-29）：见 19.3–19.5 与 19.11；真实平台/目标机门禁仍待执行（19.6）。
+> 上述差距均已在实现中关闭（代码完成，2026-10-29）：见 19.3–19.5 与 19.11；目标机用户态 G2/G3/G4/G6 已通过，G5 与 systemd 12.14 仍待执行（19.6）。
 
 ## 19.3 终端设计
 
@@ -294,29 +294,29 @@ flake unit（`pnpm test:unit`，只跑 `packages/*/test`）**不放真实 PTY �
 
 1. local 终端 `cd /tmp && export A=1` 后新 send 仍保留状态，`terminal_list` 可见。**（进程测试已覆盖）**
 2. main 与 goal child 终端互不可见；child 归档/`/clear` 时被清理。**（`/clear`/SIGTERM 路径进程覆盖；owner 隔离由上游 `ctx.terminals` 精确 owner 校验；goal 归档路径已接入 `killTerminalsForSession`，未单列进程场景）**
-3. sandbox 终端打开时 TTL 不回收、`reset` 被拒；关闭全部终端后 reset 成功且 generation+1。**（单测覆盖 pin/TTL/reset 逻辑；真实 Nix buildEnv 下待 G3）**
+3. sandbox 终端打开时 TTL 不回收、`reset` 被拒；关闭全部终端后 reset 成功且 generation+1。**（单测覆盖 pin/TTL/reset 逻辑；G3 目标机基础 sandbox PTY 已通过，reset/packages 互锁未在目标机重复）**
 4. `/clear`：旧终端关闭 → `disposeSession` 成功，不出现 `pins>0` 错误。**（进程测试已覆盖）**
-5. `terminal.enable=false`（Nix overlay/dev env）：`bash(host)` 正常、终端工具不存在、提示词不误导。**（进程测试覆盖模型侧；Nix module-eval-disabled 断言行 disabled；目标机待 G2）**
+5. `terminal.enable=false`（Nix overlay/dev env）：`bash(host)` 正常、终端工具不存在、提示词不误导。**（进程测试覆盖模型侧；Nix module-eval-disabled 断言行 disabled；目标机默认启用，未在目标机重复 disabled 场景）**
 6. Web 默认 pin 命中 `deepseek-official`/`http`；切换 `deepseek-search-api` 生效；缺 provider/未 pin 报明确错误。**（默认 pin 由 bundle/Nix module-eval 断言；切换与真实 API 待 G5；歧义/缺 provider 错误由上游行为，未专门构造本地用例）**
 7. `web_search` 不产生 reviewer 请求（fake LLM 记录），`bash` 仍产生；`NOKORIBI_REVIEW_EXEMPT_TOOLS=""` 恢复全审查。**（进程测试已覆盖，G7）**
 8. `terminal_send` 被 reviewer 拒绝时终端不执行（send 返回拒绝）。**（未单列自动化；`terminal_send` 与其他工具走同一 `tools/pre-execute` 审查路径，待补一个 fake reviewer 用例）**
 
 ### 19.5.3 验收命令
 
-`pnpm check`、`pnpm test`、`pnpm test:unit`、`pnpm test:process`、`nix flake check`；Nix module-eval 新增断言（terminal/web 行存在、enable=false 时 `disabled`、reviewer `exemptTools` 默认值、`DEEPSEEK_SEARCH_BASE_URL`）；`.spec/notes/m10-fact-gate.md` 记录真实门禁。**当前**：`pnpm test*`、`pnpm check`、`nix flake check`、`nix build` 已通过；G2–G6 待目标机/真实网络执行，不能据此宣称 M10 验收完成。
+`pnpm check`、`pnpm test`、`pnpm test:unit`、`pnpm test:process`、`nix flake check`；Nix module-eval 新增断言（terminal/web 行存在、enable=false 时 `disabled`、reviewer `exemptTools` 默认值、`DEEPSEEK_SEARCH_BASE_URL`）；`.spec/notes/m10-fact-gate.md` 记录真实门禁。**当前**：`pnpm test*`、`pnpm check`、`nix flake check`、`nix build` 已通过；G2/G3/G4/G6 已在目标机用户态通过，G5 与 systemd 12.14 仍待执行，不能据此宣称完整 M10 验收完成。
 
 ## 19.6 平台与环境门禁
 
-> 记录与命令见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。M10 只能标“代码完成”；G2–G6 未执行前不得写“验收通过”。
+> 记录与命令见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。M10 标“代码完成 + 目标机用户态 G2/G3/G4/G6 通过”；G5 与 systemd 12.14 未执行前不得写“完整验收通过”。
 
 | # | 门禁 | 为什么 | 状态（2026-10-29） |
 |---|---|---|---|
 | G1 | 开发机 bash PTY（open/send/read/close） | 真实 `spawnTerminal` 路径 | **自动化通过**：`pnpm test:process` 的 `tests/process/m10-terminal.test.ts` 4/4 通过（本次观察） |
-| G2 | NixOS 目标机 PTY（systemd 用户会话、`/proc`、信号） | 部署环境不同；D148 后 subprocess scope 敏感 | ⏳ **待执行**（需 NixOS 目标机；当前开发机 Arch） |
-| G3 | sandbox 终端（Nix buildEnv+setpriv+临时包） | `nix shell` 下 PTY 的 argv/env 与 no_new_privs | ⏳ **待执行**（需绝对 Nix buildEnv/setpriv；单测已覆盖 argv 与 pin 互锁） |
-| G4 | 真实 DeepSeek 搜索（默认 provider） | Messages API 搜索行为与计费 | ⏳ **待执行**（需 `DEEPSEEK_API_KEY` + 网络；fake HTTP 不算） |
-| G5 | `deepseek-search-api`/`deepseek-fetch-api` 真实调用 | 切换路径的凭据/响应 | ⏳ **待执行**（需 API key；provider id/基址已核实） |
-| G6 | `http` fetch 真实公网抓取与 SSRF 拒绝 | 网络出口与 provider 限制 | ⏳ **待执行**（真实公网；自动化已有非公网负例） |
+| G2 | NixOS 目标机 PTY（systemd 用户会话、`/proc`、信号） | 部署环境不同；D148 后 subprocess scope 敏感 | **用户态通过（2026-10-29 hkg-dog-darell）**：local PTY 回复 `PTY:/tmp:ok`，`/clear` 无 cleanup 错误；setsid 用户进程，systemd unit/重启未测 |
+| G3 | sandbox 终端（Nix buildEnv+setpriv+临时包） | `nix shell` 下 PTY 的 argv/env 与 no_new_privs | **基础通过（2026-10-29）**：sandbox PTY 输出 `SB:<sandbox dir>`、uid 1001、sudo 被 guard 拒绝；reset/packages 互锁仍由单测覆盖 |
+| G4 | 真实 DeepSeek 搜索（默认 provider） | Messages API 搜索行为与计费 | **通过（2026-10-29）**：真实搜索返回 nixos.org/distrowatch.com source |
+| G5 | `deepseek-search-api`/`deepseek-fetch-api` 真实调用 | 切换路径的凭据/响应 | ⏳ **待执行**（本次未切换 provider；provider id/基址已核实） |
+| G6 | `http` fetch 真实公网抓取与 SSRF 拒绝 | 网络出口与 provider 限制 | **基础通过（2026-10-29）**：example.com HTTP 200；localhost 返回 non-public 错误；重定向/大小上限未独立构造 |
 | G7 | 豁免后的 reviewer 回归 | 防止误豁免非 web 工具 | **自动化通过**：`tests/process/m10-web.test.ts` 2/2（web 不审、bash 仍审、空列表恢复全审） |
 
 ## 19.7 实现阶段与文件级清单
@@ -392,7 +392,7 @@ flake unit（`pnpm test:unit`，只跑 `packages/*/test`）**不放真实 PTY �
 
 ## 19.11 实现记录（2026-10-29）
 
-> 状态：**代码完成（2026-10-29），真实门禁待执行**。自动化应用测试、`pnpm check`、`nix flake check`、`nix build` 已通过；G1/G7 门禁通过；G2–G6 待目标机/真实网络执行。不得写“M10 验收通过”。
+> 状态：**代码完成（2026-10-29），G2/G3/G4/G6 目标机用户态通过，G5 与 systemd 12.14 待执行**。自动化应用测试、`pnpm check`、`nix flake check`、`nix build` 已通过；G1/G7 门禁通过。不得写“完整 M10 验收通过”。
 
 ### 交付
 
@@ -426,6 +426,6 @@ flake unit（`pnpm test:unit`，只跑 `packages/*/test`）**不放真实 PTY �
 
 ### 门禁与未完成
 
-- G1（开发机真实 PTY）、G7（reviewer 豁免回归）由自动化通过；G2（NixOS PTY）、G3（sandbox 终端）、G4（真实搜索）、G5（DeepSeek Search/Fetch API）、G6（真实公网抓取）**待执行**，记录与命令见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。
+- G1（开发机真实 PTY）、G7（reviewer 豁免回归）由自动化通过；G2（NixOS 用户态 PTY）、G3（sandbox 终端）、G4（真实搜索）、G6（真实公网抓取 + SSRF 负例）已在 hkg-dog-darell 用户态通过；G5（DeepSeek Search/Fetch API 切换）与 systemd 12.14 完整目标机验收**待执行**，记录见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。
 - `pnpm check`/`nix flake check`/`nix build` 已通过（2026-10-29 最终门禁）；本记录仍不宣称真实平台验收完成。
 - 已知待补：`terminal_send` 被 reviewer 拒绝的专用进程用例；goal 归档终端清理的进程级用例；真实 Nix buildEnv 下 sandbox PTY。
