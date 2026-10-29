@@ -51,6 +51,7 @@ export function normalizeSandboxStatus(
         idleTtlMs: number(record["idleTtlMs"]),
         activeCommands: number(record["activeCommands"]),
         backgroundCommands: number(record["backgroundCommands"]),
+        terminalSessions: number(record["terminalSessions"]),
     };
 }
 
@@ -78,6 +79,7 @@ function formatSandbox(sandbox: FullSandboxStatus): string {
         `gen=${String(sandbox.generation)} exists=${String(sandbox.exists)} ` +
         `active=${String(sandbox.activeCommands)} ` +
         `background=${String(sandbox.backgroundCommands)} ` +
+        `terminals=${String(sandbox.terminalSessions)} ` +
         `ttl=${String(sandbox.idleTtlMs)} ` +
         `packages=${sandbox.packages.join(",") || "(none)"} ` +
         `lastUsed=${sandbox.lastUsedAt ?? "-"}`

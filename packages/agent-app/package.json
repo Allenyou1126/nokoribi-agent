@@ -34,6 +34,7 @@
         "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.3",
         "@deepseek-ai/dsh-subagent": "0.2.1-rc.3",
         "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
+        "@deepseek-ai/dsh-terminal": "0.2.1-rc.3",
         "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
         "@deepseek-ai/schemastery": "3.18.5",
         "@nokoribi/channel-core": "workspace:*",

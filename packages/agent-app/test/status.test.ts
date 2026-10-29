@@ -36,6 +36,7 @@ const details: FullStatusDetails = {
                 idleTtlMs: 1000,
                 activeCommands: 0,
                 backgroundCommands: 1,
+                terminalSessions: 1,
             }),
         },
     ],
@@ -48,7 +49,18 @@ const details: FullStatusDetails = {
             state: "scheduled",
         },
     ],
-    sandboxes: [],
+    sandboxes: [
+        normalizeSandboxStatus("sandbox:default", "main-1", {
+            dir: "/sb-main",
+            exists: true,
+            generation: 1,
+            packages: [],
+            idleTtlMs: 2000,
+            activeCommands: 1,
+            backgroundCommands: 0,
+            terminalSessions: 2,
+        }),
+    ],
     memory: {
         activeEntries: 3,
         archivedEntries: 1,
@@ -78,6 +90,9 @@ describe("full status", () => {
         );
         expect(text).toContain("goal-a1b phase=active rounds=2/9");
         expect(text).toContain("sandbox=gen=2");
+        expect(text).toContain(
+            "background=0 terminals=2 ttl=2000 packages=(none)"
+        );
         expect(text).toContain("[after] 喝水");
         expect(text).toContain("probe careful");
         expect(text).toContain("reviewer: fast=p/fast strong=p/strong");
@@ -101,6 +116,7 @@ describe("full status", () => {
                     idleTtlMs: 0,
                     activeCommands: 0,
                     backgroundCommands: 0,
+                    terminalSessions: 0,
                     error: "boom",
                 },
             ],
@@ -125,6 +141,7 @@ describe("full status", () => {
             idleTtlMs: 0,
             activeCommands: 0,
             backgroundCommands: 0,
+            terminalSessions: 0,
         });
     });
 });

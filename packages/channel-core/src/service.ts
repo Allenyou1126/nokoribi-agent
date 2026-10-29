@@ -122,6 +122,8 @@ export interface FullSandboxStatus {
     readonly idleTtlMs: number;
     readonly activeCommands: number;
     readonly backgroundCommands: number;
+    /** Open persistent terminal sessions pinning the sandbox instance. */
+    readonly terminalSessions: number;
     readonly error?: string;
 }
 

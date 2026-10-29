@@ -25,6 +25,7 @@ import {
 import type {} from "@nokoribi/shell-bash";
 
 import { contentText } from "../replies.js";
+import { killTerminalsForSession } from "../terminal-cleanup.js";
 import { GoalArchive, type GoalArchiveRecord } from "./archive.js";
 import { GOAL_HELP, type GoalCommand } from "./commands.js";
 import { formatModelRoute } from "./model.js";
@@ -898,6 +899,11 @@ export class GoalManager {
     }
 
     private async disposeSandbox(sessionId: string): Promise<string> {
+        // Owner terminals must close before the sandbox instance is disposed;
+        // cleanup is bounded and only warns, so archiving still proceeds.
+        await killTerminalsForSession(this.ctx, sessionId, {
+            logger: this.config.logger,
+        });
         try {
             await this.ctx.shellHosts.disposeSession(sessionId);
             return "";

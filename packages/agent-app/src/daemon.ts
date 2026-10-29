@@ -58,6 +58,7 @@ import { MemoryCurator } from "./memory/curator.js";
 import { assistantText, planTurnEnd } from "./replies.js";
 import type {} from "./session-bridge.js";
 import { formatFullStatus, normalizeSandboxStatus } from "./status.js";
+import { killTerminalsForAgent } from "./terminal-cleanup.js";
 
 /** Resolved agent-app configuration. */
 export interface AgentAppConfig {
@@ -288,6 +289,13 @@ export class Daemon {
                     error: errorMessage(error),
                 });
             }
+        }
+        if (agent !== undefined) {
+            // Terminals are cleaned after the final flush and before the lock
+            // is released; the helper bounds its own wait and only warns.
+            await killTerminalsForAgent(this.ctx, agent, {
+                logger: this.logger,
+            });
         }
         try {
             if (this.state !== undefined) {
@@ -690,6 +698,7 @@ export class Daemon {
                         idleTtlMs: 0,
                         activeCommands: 0,
                         backgroundCommands: 0,
+                        terminalSessions: 0,
                         error: errorMessage(error),
                     });
                 }
@@ -859,6 +868,11 @@ export class Daemon {
         await this.ctx.channels.abortInteractions("clear");
         old.agent.cancel({ kind: "user" });
         await this.ctx.sessions.flush(old.agent.session);
+        // Owner-scoped terminals must close before the previous agent and its
+        // sandbox are disposed; the helper bounds its own wait and only warns.
+        await killTerminalsForAgent(this.ctx, old.agent, {
+            logger: this.logger,
+        });
         await this.goals.clearAll();
         this.curator.clear();
         const removedSchedules =
