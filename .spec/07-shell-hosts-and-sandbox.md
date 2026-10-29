@@ -1,6 +1,8 @@
 # 07 Shell Hosts 与 Sandbox
 
 > **M3 实现状态（2026-10-25）**：`shellHosts`、`shell-router`、`bash(host)`、`get_available_shell_host`、`local:workspace`、`sandbox:default`、TTL/reset/status、`sandbox_packages`、`no_new_privs` 与 hosts 提示词已实现；默认 host 为 `sandbox:default`。实现细节与偏差见 7.12。
+>
+> **M10 实现状态（2026-10-29，代码完成、真实门禁待执行）**：host 协议增加 `terminal` 能力位与 `terminalLaunch()`、registry `onChange()`；local/sandbox 终端 launch 与 sandbox terminal pin/互锁/`terminalSessions` 已实现；持久终端见 7.13 与 [19](19-persistent-terminal-and-web.md)，门禁见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。
 
 ## 7.1 背景与结论
 
@@ -42,12 +44,14 @@ interface ShellHostProvider {
     background: boolean;
     sandbox: false;                    // DSH 权限沙箱语义；v1 host 均 false
     workdir: 'local' | 'remote';
+    terminal: boolean;                 // M10：是否可启动持久终端（与 terminal() 存在性一致）
   };
   resolve(request: HostExecRequest): HostExecSpec;   // 默认 cwd/timeout/输出上限
   run(spec: HostExecSpec, signal?: AbortSignal): Promise<ShellRunResult>;
   start?(spec: HostExecSpec): ShellProcess;          // background
   reset?(): Promise<void>;                           // sandbox 专用
   status?(): Promise<unknown>;
+  terminal?(request: ShellTerminalLaunchRequest): Promise<ShellTerminalLaunch>;  // M10
 }
 ```
 
@@ -55,7 +59,7 @@ interface ShellHostProvider {
 - 启动顺序：host provider 插件先加载，router 后加载或延迟解析；`bash` 工具调用时按 id 查找。
 - 默认 host 由 profile 配置（`sandbox:default`）。
 - M3 实现：provider 不单独暴露 `resolve`；`run`/`start` 由 host 构造自己的 argv/env，并通过 `ctx.shellHosts.spawnBash` 复用 router 的 bash 机制。`background: true` 的 provider 必须实现 `start`。
-- **M10 规划**：provider 增加可选 `terminal?(request) => Promise<ShellTerminalLaunch>`（argv/cwd/env/可选 release）与 registry `terminalLaunch()`；发现工具增加 `terminal: boolean` 能力位。持久终端仍走 host 路由，不绕过 host provider。详见 7.13 与 [19](19-persistent-terminal-and-web.md)。
+- **M10 已实现**：provider 增加可选 `terminal?(request) => Promise<ShellTerminalLaunch>`（argv/cwd/env/可选 release）；registry 增加 `terminalLaunch(hostId, request)` 与 `onChange(listener)`；发现工具增加 `terminal: boolean` 能力位（按实际注册的 terminal backend 计算，见 7.4）。持久终端仍走 host 路由，不绕过 host provider。详见 7.13 与 [19](19-persistent-terminal-and-web.md)。
 
 ## 7.3 `bash` 工具
 
@@ -99,7 +103,7 @@ bash(
 }
 ```
 
-- `terminal` 是 **M10 规划**字段：该 host 是否支持 host-aware 持久终端（`terminal_open({type:"<host id>"})`）。
+- `terminal` 是 **M10 已实现**字段：该 host 当前是否真的可启动 host-aware 持久终端（`terminal_open({type:"<host id>"})`）。`apply()` 用 `ctx.terminals.listBackends()` 判断，而不是只看 provider 的静态 `capabilities.terminal`——部署停用 terminal 行时即使 provider 声明 true 也输出 false。
 
 - 同时提供 service API（`ctx.shellHosts.list()`），便于其他插件/测试使用。
 - 输出保持短小，避免每轮注入大段说明；工具描述由系统提示词的 hosts 段补充。
@@ -154,9 +158,9 @@ bash(
 ### 生命周期与控制
 
 - 首次使用时惰性创建；`sandbox` 工具：
-  - `status`：generation、临时目录、已加包、创建/最近使用时间、TTL；
-  - `reset`：销毁临时目录并重建，清空临时包；有后台任务时拒绝 reset。
-- TTL：空闲 30 分钟（可配，D46）自动回收（回收 upper/临时目录、清空包、generation+1）；回收前若有后台任务则跳过并在下一轮检查。
+  - `status`：generation、临时目录、已加包、创建/最近使用时间、TTL、活动持久终端数（M10 `terminalSessions`）；
+  - `reset`：销毁临时目录并重建，清空临时包；有后台任务**或有活动持久终端（M10 `pins>0`）**时拒绝 reset 并提示先关闭。
+- TTL：空闲 30 分钟（可配，D46）自动回收（回收 upper/临时目录、清空包、generation+1）；回收前若有后台任务**或活动持久终端（M10 `pins>0`）**则跳过并在下一轮检查。
 - 进程重启：sandbox 目录落盘；TTL 按 lastUsed 恢复；重启后仍在 TTL 内则复用，否则回收。
 - M3 实现：metadata 放在 `$DSH_HOME/sandboxes/<sessionId>.json`（generation/packages/createdAt/lastUsedAt），目录为 `$DSH_HOME/sandboxes/<sessionId>/`；按 session 串行化 ensure/reset/start，避免竞态；损坏的 sidecar 备份为 `.corrupt-*` 后重建。
 - `/clear`、goal 归档：删除对应 session 的 sandbox 目录（见 05/10）。
@@ -245,9 +249,9 @@ sandbox 是"干净/可重置环境"，**不是安全隔离边界**：同用户�
 - sandbox 不是强制隔离（D48）：同用户绝对路径仍可访问；PATH guard 只是可用性保护，`no_new_privs` 才是提权兜底。
 - TTL 回收/重置会清空临时目录与临时包；重要产物必须写回 workspace。
 
-## 7.13 M10 规划：host-aware 持久终端
+## 7.13 M10 实现记录：host-aware 持久终端（2026-10-29）
 
-> 状态：**规划已确认（2026-10-27），代码未实现**；完整规格见 [19](19-persistent-terminal-and-web.md)，决策 D168/D171。
+> 状态：**代码完成（2026-10-29），真实门禁待执行**；完整规格见 [19](19-persistent-terminal-and-web.md)，实现记录见 19.11，决策 D168/D171，门禁见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。
 
 ### 定位
 
@@ -255,59 +259,56 @@ sandbox 是"干净/可重置环境"，**不是安全隔离边界**：同用户�
 - 两者共用同一 host 路由与信任边界：`bash` 继续负责一次性/后台 job/沙箱命令；`terminal_*` 负责 REPL、调试器、长驻交互；提示词明确分工，不合并工具。
 - 终端只在**进程内**持久：daemon 重启、`/clear`、agent 释放即关闭；跨重启恢复（tmux 等）后置。
 
-### host 协议扩展
+### host 协议扩展（已实现，`packages/shell-bash/src/hosts.ts`）
 
 ```ts
-interface ShellTerminalLaunch {
-  argv: readonly string[];
-  cwd: string;
-  env?: Readonly<Record<string, string>>;
-  release?: () => void | Promise<void>;   // PTY 退出/关闭时调用（sandbox pin 释放）
+export interface ShellTerminalLaunchRequest {
+  readonly sessionId?: string;   // sandbox 必填；local 可省略
+  readonly cwd?: string;
+  readonly signal?: AbortSignal;
 }
-
-interface ShellHostProvider {
-  // ...既有 run/start/reset/status/disposeSession
-  terminal?(request: {
-    sessionId?: string;
-    cwd?: string;
-    signal?: AbortSignal;
-  }): Promise<ShellTerminalLaunch>;
+export interface ShellTerminalLaunch {
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly release?: () => void | Promise<void>;   // PTY 退出/关闭时调用（sandbox pin 释放）
 }
+export const TERMINAL_BASH_ARGS = ["--noprofile", "--norc", "-i"];
 ```
 
-- registry 增加 `terminalLaunch(hostId, request)`；`get_available_shell_host` 输出增加 `terminal` 能力位。
-- 模型通过 `terminal_open({ type: "<host id>" })` 选择 host（上游工具 schema 不变，`type` 即 host id）。
+- `ShellHostCapabilities` 增 `terminal: boolean`（双向校验：true 必须有 `terminal()`，有 `terminal()` 必须声明 true）；`ShellHostProvider` 增可选 `terminal?(request)`；`ShellHostRegistry` 增 `terminalLaunch(hostId, request)` 与 `onChange(listener)`。
+- 模型通过 `terminal_open({ type: "<host id>" })` 选择 host（上游 schema 中 `type` 必填，`type` 即 host id）。
+- `get_available_shell_host` 输出 `terminal: boolean`，按 `ctx.terminals.listBackends()` 实际 backend 计算（停用终端行时显示 false）；`nokoribi:hosts` 段仅在有 backend 时追加终端指引。
 
-### 复用上游的方式（D168）
+### 复用上游的方式（D168，未触发 vendoring）
 
-- 原样复用 `@deepseek-ai/dsh-terminal`（`ctx.terminals` 服务/owner 隔离/清理）与 `@deepseek-ai/dsh-tool-terminal`（6 个 `terminal_*` 工具、后台 send、结果截断）。
-- 使用 `@deepseek-ai/dsh-terminal-bash` 公开导出的 `BashTerminalBackend`：按已注册 host 各创建一个实例（`type`=host id），构造时注入 `spawnTerminal`，在其中调用 `ctx.shellHosts.terminalLaunch()` 取启动规格，再交给 `ctx.subprocess.spawnTerminal` 起真 PTY。PTY 就绪探测、scrollback、信号、清理仍由上游 `LocalPtySession` 承担。
-- 需要挂载 `@deepseek-ai/dsh-sandbox-policy`（`mode: danger-full-access`）：`BashTerminalBackend.spawn()` 会解析并校验该策略；本仓库不使用 DSH 权限沙箱，实际沙箱语义由 host provider 决定。
-- 若施工证明注入点不足，回退为 vendoring `dsh-terminal-bash` 并记录新决策（D168）。
+- 原样复用 `@deepseek-ai/dsh-terminal`（`ctx.terminals` 服务/owner 隔离/清理）与 `@deepseek-ai/dsh-tool-terminal`（6 个 `terminal_*` 工具、后台 send、结果截断；自带 `tool:pty` 段保留）。
+- 使用 `@deepseek-ai/dsh-terminal-bash` 公开导出的 `BashTerminalBackend`：按已注册 terminal-capable host 各创建一个实例（`backendType`=host id），构造时注入 `spawnTerminal`；注入内用 `AsyncLocalStorage<TerminalBackendSpawnSpec>` 取当前 owner/session（上游 `spawnTerminal(spec)` 参数里没有 owner），再 `ctx.shellHosts.terminalLaunch()` 取 host 启动规格，交给 `ctx.subprocess.spawnTerminal` 起真 PTY。就绪探测、scrollback、信号、清理仍由上游 `LocalPtySession` 承担。
+- 需要挂载 `@deepseek-ai/dsh-sandbox-policy`（`mode: danger-full-access`）：`BashTerminalBackend.spawn()` 仍会调用 `ensureSandboxModeFence`/`sandboxPolicy.resolve()`/`spawnArgv()`；本仓库不使用 DSH 权限沙箱，实际沙箱语义由 host provider 决定。
+- rc.3 运行时只导出 `BashTerminalBackend/Config` 等，不导出 `resolveConfig/validateConfig` → 配置默认值由我们自己物化（19.3.2）。**注入面够用，未回退 vendoring。**
 
-### local host launch
+### local host launch（已实现）
 
-- `argv = [bashPath, "--noprofile", "--norc", "-i"]`（`bashPath` 可配，NixOS 上指向 buildEnv/bash；默认 `bash`）。
-- `cwd = request.cwd ?? workspace`；`env.PATH = extraPackages + ambient PATH`（与 `bash(host)` 的 local 规则一致）。
-- 无 pin；PTY 会话 owner 释放即关闭。
+- `argv = [terminalBashPath, "--noprofile", "--norc", "-i"]`（local host provider 配置 `terminalBashPath`，默认 `bash`；bundle/Nix 从 `terminal.bashPath` 写入）。
+- `cwd`：绝对路径原样；相对路径相对配置 workspace；省略时 workspace。
+- `env.PATH = extraPackages + ambient PATH`（与 `bash(host)` 的 local 规则一致）；无 pin；PTY 会话 owner 释放即关闭。
 
-### sandbox host launch 与生命周期
+### sandbox host launch 与生命周期（已实现）
 
-- 创建/复用该 session 的 sandbox 实例（复用 M3 的 ensure 逻辑，含 sidecar 与 TTL 元数据）。
-- 新增 **terminal pin**：`terminalLaunch` 时 pin+1，`release` 时 pin-1 并 touch lastUsed；PTY 退出/关闭必须释放。
-- TTL sweep 跳过 pin>0 的 sandbox；`sandbox` 工具的 `reset` 在 pin>0 时明确拒绝（提示先关闭终端）；`disposeSession`（`/clear`、goal archive、daemon 退出）前由 `agent-app` 先显式关闭该 agent 的 terminals 再删除目录。
-- 启动 argv：无临时包时 `setpriv --no-new-privs -- <hostBash> --noprofile --norc -i`；有临时包时加 `nix shell <base> <packages> --command ...` 层；`env.PATH = <sandbox guard>:<baseEnvironment>/bin`，并注入既有 `DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR`。
-- `cwd` 固定为 sandbox 临时目录：工具传入的 workspace 路径无法在 sandbox 视图中解析，默认忽略并在提示词中说明（需要 workspace 文件时先 `cp`）。sandbox `status` 增加活动终端计数。
-- 与 `bash(host)` 一致：sandbox 内不能 sudo；终端启动的交互 shell 仍受 `no_new_privs` 约束。
+- 创建/复用该 session 的 sandbox 实例（复用 M3 的 ensure 逻辑，含 sidecar 与 TTL 元数据）；`request.sessionId` 必填。
+- **terminal pin**：`terminalLaunch` 成功后 `pins += 1`，幂等 `release` 在锁内 `pins -= 1` 并 touch lastUsed；`spawnTerminal` 失败由注入包装立即 release。
+- TTL sweep 跳过 `pins>0` 的 sandbox；`sandbox reset` 在 `pins>0` 时明确拒绝（提示先关闭终端）；`disposeSession` 在 `pins>0` 时报错拒绝；`/clear`/goal archive/daemon 退出前由 `agent-app` 先显式关闭 terminals 再删除目录（19.3.7）。
+- 启动 argv（`buildSandboxTerminalArgv`）：无临时包 `setpriv --no-new-privs -- <hostBash> --noprofile --norc -i`；有临时包加 `nix shell <base> <packages> --command ...` 层；`env.PATH = <sandbox guard>:<baseEnvironment>/bin`，注入 `DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR`。
+- `cwd` 固定为 sandbox 实例目录：请求的 workspace/cwd 被忽略（由 `nokoribi:pty` 说明“用 cp/rsync 搬运”）；`sandbox status`/`/status full` 增加活动终端计数 `terminalSessions`/`terminals=N`。
+- 与 `bash(host)` 一致：sandbox 内不能 sudo；交互 shell 仍受 `no_new_privs` 约束。
 
-### 提示词与配置
+### 提示词与配置（已实现）
 
-- 新增 `nokoribi:pty` 段（建议 order 3100，位于 `nokoribi:hosts` 3000 之后）：`terminal_*` 仅用于持久交互；`type`=host id；sandbox 终端 cwd 规则；进程内持久；有界工作优先 `bash`；关闭不再需要的会话。
-- 配置（env/NixOS `terminal.*`，规划）：`enable`（默认 true）、`bashPath`（默认 `bash`）、`maxResultBytes`、`sendTimeoutSeconds`、`rows`/`cols`、`scrollbackLines`；持久终端工具默认启用但可关。
+- `nokoribi:pty` 段（order 3100，位于 `nokoribi:hosts` 3000 之后，由 `@nokoribi/terminal-host` 注册）：`terminal_*` 仅用于持久交互；`type`=host id（先 `get_available_shell_host`，只选 `terminal: true`）；sandbox 终端 cwd 规则；进程内持久；有界工作优先 `bash`；关闭不再需要的会话；禁用时输出“持久终端在本部署禁用。”。上游 `tool:pty` 段保留。
+- 配置（env/NixOS `terminal.*`）：`enable`（默认 true）、`bashPath`（默认 `bash`）、`sendTimeoutSeconds`（bundle `sendTimeoutMs`）、`rows`/`cols`、`scrollbackLines`；`maxResultBytes` 属 `dsh-tool-terminal` 行。Nix `terminal.enable=false` 停用 `sandbox-policy`/`terminal`/`nokoribi-terminal-host`/`nokoribi-tool-terminal` 四行，`bash(host)` 不受影响。
 
-### 风险
+### 验证与风险
 
-- 注入点非文档化（rc.3 固定；升级回归见 D171；失败回退 vendoring）。
-- sandbox PTY 与 TTL/reset/dispose 的生命周期竞争 → 用 pin + 显式关闭顺序兜底。
-- 终端输出可能很大（token 成本）；依赖上游 `maxResultBytes` 与提示词约束。
-- sandbox 终端依赖 Nix buildEnv，本地开发环境需用 local host 或标记门禁。
+- 自动化：`packages/terminal-host/test/` 5 文件/33 测试（fake `spawnTerminal`）、shell host/local/sandbox 单测、`tests/process/m10-terminal.test.ts` 真实 local PTY 4 场景；本次施工观察 `pnpm test:unit` 56 文件/438 测试、`pnpm test` 60 文件/458 测试、`pnpm test:process` 10 文件/64 场景通过。
+- 真实门禁：G1（开发机 PTY）自动化通过；G2（NixOS 目标机 PTY）、G3（sandbox 终端）待执行（[notes/m10-fact-gate.md](notes/m10-fact-gate.md)）。
+- 风险：注入点非文档化（rc.3 固定；升级回归见 D171；未来若破坏仍按 D168 vendoring）；sandbox PTY 与 TTL/reset/dispose 的生命周期竞争由 pin + 显式关闭顺序兜底；终端输出 token 成本依赖 `maxResultBytes` 与提示词约束。

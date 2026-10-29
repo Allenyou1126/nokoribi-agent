@@ -70,7 +70,7 @@ services.nokoribi-agent = {
     fast = { provider = null; model = null; reasoningEffort = ""; };
     strong = { provider = null; model = null; reasoningEffort = ""; };
     timeoutMs = 30000;
-    # M10 规划：Auto review 豁免的工具名；空列表=全量审查
+    # M10（已实现）：Auto review 豁免的工具名；空列表=全量审查
     exemptTools = [ "web_search" "web_fetch" ];
   };
 
@@ -139,7 +139,7 @@ services.nokoribi-agent = {
     reconnectMaxMs = 60000;
   };
 
-  # M10 规划：host-aware 持久终端（复用 DSH ctx.terminals + dsh-tool-terminal）
+  # M10（已实现）：host-aware 持久终端（复用 DSH ctx.terminals + dsh-tool-terminal）
   terminal = {
     enable = true;
     bashPath = "bash";               # NixOS 包装层 PATH 中的 bash，或绝对路径
@@ -150,7 +150,7 @@ services.nokoribi-agent = {
     scrollbackLines = 10000;
   };
 
-  # M10 规划：Web Search/Fetch（默认 Messages 搜索 + 匿名 HTTP 抓取）
+  # M10（已实现）：Web Search/Fetch（默认 Messages 搜索 + 匿名 HTTP 抓取）
   web = {
     enable = true;
     searchProvider = "deepseek-official";  # deepseek-official | deepseek-search-api
@@ -160,8 +160,7 @@ services.nokoribi-agent = {
     searchTimeoutSeconds = 30;
     fetchTimeoutSeconds = 30;
     fetchMaxOutputChars = 200000;
-    deepseekSearchBaseUrl = null;    # null -> DEEPSEEK_SEARCH_BASE_URL 或默认
-    deepseekApiBaseUrl = null;       # null -> Search/Fetch API 默认 https://api.deepseek.com/v1/tools
+    deepseekSearchBaseUrl = null;    # 非 null -> systemd DEEPSEEK_SEARCH_BASE_URL；null 不设置
   };
 
   prompt = {
@@ -201,10 +200,10 @@ services.nokoribi-agent = {
 - `hosts.local.enable`/`sandbox.enable` 会真正跳过 host 注册；默认 host 必须启用，否则 eval 断言失败。
 - `channel.localTest.enable = false` 且 `channel.qqBot.enable = false` 时服务没有用户消息入口（headless）；验收必须显式开启至少一个渠道。
 - `channel.qqBot.*` 是 M8 选项（见 [17](17-qq-official-bot.md) 17.6）：ClientSecret 只以环境变量名出现，值由 `environmentFile`/agenix 注入，不写入 store/overlay；启用时 module 给 channel-core 生成 `trustedChannels=["qq-bot"]` 与显式 `defaultChannelId`（localTest 启用时 `local-test`，否则空串回退首个 driver）。M8 不暴露 `sandbox`/`platformLimitsOnly`/driver 白名单；测试域名覆盖只放 bundle env（D164）。**M9 已实现**增加 `approvalButtons`（默认 true）：false 时按钮关闭且 driver 不订阅 `INTERACTION_CREATE` intent，文本审批照常；intent 不可用时 driver 自动降级并在 health detail 标记。
-- `terminal.*`（M10 规划）映射到 bundle 的 `terminal`/`tool-terminal`/`nokoribi-terminal-host` 行与上游 `BashTerminalBackend` 配置；`bashPath` 在 NixOS 上建议用 buildEnv 内的 bash（`/bin/bash` 不存在）。`sandbox` 终端受 `hosts.sandbox` 的 buildEnv/TTL 约束。
-- `web.*`（M10 规划）映射到 `web`/`web-search-deepseek`/`web-fetch-http`/`web-deepseek-api`/`tool-web` 行；复用 `DEEPSEEK_API_KEY`（`apiKeyEnv` 默认），不新增密钥；`searchProvider`/`fetchProvider` 必须显式 pin（多 provider 挂载时会歧义）。`review.exemptTools` 控制 Web 工具豁免（默认 `web_search`/`web_fetch`；空列表恢复全量审查）。
+- `terminal.*`（M10 已实现）映射到 bundle 的 `terminal`/`tool-terminal`/`nokoribi-terminal-host` 行与上游 `BashTerminalBackend` 配置；`bashPath` 同时写入 `nokoribi-terminal-host.bashPath` 与 `nokoribi-shell-host-local.terminalBashPath`（NixOS 上建议用 buildEnv 内的 bash，`/bin/bash` 不存在）；`sendTimeoutSeconds` 渲染为 `terminal-host.sendTimeoutMs`，`maxResultBytes` 落在 `tool-terminal` 行；`sandbox` 终端受 `hosts.sandbox` 的 buildEnv/TTL 约束。`terminal.enable=false` 时 overlay 停用 `sandbox-policy`/`terminal`/`nokoribi-terminal-host`/`nokoribi-tool-terminal` 四行，`bash(host)` 与 shell host 行保持启用，`module-eval-disabled` 断言。
+- `web.*`（M10 已实现）映射到 `web`/`web-search-deepseek`/`web-fetch-http`/`web-deepseek-api`/`tool-web` 行；复用 `DEEPSEEK_API_KEY`（provider `apiKeyEnv` 默认），不新增密钥；`searchProvider`/`fetchProvider` 显式 pin（多 provider 挂载时会歧义）；`deepseekSearchBaseUrl` 非 null 时注入 systemd `DEEPSEEK_SEARCH_BASE_URL`（仅 `deepseek-official` 搜索 provider；null 时不设置该 env）。**M10 没有 `web.deepseekApiBaseUrl` 选项**（`deepseek-search-api`/`deepseek-fetch-api` 使用上游默认基址）。`review.exemptTools` 控制 Auto review 豁免（默认 `web_search`/`web_fetch`；空列表恢复全量审查）。`web.enable=false` 时 overlay 停用上述 5 行。
 - `channel.qqBot` 引入官方 `@tencent-connect/qqbot-nodejs` 依赖（D154）：lockfile 变化后必须更新 `nix/deps.nix` 的 `fetchPnpmDeps` 哈希，否则 `nix build` 失败；`package-smoke` 需断言运行时 `WebSocket`/`fetch` 全局存在。
-- **M9/M10 依赖变化**（D171）：M9 不新增外部包；M10 新增 `dsh-web*`/`dsh-terminal*`/`dsh-sandbox-policy`/`dsh-tool-web` 等 `0.2.1-rc.3` 包，同样必须更新 lock 与 `nix/deps.nix` 哈希。M10 的 `dsh-terminal-bash` 只作为类导入，不加载为独立行。
+- **M9/M10 依赖变化**（D171）：M9 不新增外部包；M10 新增 `dsh-web*`/`dsh-terminal*`/`dsh-sandbox-policy`/`dsh-tool-web` 等 `0.2.1-rc.3` 包，lock 与 `nix/deps.nix` FOD 哈希已随实现更新（本次 `deps.nix` hash 已变）；`dsh-terminal-bash` 只作为类导入，不加载为独立行。
 - M8 不实现 driver 级 `allowedUsers/allowedGroups`（D152）；`platformLimitsOnly` 这个假选项已从 module 移除。
 - memory/schedule 行始终挂载；`memory.curator.enable` 只关闭 goal 终态提炼。`schedule.enable`、`models.subagents`、`hosts.ssh.enable` 不是 M6 选项（D146）。
 - `time.zone = null` 时使用系统时区；非 null 时同时写 time-context overlay 与 systemd `TZ`。
@@ -214,7 +213,7 @@ services.nokoribi-agent = {
 
 module 根据选项生成完整的 `cordis.patch.yml`（store 路径）：
 
-- 覆盖 bundle 中 `nokoribi-agent-app`、`nokoribi-reviewer`、`nokoribi-channel-core`、`nokoribi-channel-local-test`、`nokoribi-channel-qq-bot`（M8）、`nokoribi-prompt`、`nokoribi-shell-*`、`nokoribi-memory`、`nokoribi-terminal-host`（M10 规划）与（时区非 null 时）`time-context` 的完整 config；M10 另覆盖 `web`/`web-*`/`tool-web`/`terminal`/`tool-terminal`/`sandbox-policy` 行。
+- 覆盖 bundle 中 `nokoribi-agent-app`、`nokoribi-reviewer`、`nokoribi-channel-core`、`nokoribi-channel-local-test`、`nokoribi-channel-qq-bot`（M8）、`nokoribi-prompt`、`nokoribi-shell-*`、`nokoribi-memory`、`nokoribi-terminal-host`（M10）与（时区非 null 时）`time-context` 的完整 config；M10 另覆盖 `web`/`tool-web` 与（停用时）`web-*`/`terminal`/`tool-terminal`/`sandbox-policy` 行。
 - channel-core 行由 overlay 生成：`trustedChannels = lib.optional qqBot.enable "qq-bot"`；`defaultChannelId` 在 localTest 启用时为 `local-test`，否则空串（回退首个 driver）。
 - Cordis patch 是行 config 的替换而非深合并，因此 overlay 生成器必须写全该行字段。
 - 启动器启动时按 bundle patch → `NOKORIBI_PATCH` overlay 组合；没有运行时 override 文件。
@@ -402,9 +401,11 @@ age.secrets.nokoribi-agent-env = {
 
 > 主动推送能力官方已于 2025-04-21 下线；若是实测确认不可用，提醒/系统通知的降级行为按 D161 的记录验收（不得宣称“提醒可主动送达”）。
 
-## 12.14 M9/M10 验收（M9 代码完成，M10 未实现）
+## 12.14 M9/M10 验收（代码完成，真实验收待执行）
 
-> 状态：**M9 代码完成（2026-10-29）、真实平台待验收；M10 代码未实现**；验收细节见 [18.6](18-qq-button-approval.md)/[19.5](19-persistent-terminal-and-web.md)。
+> 状态：**M9/M10 代码完成（2026-10-29），真实平台/目标机验收待执行**；验收细节见 [18.6](18-qq-button-approval.md)/[19.5](19-persistent-terminal-and-web.md)；M10 门禁记录见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。M10 的 G1/G7 已由本地自动化通过，其余 G2–G6 与下列目标机清单未执行。
+>
+> 当前开发机为 Arch Linux，不能执行本节的 NixOS 目标机部分；结果需在目标 NixOS 主机执行并回写 [14.11](14-roadmap.md) 的 M10 记录与本文件。
 
 ### M9（QQ 按钮审批）
 
@@ -416,6 +417,8 @@ age.secrets.nokoribi-agent-env = {
 ### M10（持久终端 + Web）
 
 - 终端（目标机）：`terminal.enable = true`；在 `local:workspace` 打开终端 → `cd`/导出变量跨调用保留 → 关闭后进程树清理；在 `sandbox:default` 打开终端 → 运行 `pwd`/`bash --version` 验证 buildEnv PATH，sudo 失败；`sandbox reset` 在终端打开时被拒绝；`/clear`、goal 归档、`systemctl restart` 后无残留终端进程。
-- 终端（本地）：真实 PTY 由 `pnpm test:process`/集成测试覆盖（无需 NixOS）。
-- Web：设置 `DEEPSEEK_API_KEY` 后 `web_search`/`web_fetch` 各成功一次；`web_fetch` 对非公网 URL 返回 blocked；`/status full` 或日志确认 Web 工具未调用 reviewer；切换 `searchProvider = "deepseek-search-api"` 前先确认新版 Search/Fetch API 可用性（门禁）。
+- 终端（本地，已自动化）：真实 PTY 由 `pnpm test:process` 的 `tests/process/m10-terminal.test.ts` 覆盖（4 场景：状态持久、`/clear`、disabled、SIGTERM；本次施工观察通过，无需 NixOS）。
+- Web（本地，已自动化）：`tests/process/m10-web.test.ts` 用 fake DeepSeek 搜索 HTTP + fake LLM 覆盖 web 工具不触发 reviewer、`bash` 仍审查、非公网 fetch blocked、空豁免列表恢复全审（本次施工观察通过）；真实搜索/API 见下方门禁。
+- Web（目标机/真实凭据）：设置 `DEEPSEEK_API_KEY` 后 `web_search`/`web_fetch` 各成功一次；`web_fetch` 对非公网 URL 返回 blocked；切换 `searchProvider = "deepseek-search-api"`/`fetchProvider = "deepseek-fetch-api"` 前先确认 Search/Fetch API 可用性（G5）；`/status full` 只显示 reviewer 两档，不显示 `exemptTools`，豁免行为以 fake/reviewer 测试与配置审计为准。
 - 网络出口：目标机可直连 `api.deepseek.com`（以及搜索 API 基址）；无代理时按环境变量代理策略处理。
+- 门禁对照：G2（目标机 local PTY）、G3（sandbox 终端）、G4（真实搜索）、G5（API provider）、G6（真实公网抓取）见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)；通过前 12.14 只算“代码完成”。

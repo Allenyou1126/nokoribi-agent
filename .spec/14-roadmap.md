@@ -324,9 +324,9 @@
 - 已实现 core action 生成/解释、QQ C2C keyboard、`INTERACTION_CREATE` ack/归一化、intents 降级、`approvalButtons` 配置与 local-test action 注入；实现细节与澄清见 [18.11](18-qq-button-approval.md)。
 - 验证：`pnpm check`；`pnpm test` 54 文件/403 测试；`pnpm test:unit` 50 文件/383 测试；`pnpm test:process` 8 文件/58 场景；`nix flake check` 通过。真实平台 #15–#20 与 12.14 未执行，只能标“代码完成”。
 
-## 14.11 M10 host-aware 持久终端 + Web（规划已确认，代码未实现）
+## 14.11 M10 host-aware 持久终端 + Web（代码完成，真实门禁待执行）
 
-> 状态：**规划已确认（2026-10-27），代码未实现**。完整规格见 [19](19-persistent-terminal-and-web.md)；决策 [D168–D171](03-decision-log.md)。
+> 状态：**代码完成（2026-10-29），真实门禁与目标机验收待执行**。完整规格见 [19](19-persistent-terminal-and-web.md)；决策 [D168–D171](03-decision-log.md)；门禁记录见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)。G1（开发机真实 PTY）与 G7（reviewer 豁免回归）由自动化通过；G2–G6（NixOS PTY、sandbox 终端、真实搜索/API/抓取）待执行。**不能写“M10 验收通过”。**
 
 ### 交付物
 
@@ -343,7 +343,17 @@
 ### 依赖/风险
 
 - 依赖 M1–M3 基线；与 M9 无依赖，但建议先做终端方案 spike。
-- 风险：`BashTerminalBackend` 注入面非文档化（失败回退 vendoring）、sandbox PTY 与 TTL/reset 的生命周期竞争、NixOS 无 `/bin/bash`（host launch 用 buildEnv bash）、终端输出 token 成本、Web 豁免审查的残余风险。
+- 风险：`BashTerminalBackend` 注入面非文档化（失败回退 vendoring；实现期确认未触发）、sandbox PTY 与 TTL/reset 的生命周期竞争、NixOS 无 `/bin/bash`（host launch 用 buildEnv bash）、终端输出 token 成本、Web 豁免审查的残余风险。
+
+### M10 实现记录（2026-10-29）
+
+- 终端：新增 `packages/terminal-host`（per-host `BashTerminalBackend` + `AsyncLocalStorage` 传 owner + 注入 `spawnTerminal` 走 `ctx.shellHosts.terminalLaunch`）；`shell-bash` 增加 `TERMINAL_BASH_ARGS`/launch 协议/能力位/`onChange`/发现工具 `terminal` 字段；`local:workspace` 增加 `terminalBashPath` 与 launch；`sandbox:default` 增加 `pins`/`terminalLaunch`/`buildSandboxTerminalArgv`/互锁/`terminalSessions`；`agent-app` 增加 `terminal-cleanup.ts` 与 `/clear`/shutdown/goal 归档清理顺序；`nokoribi:pty` 段 order 3100（保留上游 `tool:pty`）；Nix `terminal.*` 与 overlay 停用行。
+- Web：bundle 5 行（`web`/两个默认 provider/`deepseek-api`/`tool-web`）+ 默认 pin `deepseek-official`/`http`；Nix `web.*`（`enable`/provider/上限/`deepseekSearchBaseUrl`）；`web_search`/`web_fetch` 结果带不可信提示；`.env.example`/launcher help 更新。
+- Reviewer：vendor 第 6 条补丁 `exemptTools`（hook 在 preset/accepting 之后、审查之前放行）；reviewer 配置默认 `[]`，bundle 默认 `web_search,web_fetch`，Nix `review.exemptTools` 默认同，空列表恢复全审。
+- 依赖/Nix：新增 9 个 `@deepseek-ai/*` rc.3 依赖（terminal/web/sandbox-policy/tool-*，`dsh-terminal-bash` 仅类导入）；`pnpm-lock.yaml` 与 `nix/deps.nix` FOD 哈希更新；`module-eval` + `module-eval-disabled` 新断言、package-smoke 新依赖 import 断言。
+- 验证（本次施工观察 2026-10-29）：`pnpm test:unit` 56 文件/438 测试、`pnpm test` 60 文件/458 测试、`pnpm test:process` 10 文件/64 场景通过（M10 新增 2 文件/6 场景：真实 local PTY 4 + fake 搜索 HTTP/reviewer 豁免 2）。`pnpm check`、`nix flake check`、`nix build .#default`、`nix run .#default -- --version` 均通过（2026-10-29 最终门禁）。
+- 偏差/边界：未触发 vendoring 回退（`BashTerminalBackend` 注入够用），无新决策；rc.3 运行时只导出 `Config` → 自行物化默认值；`maxResultBytes` 属 `dsh-tool-terminal`；Nix 无 `deepseekApiBaseUrl` 选项；sandbox 终端忽略请求 cwd；`/status full` 不展示 `exemptTools`。
+- 未完成/后置：G2–G6 真实门禁（NixOS 目标机 PTY、sandbox 终端、真实 DeepSeek 搜索、`deepseek-search-api`/`deepseek-fetch-api`、真实公网抓取）；12.14 目标机手工清单；`terminal_send` 被 reviewer 拒绝的专用进程用例；goal 归档终端清理的进程级用例；跨重启终端（tmux）后置。
 
 ## 14.12 后置（v1 之外与 M9/M10 之外）
 

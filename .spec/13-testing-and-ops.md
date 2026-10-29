@@ -30,7 +30,7 @@ M8 落点（已实现，2026-10-27）：`packages/channel-qq-bot/test/` 共 7 �
 
 M9 落点（已实现，2026-10-29）：`packages/channel-core/test/` 覆盖 broker 审批 action 生成/`handleAction`/过期与重复点击、service 入站 action 路由（action 权威、失效不回退文本）、outbox actions 透传；`packages/channel-qq-bot/test/` 覆盖 C2C keyboard body、群聊剥离、interaction 归一化、ack 调用、intents 与降级、markdown 回退保留 keyboard；`packages/channel-local-test/test/` 覆盖 inbound `action`；`tests/integration/m9-qq-buttons.test.ts` 用真实 driver + fake transport 走审批按钮端到端；`tests/process/m9-qq-buttons.test.ts` 用 daemon + fake QQ server 覆盖“提示带 keyboard → 注入 INTERACTION_CREATE → 工具执行/拒绝、文本 fallback、重启后失效、群聊无按钮、intent 降级”。实测 `pnpm test` 54 文件/403 测试；`pnpm test:unit` 50 文件/383 测试；`pnpm test:process` 8 文件/58 场景；真实平台 #15–#20 门禁不进入 flake。
 
-M10 落点（规划，代码未实现）：`packages/shell-bash/test/` 覆盖 `ShellTerminalLaunch` 协议与 `terminalLaunch` 路由；`packages/terminal-host/test/` 用注入的 fake `spawnTerminal` 覆盖 per-host backend 注册、launch 规格、release/pin、失败清理；`packages/shell-host-*` 覆盖 local/sandbox launch（sandbox pin、TTL/reset 拒绝）；`packages/reviewer/test/` 覆盖 `exemptTools`（web 工具不调用 reviewer）；`packages/agent-app/test/` 覆盖 `/clear`/goal archive/daemon 退出前关闭 terminals；`tests/process/m10-terminal.test.ts` 用真实 `dsh-subprocess-local` PTY（local host）验证 open/send/read/close、cwd/env 持久、owner 隔离、agent 释放清理；`tests/process/m10-web.test.ts` 用 fake provider 覆盖 tool 注册/provider 选择/缺 key/截断；sandbox 终端与真实搜索走手工门禁（12.14）。flake unit 不跑真实 PTY 测试。
+M10 落点（已实现，2026-10-29）：`packages/shell-bash/test/` 覆盖 `ShellTerminalLaunch` 协议、`terminal` 能力位双向校验与 `terminalLaunch` 路由、`onChange`、发现工具 `terminal` 字段按实际注册 backend 隐藏、hosts 提示词终端指引；`packages/terminal-host/test/` 5 文件/33 测试用注入的 fake `spawnTerminal` 覆盖 per-host backend 注册/注销/串行、launch 规格（argv/cwd/env）、上游 env 透传、release 幂等与失败清理、缺 owner 上下文报错、`enabled=false`；`packages/shell-host-*` 覆盖 local launch 与 sandbox `pins`/TTL/reset/dispose 拒绝/`terminalSessions`/`buildSandboxTerminalArgv`；`packages/reviewer/test/` 覆盖 `exemptTools` schema 默认与自定义解析；`packages/agent-app/test/terminal-cleanup.test.ts` 覆盖 5s 有界清理与失败降级；`tests/process/m10-terminal.test.ts` 用真实 `dsh-subprocess-local` PTY（local host）4 场景验证 open/send/read/list/close、状态持久、`/clear` 清理、`enabled=false` 不暴露工具与提示、SIGTERM；`tests/process/m10-web.test.ts` 用 fake LLM + 本地 fake DeepSeek 搜索 HTTP 2 场景覆盖 web 工具不触发 reviewer、`bash` 仍审查、非公网 fetch 被拒、空豁免列表恢复全审。sandbox 终端与真实搜索/API/公网抓取走手工门禁（[12.14](12-nixos-deployment.md) 与 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)）。实测（本次施工观察，2026-10-29 21:42）：`pnpm test:unit` **56 文件/438 测试**；`pnpm test` **60 文件/458 测试**；`pnpm test:process` **10 文件/64 场景**；`pnpm check`、`nix flake check`、`nix build .#default`、`nix run .#default -- --version` 均通过（2026-10-29 最终门禁）。flake unit 不跑真实 PTY 测试。
 
 ## 13.2 测试替身
 
@@ -38,9 +38,9 @@ M10 落点（规划，代码未实现）：`packages/shell-bash/test/` 覆盖 `S
 - **scripted fake LLM**：不调用真实 API；按脚本返回 assistant 文本/工具调用；用于 agent-loop、reviewer、记忆提炼测试。
 - **fake shell host**：内存 host provider，返回预设输出/退出码，模拟 background/超时/错误；用于 channel/agent 集成测试。
 - **fake clock**：TTL、超时、退避重试测试；避免真实等待。
-- **fake terminal spawn（M10 规划）**：向 `BashTerminalBackend` 注入的 `spawnTerminal` stub，记录 argv/cwd/env 并返回可控 `SubprocessTerminalHandle`；用于 backend/launch/pin 单测，不需要真实 PTY。
-- **fake PTY（M10 规划）**：真实 `dsh-subprocess-local` PTY 仅用于本地集成测试；flake unit 与无 PTY 环境不跑。
-- **fake web provider（M10 规划）**：实现 `ctx.web` 的 search/fetch provider 接口；用于 tool 注册、provider 选择、错误与截断测试，禁止真实网络。
+- **fake terminal spawn（M10 已实现）**：向 `BashTerminalBackend` 注入的 `spawnTerminal` stub，记录 argv/cwd/env 并返回可控 `SubprocessTerminalHandle`；用于 backend/launch/pin 单测，不需要真实 PTY。
+- **fake PTY（M10 已实现）**：真实 `dsh-subprocess-local` PTY 仅用于本地进程测试（`tests/process/m10-terminal.test.ts`）；flake unit 与无 PTY 环境不跑。
+- **fake web provider（M10 已实现，进程层）**：本地 fake DeepSeek Messages 搜索 HTTP（`tests/process/support/fake-web-search.ts`）与 non-public fetch 用例；用于 web 工具注册/豁免/阻断断言，禁止真实网络。未单独为 `ctx.web` 写单元 fake provider 包。
 - **临时 DSH_HOME**：每个测试用独立目录，结束后清理；保证并发测试隔离。
 - **测试 kit**：如 DSH 提供的 `dsh-agent-loop-testkit` 可用则复用；否则自建最小 harness。
 
@@ -65,8 +65,8 @@ M10 落点（规划，代码未实现）：`packages/shell-bash/test/` 覆盖 `S
 | channel-core M7 | reply context/replySeq、trustedChannels、canDeliver、NonRetryableDeliveryError/PassiveReplyExpiredError、缺 driver 短路、actions 持久化、deferred 上限/TTL | per-turn 多 driver 路由、notice 回退/defer 补投、双 driver 集成、actions 最后一段 | 重启后被动上下文/超窗（进程回归覆盖 outbox 重发） |
 | channel-qq-bot（M8） | 事件归一化、被动/主动策略、错误分类、频控、config、gateway/rest | fake WS+REST + core 的 trustedChannels/defer | daemon + fake QQ server、重连/token 刷新/双渠道 |
 | action/按钮（M9 已实现） | broker action 生成/handle、token 生命周期、service action 路由、outbox actions 透传 | QQ C2C keyboard body/群聊剥离、interaction 归一化/ack、local-test action 注入 | 审批按钮端到端、文本 fallback、超时/重启失效、intent 降级 |
-| terminal-host（M10 规划） | per-host backend 注册、launch 规格、release/pin、fake spawnTerminal 清理 | local 真实 PTY（open/send/read/close、状态持久、owner 隔离）、sandbox launch/pin | daemon 清理顺序、`/clear`/goal archive/重启无残留 |
-| web（M10 规划） | tool 注册/参数校验、provider pin/切换、错误码、截断、`exemptTools` | fake provider 端到端、reviewer 豁免断言 | 真实搜索/抓取（手工门禁）、网络失败降级 |
+| terminal-host（M10 已实现） | per-host backend 注册/注销、launch 规格（argv/cwd/env）、release 幂等/pin、封装 handle 清理、fake spawnTerminal | local 真实 PTY（open/send/read/list/close、状态持久、`/clear`、disabled、SIGTERM）、sandbox launch/pin 单测 | daemon 清理顺序、`/clear`/goal archive/重启无残留；owner 隔离由上游 registry |
+| web（M10 已实现） | tool 注册/参数校验、provider pin/切换（配置层）、错误码、截断、`exemptTools` schema | fake 搜索 HTTP + fake LLM：web 不审、bash 仍审、空列表恢复全审、非公网 fetch 阻断 | 真实搜索/抓取/API provider（手工门禁 G4–G6）、网络失败降级 |
 | NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12 / 12.13） |
 
 ## 13.4 关键场景
@@ -81,15 +81,15 @@ M10 落点（规划，代码未实现）：`packages/shell-bash/test/` 覆盖 `S
 8. **Schedule**：创建 1 分钟提醒（或 fake clock）→ 到期 follow-up → 主 agent 回复镜像到测试通道。
 9. **QQ Bot（M8）**：fake QQ 网关推 C2C/群 @ 事件 → agent 回复 → REST 收到带 `msg_id/msg_seq` 的被动请求；重复事件去重；被动超窗 → 主动尝试/失败；active 失败 defer 到下一次入站；被动过期码 → 清 reply 后 active 重试；断线 Resume/重连后可继续收发；token 401 刷新；`40054005` 视为成功；文件/群全量/机器人消息被忽略。
 10. **QQ 按钮审批（M9 已实现）**：fake reviewer deny → 审批提示（C2C 带 keyboard）→ fake WS 推 `INTERACTION_CREATE` type=11 → PUT ack → broker 结算 → 工具执行/拒绝；文本回复路径回归；超时/daemon 重启后点击旧按钮提示失效；群聊提示不带 keyboard；`approvalButtons=false` 或 intent 受限时降级文本。
-11. **持久终端（M10 规划）**：local host `terminal_open` → `terminal_send` 改变 cwd/env → `terminal_read`/再次 send 看到持久状态 → `terminal_close` 清理进程树；goal child 与 main 的终端 owner 隔离；`/clear`、goal archive、daemon 退出前 terminals 关闭且 sandbox `disposeSession` 不因 pin 失败。
-12. **Web 工具（M10 规划）**：fake provider 下 `web_search` 多 query 合并/上限、`web_fetch` HTML→markdown/截断；provider 缺失/歧义/凭据缺失结构化错误；`web_search`/`web_fetch` 不触发 fake reviewer，其他工具仍触发。
+11. **持久终端（M10 已实现）**：local host `terminal_open` → `terminal_send` 改变 cwd/env → 后续 `terminal_send`/`terminal_list` 看到持久状态 → `terminal_close` 清理进程树；`/clear`、daemon SIGTERM 前 terminals 关闭且 sandbox `disposeSession` 不因 pin 失败（进程测试已覆盖）；goal child 归档与 main/child owner 隔离由上游 owner scope + goal 清理接线保证（未单列进程场景）。
+12. **Web 工具（M10 已实现）**：fake 搜索 HTTP 下 `web_search` 合并 query/上限、`web_fetch` 非公网 URL 返回 blocked；`web_search`/`web_fetch` 不触发 fake reviewer，`bash` 仍触发；`NOKORIBI_REVIEW_EXEMPT_TOOLS=""` 恢复全审（已覆盖）。真实 provider 的缺 key/歧义/截断错误由上游行为；真实搜索与公网抓取走手工门禁（G4–G6）。
 
 ## 13.5 flake checks
 
 - `checks.<system>.package`：构建发行版（official Node runtime + 生产依赖）。
-- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加 SDK `./protocol` 从生产闭包导入、运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）。
-- `checks.<system>.unit`：`pnpm build` + `pnpm test:unit`；只跑 `packages/*/test`（不含 `tests/integration`，后者在本地 `pnpm test` 运行；M7 起用 `vitest.unit.config.ts` 固定该边界）。
-- `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`（M8 增加 `nokoribi-channel-qq-bot` 行与 `trustedChannels`）。
+- `checks.<system>.package-smoke`：wrapper `--version` / `--help` 与 store 布局；M8 增加 SDK `./protocol` 从生产闭包导入、运行时 `WebSocket`/`fetch` 全局可用断言（官方 Node 运行时）；M10 增加 `dsh-terminal`/`dsh-terminal-bash`/`dsh-web`/`dsh-tool-web`/`@nokoribi/terminal-host` 从生产闭包导入断言。
+- `checks.<system>.unit`：`pnpm build` + `pnpm test:unit`；只跑 `packages/*/test`（不含 `tests/integration`，后者在本地 `pnpm test` 运行；M7 起用 `vitest.unit.config.ts` 固定该边界；M10 的 real-PTY 进程测试不进 flake）。
+- `checks.<system>.module-eval`：NixOS eval 最小配置，断言 unit 字段，并用 PyYAML 解析生成的 `_overlayText`（M8 增加 `nokoribi-channel-qq-bot` 行与 `trustedChannels`；M10 增加 terminal/web/reviewer exempt 行与 `DEEPSEEK_SEARCH_BASE_URL` 断言，并新增 `module-eval-disabled` 断言 `terminal.enable=false`/`web.enable=false` 时相关行 `disabled` 且 local host 仍启用）。
 - 本地运行：`nix flake check`（当前系统）。NixOS VM 测试不做（D130）；12.12/12.13 手工清单仍必须执行。
 
 ## 13.6 日志
@@ -112,7 +112,7 @@ M10 落点（规划，代码未实现）：`packages/shell-bash/test/` 覆盖 `S
 - 摘要（默认）：version、uptime、agentStatus（running/idle）、mainSessionId、model、permission、活跃 goal 数、待应答数、outbox 长度。M7 增加 `channels`（每个 driver 的 `id=online|connecting|offline`）与 `deferredNotices` 计数。
 - `/status full`：
   - 每个 goal：短 id、phase、rounds、model、child 运行状态、sandbox generation/TTL/active；
-  - 每个 sandbox：session、目录、存在性、generation、activity、TTL、临时包、最近使用；
+  - 每个 sandbox：session、目录、存在性、generation、activity、`terminals=N`（活动持久终端数，M10）、TTL、临时包、最近使用；
   - active schedule：id/title/kind/scheduledAt/state；
   - memory：active/archived/invalid/bytes；
   - 最近 10 条 warn/error（进程内存环形缓冲，不持久化，不含字段值）；

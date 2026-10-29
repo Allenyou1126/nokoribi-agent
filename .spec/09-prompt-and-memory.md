@@ -28,7 +28,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 |---|---|---|
 | persona prefix | 身份 | SOUL.md 全文（`includeHarnessIdentity=false`） |
 | 3000 | `nokoribi:hosts` | sandbox/local 的路径与差异、`DSH_SANDBOX_DIR`/`DSH_WORKSPACE_DIR`、file 工具与 bash 不同视图、cp/rsync 流程、sandbox 禁 sudo、local 可 sudo 但经 review、默认 host |
-| 3100 | `nokoribi:pty`（M10 规划） | 持久终端 `terminal_*` 仅用于跨调用状态/交互式 stdin；`terminal_open.type` = host id；sandbox 终端 cwd 规则；进程内持久、重启丢失；有界工作优先 `bash`；关闭不再需要的会话 |
+| 3100 | `nokoribi:pty`（M10 已实现） | 持久终端 `terminal_*` 仅用于跨调用状态/交互式 stdin；`terminal_open.type` = host id（只选 `terminal: true`）；sandbox 终端固定目录/忽略 cwd；进程内持久、重启丢失；有界工作优先 `bash`；关闭不再需要的会话；禁用部署输出“持久终端在本部署禁用。” |
 | 4000 | `nokoribi:interaction` | 每轮一条回复、无流式、审批/提问的回复格式、`/stop` 等命令、系统通知前缀、待应答优先 |
 | 5000 | `nokoribi:memory` | 何时 search、何时 write、条目规则、禁止秘密/临时状态 |
 | 6000 | `nokoribi:goal` | 主 agent：`start_goal`、不建 main goal、转述 report、归档询问；goal child：宿主已建 goal、按 round 推进、`send_message` 汇报、完成/阻塞 |
@@ -41,7 +41,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 - M4 已实现 `nokoribi:goal`（order 6000，由 `@nokoribi/prompt` 注册），并在 `system-prompt/assemble` 中移除主/普通 child 的 `tool:goal`、替换 goal child 的文案。
 - M5 已实现 `nokoribi:memory`（5000）与 `nokoribi:schedule`（7000）；`nokoribi:interaction` 增加 `/status full` 与 `[SCHEDULE REMINDER]` 的处理说明。
 - M9（已实现）：审批提示正文不变（仍含“回复 允许 / 拒绝”作为文本 fallback）；C2C 渠道额外附按钮。无需新增段落，`nokoribi:interaction` 补充“按钮与文本等价、按钮失效时以文本重发”的一句说明。
-- M10（规划）：新增 `nokoribi:pty`（3100，由 `@nokoribi/shell-bash/tool` 或 `@nokoribi/terminal-host` 注册）；上游 `dsh-tool-terminal` 自带的 `tool:pty` 段与 `dsh-tool-web` 的 web 工具引导段会按上游 order 注入，需确认与 `nokoribi:hosts` 不重复且顺序稳定。
+- M10（已实现）：`nokoribi:pty`（3100）由 `@nokoribi/terminal-host` 注册（`interpolate:false`、内容静态）；上游 `dsh-tool-terminal` 的 `tool:pty` 段（order 来自 `getSectionOrder("TOOL_PTY")`）保留不覆盖，两段分工：上游讲“何时用终端”，我们讲 host 路由/安全/生命周期。`dsh-tool-web` 另注册 `tool:web_search`/`tool:web_fetch` 引导段（上游 order）。`nokoribi:hosts` 仅在有 terminal backend 时追加一句终端指引，避免禁用部署误导。
 - 上述段落内容保持稳定，避免每轮变化破坏 KV cache。
 
 ### 动态 runtime context

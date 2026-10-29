@@ -81,7 +81,7 @@ M1/M2 实际流程：
 2. 调用 `channels.abortInteractions("shutdown")`，中止待审批/提问并写入失效提示；outbox 持久化，下次启动继续投递。
 3. 等待当前轮完成至 `shutdownGraceMs`（默认 20s，可配）；超时用 `cancel({ kind:'disposed' })`。
 4. goal 子代理不在这里逐个清理；由 profile-boot 后续的 context teardown 交给 DSH subagent manager 释放，重启后按 active goal 冷恢复。
-5. **M10 规划**：flush 前后、释放单实例锁之前，显式关闭 main agent 的持久终端（`ctx.terminals.list(main)` + `kill`，有界等待；失败只 log），避免 PTY 与 sandbox 目录在 teardown 顺序中悬空；`ctx.terminals` 未挂载时 no-op（见 [19.3.7](19-persistent-terminal-and-web.md)）。
+5. **M10（已实现）**：显式关闭 main agent 的持久终端（`killTerminalsForAgent`，5s 有界等待；失败只 warn），避免 PTY 与 sandbox 目录在 teardown 顺序中悬空；实际执行位置在 final flush（第 6 步）之后、写 `cleanShutdown` 与释放单实例锁之前；`ctx.terminals` 未挂载时 no-op（见 [19.3.7](19-persistent-terminal-and-web.md)）。
 6. `ctx.sessions.flush()`，写 state 并置 `cleanShutdown=true`。
 7. 进程由 vendored profile-boot 的 bounded shutdown 退出；vendored 上限由 `NOKORIBI_SHUTDOWN_TIMEOUT_MS` 控制，默认 30s。M6 的 systemd `TimeoutStopSec` 必须大于它。
 
@@ -114,7 +114,7 @@ M1/M2 实际流程：
 4. 用 `ctx.schedule.catalog()` 找出绑定旧 `mainSessionId` 的全部任务（含 inactive），逐条 `delete`；失败记录日志但继续。确认消息附带删除数量。
 5. dispose 主 agent handle；旧会话保持在 DSH 会话库中（不删除）。
 6. 生成新的 `mainSessionId`，`ctx.agents.create()` 新会话；重新 bind `sessionController` 与 memory curator；写回 state；保留 outbox（已生成的消息仍发给用户），新消息进入新会话。
-7. 删除旧会话对应的 sandbox 目录（per-session scope）。M3 实现：旧 agent `dispose()` 后调用 `ctx.shellHosts.disposeSession(previousId)`，删除目录与 sidecar；失败只记录日志，不阻断 `/clear`。**M10 规划**：在 `disposeSession` 之前先 `killTerminalsForAgent(oldAgent)` 关闭旧终端（有界等待、失败 log），避免 sandbox 目录删除时 PTY 仍持有 pin/目录（见 [19.3.7](19-persistent-terminal-and-web.md)）。
+7. 删除旧会话对应的 sandbox 目录（per-session scope）。M3 实现：旧 agent `dispose()` 后调用 `ctx.shellHosts.disposeSession(previousId)`，删除目录与 sidecar；失败只记录日志，不阻断 `/clear`。**M10（已实现）**：在 `disposeSession` 之前先 `killTerminalsForAgent(oldAgent)` 关闭旧终端（5s 有界、失败 warn），避免 sandbox 目录删除时 PTY 仍持有 pin/目录（见 [19.3.7](19-persistent-terminal-and-web.md)）。
 8. 发送确认消息："已新建会话，旧会话已归档"（如有提醒删除则追加数量）。
 
 - `/new` 与 `/clear` 等价（别名）。
