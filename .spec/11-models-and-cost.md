@@ -48,8 +48,8 @@
   - 压缩本身消耗一次模型请求。
 - 可调参数（按模型/路由覆盖）：阈值、保留近期消息数等；在 M5/M6 用真实数据调。
 - `dsh-token-meter` 可用于估算上下文压力/展示用量；不改变模型可见内容。
-- v1 不做图像 offload；独立 session 搜索另立里程碑；memory 按 M11 设计注入 pinned 快照（runtime context，每轮最多刷新一次，仅主会话，D172–D174；实现待执行），主动检索保留；AGENTS.md 仍是唯一的静态长期指令注入。
-- 提示词稳定性：静态段保持稳定，动态值走 runtime context（时间、M11 memory 快照），减少 KV cache 失效。
+- v1 不做图像 offload；独立 session 搜索另立里程碑；memory 按 M16 设计注入 pinned 快照（runtime context，每轮最多刷新一次，仅主会话，D172–D174；实现待执行），主动检索保留；AGENTS.md 仍是唯一的静态长期指令注入。
+- 提示词稳定性：静态段保持稳定，动态值走 runtime context（时间、M16 memory 快照），减少 KV cache 失效。
 - SOUL.md 控制在 ≤4KB；AGENTS.md 预算 64KB（但实际应保持小）。
 - `dsh-time-context` 在 M5 以 `refreshIntervalMs` 默认 60000 挂载，可由 `NOKORIBI_TIME_CONTEXT_REFRESH_MS` 调整；每条注入都增加 user 消息 token。
 

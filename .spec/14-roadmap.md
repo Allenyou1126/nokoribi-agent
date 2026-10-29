@@ -404,29 +404,21 @@
 
 ## 14.15 下一阶段里程碑（规划，2026-10-29 确认）
 
-> 状态：**规划已确认（D176），代码未实现**。本节记录 M11–M17 的目标、依赖、范围与验收口径；每个里程碑启动时先写决策/规格再实现，并按 AGENTS.md 回写本文与相关文档。M11 的本地记忆设计见 [09.5](09-prompt-and-memory.md) 自动注入（D172–D174）；M15 的 OpenViking 后端见 [D175](03-decision-log.md)。M11–M17 均为 v1 后增强，不改变 [14.14](14-roadmap.md) 的 v1 完成定义。
+> 状态：**规划已确认（D176），代码未实现**。本节记录 M11–M17 的目标、依赖、范围与验收口径；每个里程碑启动时先写决策/规格再实现，并按 AGENTS.md 回写本文与相关文档。M16 的本地记忆设计见 [09.5](09-prompt-and-memory.md) 自动注入（D172–D174）；M17 的 OpenViking 后端见 [D175](03-decision-log.md)。M11–M17 均为 v1 后增强，不改变 [14.14](14-roadmap.md) 的 v1 完成定义。
+
+**当前顺序（2026-10-29 调整）**：M11 → M12 → M13 → M14 → M15 → M16 → M17。**记忆与 OpenViking 放在最后**（M16/M17）；M17 固定晚于 M12（Skill）与 M13（MCP）；其余里程碑可在启动前按优先级调整（D176）。
 
 | # | 里程碑 | 目标 | 依赖 | 状态 |
 |---|---|---|---|---|
-| M11 | 记忆本地自动注入 | pinned 快照 + runtime context 注入 + `pin`/`unpin` + 配置/观测/测试 | 无 | 待实现 |
-| M12 | 会话检索 | `session_search` / `session_read`，复用 `ctx.sessionQuery`（sqlite FTS） | 无（`session-query` 行已挂载） | 待实现 |
-| M13 | Skill 技能系统 | `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`；本地 skills 目录与 Nix 打包 | 无 | 待实现 |
-| M14 | MCP 客户端 | `dsh-mcp-client` + `dsh-mcp-resources`；Nix `mcp.servers` | 无 | 待实现 |
-| M15 | OpenViking 可选后端 | 开关 + 连接配置；启用即停用本地记忆，OpenViking 接管 | M13 + M14 | 待实现 |
-| M16 | 消息图片 | 入站附件 → 模型图片；出站附件/富媒体与发送工具 | V8 模型视觉、QQ 门禁 #14 | 待实现（分两阶段） |
-| M17 | 提问按钮 | `ask_user_question` 选项按钮（core action + QQ C2C keyboard + 文本 fallback） | M9 action 基础设施、QQ 门禁 #15–#20 | 待实现 |
+| M11 | 会话检索 | `session_search` / `session_read`，复用 `ctx.sessionQuery`（sqlite FTS） | 无（`session-query` 行已挂载） | 待实现 |
+| M12 | Skill 技能系统 | `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`；本地 skills 目录与 Nix 打包 | 无 | 待实现 |
+| M13 | MCP 客户端 | `dsh-mcp-client` + `dsh-mcp-resources`；Nix `mcp.servers` | 无 | 待实现 |
+| M14 | 消息图片 | 入站附件 → 模型图片；出站附件/富媒体与发送工具 | V8 模型视觉、QQ 门禁 #14 | 待实现（分两阶段） |
+| M15 | 提问按钮 | `ask_user_question` 选项按钮（core action + QQ C2C keyboard + 文本 fallback） | M9 action 基础设施、QQ 门禁 #15–#20 | 待实现 |
+| M16 | 记忆本地自动注入 | pinned 快照 + runtime context 注入 + `pin`/`unpin` + 配置/观测/测试 | 无 | 待实现 |
+| M17 | OpenViking 可选后端 | 开关 + 连接配置；启用即停用本地记忆，OpenViking 接管 | M12 + M13 | 待实现 |
 
-**建议顺序**：M11 → M12 → M13 → M14 → M15 → M16 → M17；M15 固定晚于 M13/M14，其余顺序可在启动前按优先级调整（D176）。M11/M12 可并行开发，但涉及同一状态/文档的合并需串行。
-
-### M11 记忆本地自动注入
-
-- **目标**：主会话每轮带上 pinned 快照（用户画像 / 长期记忆），同时保持静态提示词与 KV-cache 稳定；完整内容仍按需检索。
-- **做**：`packages/memory` 增加 `pinned` frontmatter、`pin`/`unpin` action、快照渲染（默认 3000 字符 / 20 条、超预算 footer）、`ctx.systemPrompt.context` 注入、每轮 turn 冻结刷新、仅主 root agent、`memory.inject.*` Nix 选项、`/status full` pinned/snapshotChars、提示词与 tool description 更新；单元 + fake LLM 进程测试。
-- **不做**：每轮自动检索、向量/embedding、外部 memory provider、`/clear` 前自动提炼、多用户作用域。
-- **验收**：`pnpm check` / `test` / `test:unit` / `test:process`；`nix flake check` / `nix build`（可用时）；真实手工确认快照与 `/status full`。
-- **风险**：记忆内容成为长期上下文（持久化提示注入面）；快照 token/过期；每轮刷新行为；reviewer 不覆盖注入内容（登记 [15](15-verification-and-risks.md)）。
-
-### M12 会话检索
+### M11 会话检索
 
 - **目标**：模型可按关键词/时间/类型检索历史会话并读取上下文，补足“跨会话回忆原始历史”的能力。
 - **做**：新增 `session_search`（会话/事件搜索、过滤、分页）与 `session_read`（事件上下文窗口）；复用 `dsh-session-query-sqlite` ranked FTS；结果截断与“历史内容不可信”标注；提示词段与 Nix 上限；`/status` 或日志可观测。
@@ -434,7 +426,7 @@
 - **验收**：单测 + 进程测试（真实 sqlite 会话文件）；本地可完整验收，无需外部凭证。
 - **风险**：历史内容注入模型（标记不可信）；检索延迟/结果过大；reviewer 是否豁免只读检索需决策。
 
-### M13 Skill 技能系统
+### M12 Skill 技能系统
 
 - **目标**：模型可发现并按需加载本地技能，复用经验而不是重复推导。
 - **做**：挂载 `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`（rc.3）；技能根 = Nix 打包只读目录 + `$DSH_HOME/skills`（可选自定义目录）；`/name` 技能调用与频道命令衔接需实测；`skill.*` Nix 选项；bundle 依赖。
@@ -442,7 +434,7 @@
 - **验收**：本地 skill 目录的发现/加载/调用测试；Nix module-eval；目标机手工。
 - **风险**：技能正文是模型可见指令（信任边界）；上游 rc.3 API 行为需核对（🧪）。
 
-### M14 MCP 客户端
+### M13 MCP 客户端
 
 - **目标**：接入外部 MCP server 的工具面，复用现成生态。
 - **做**：新增 `dsh-mcp-client` + `dsh-mcp-resources`（+ `@modelcontextprotocol/client`）依赖并锁 rc.3；Nix `mcp.servers`（stdio/streamable-http、command/url、env、超时/重连）动态插入行；工具自动进入 Auto review；secret 走 EnvironmentFile/agenix；健康/启动失败降级。
@@ -450,16 +442,7 @@
 - **验收**：fake MCP stdio/HTTP 进程测试；`nix/deps.nix` FOD 与 lock 更新；`nix flake check`；真实 server 手工。
 - **风险**：外部 server 命令权限面、凭据/数据出界、启动延迟、MCP 工具审查成本。
 
-### M15 OpenViking 可选后端
-
-- **目标**：默认本地记忆；可选启用 OpenViking，启用后由其接管记忆，停用本地 memory 组件（D175）。
-- **做**：Nix 开关（形如 `memory.backend = "local" | "openviking"`，启动时最终定名）+ 连接配置（endpoint、`apiKeyEnv`、可选 peer/recall 参数）；启用时 `nokoribi-memory` 行 disabled、memory 提示词段不注册，加载 `@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本）作为 profile bundle；连接失败/离线降级与 `/status` 展示；本地 entries → OpenViking 一次性迁移说明。
-- **不做**：打包 openviking-server、与其双写/双读、在仓库内提供 embedding/VLM 服务。
-- **前置**：M13 Skill 与 M14 MCP（插件 peer：`dsh-skill`/`dsh-skill-filesystem`/`dsh-mcp-client`）；插件已验证兼容 DSH `0.2.1-rc.3`。
-- **验收**：module-eval（启用时本地行 disabled、连接 env 注入、校验必填）；无 server 启动不崩；fake server recall/capture/commit 测试；真实 server spike（外部部署，embedding + VLM provider）记录召回/延迟/降级；许可与部署边界写入文档。
-- **风险**：额外 provider/密钥面；记忆数据出界；AGPL server 部署责任；插件版本/API 漂移；启用后无本地 fallback（需文档明确）。
-
-### M16 消息图片（入站 → 出站两阶段）
+### M14 消息图片（入站 → 出站两阶段）
 
 - **目标**：补齐 IM 图片双向链路：用户发图可给模型；模型可回图/附件。
 - **入站**：channel-core 接受 `InboundMessage.images` → `ctx.attachments` → 模型图片块；QQ 附件下载（大小/超时/失败降级为纯文本并提示）；local-test 支持注入；能力位 `inboundImages=true`。
@@ -467,9 +450,27 @@
 - **门禁**：V8 真实模型图片调用；QQ 附件 URL/上传门禁 #14 及新增事实；参考 [17](17-qq-official-bot.md) 17.4/17.5 与 notes。
 - **风险**：图片提示注入、模型视觉能力/成本、QQ 媒体大小/格式限制、出站失败回退。
 
-### M17 提问按钮
+### M15 提问按钮
 
 - **目标**：`ask_user_question` 的选项在 QQ C2C 上可点击，文本回复仍可用。
 - **做**：core broker 为单选且有 options 的问题生成 callback actions（复用 M9 token 映射）；QQ 仅 C2C 渲染 keyboard；label ≤10、选项数上限、超限回退文本；多选问题保持文本（待决策）；点击后沿用 M9 的 ack 语义。
 - **验收**：fake QQ/local-test 进程测试；真实门禁沿用 M9 #15–#20 并新增提问按钮事实；通过前只标“代码完成”。
 - **风险**：平台 intent/按钮限制、多选/自定义输入语义、群聊按钮仍后置（D166）。
+
+### M16 记忆本地自动注入
+
+- **目标**：主会话每轮带上 pinned 快照（用户画像 / 长期记忆），同时保持静态提示词与 KV-cache 稳定；完整内容仍按需检索。
+- **做**：`packages/memory` 增加 `pinned` frontmatter、`pin`/`unpin` action、快照渲染（默认 3000 字符 / 20 条、超预算 footer）、`ctx.systemPrompt.context` 注入、每轮 turn 冻结刷新、仅主 root agent、`memory.inject.*` Nix 选项、`/status full` pinned/snapshotChars、提示词与 tool description 更新；单元 + fake LLM 进程测试。
+- **不做**：每轮自动检索、向量/embedding、外部 memory provider、`/clear` 前自动提炼、多用户作用域。
+- **验收**：`pnpm check` / `test` / `test:unit` / `test:process`；`nix flake check` / `nix build`（可用时）；真实手工确认快照与 `/status full`。
+- **风险**：记忆内容成为长期上下文（持久化提示注入面）；快照 token/过期；每轮刷新行为；reviewer 不覆盖注入内容（登记 [15](15-verification-and-risks.md)）。
+
+### M17 OpenViking 可选后端
+
+- **目标**：默认本地记忆；可选启用 OpenViking，启用后由其接管记忆，停用本地 memory 组件（D175）。
+- **配置（已确认形状）**：Nix `memory.openviking.enable`（默认 `false`）；其他跟 OpenViking 连接相关的配置全部放在 `memory.openviking.*`，包括 `endpoint`、`apiKeyEnv`（指向 EnvironmentFile/agenix 变量，不写入 store）、可选 `peerId`/`workspacePeer`/`recallMaxTokens` 等。
+- **做**：启用时 overlay 将 `nokoribi-memory` 行 disabled、`nokoribi-prompt` 不注册 memory 提示词段；加载 `@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本）作为 profile bundle；连接失败/离线降级与 `/status` 展示；本地 entries → OpenViking 一次性迁移说明。
+- **不做**：打包 openviking-server、与其双写/双读、在仓库内提供 embedding/VLM 服务。
+- **前置**：M12 Skill 与 M13 MCP（插件 peer：`dsh-skill`/`dsh-skill-filesystem`/`dsh-mcp-client`）；插件已验证兼容 DSH `0.2.1-rc.3`。
+- **验收**：module-eval（启用时本地行 disabled、`memory.openviking.*` 连接 env 注入、校验必填）；无 server 启动不崩；fake server recall/capture/commit 测试；真实 server spike（外部部署，embedding + VLM provider）记录召回/延迟/降级；许可与部署边界写入文档。
+- **风险**：额外 provider/密钥面；记忆数据出界；AGPL server 部署责任；插件版本/API 漂移；启用后无本地 fallback（需文档明确）。

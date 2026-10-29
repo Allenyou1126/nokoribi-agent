@@ -341,7 +341,7 @@
 - **D140 记忆提炼触发（M5）** — 自定义：goal 进入 `complete`/`blocked` 时，按 `goalId:phase` 去重，启动一次性 `memory-*` continuable child（`delivery:"caller"`），输入 objective、阶段、轮次和最后一份 `[goal:…]` 报告；超时/失败只记日志，不阻塞主流程，不向用户发完成通知。
 - **D141 goal 模型 allowlist（M5）** — 自定义：`NOKORIBI_GOAL_MODELS` 是逗号分隔的精确 `provider/model` 路由；`start_goal` 的 `model`/`reasoning_effort` 与 `/goal new --model/--effort` 必须命中 allowlist 或默认路由；state/archive/status 记录 route 与 effort。
 - **D142 `/status full`（M5）** — 自定义：新增详细状态文本与 `GET /v1/status?full=1`；包含 goal 与 sandbox、active schedule、memory 计数、recent warn/error 环形缓冲、reviewer 两档、DSH/app 版本与路径；不输出消息正文或密钥。
-- **D143 memory 自动注入后移（M5）** — 自定义：M5 保持“主动检索”而非自动注入；不做会话启动摘要、每轮 pre-step 检索或把 entries 塞进 system prompt。`/clear` 后不会自动带上旧记忆，模型必须调用 `memory search`。后续版本再评估。**状态（2026-10-29）：部分被 D172–D174 取代**——M11 增加 pinned 快照自动注入（runtime context，每轮最多刷新一次）；“主动检索、不做每轮自动检索、不塞全量 entries”的其余口径保留。
+- **D143 memory 自动注入后移（M5）** — 自定义：M5 保持“主动检索”而非自动注入；不做会话启动摘要、每轮 pre-step 检索或把 entries 塞进 system prompt。`/clear` 后不会自动带上旧记忆，模型必须调用 `memory search`。后续版本再评估。**状态（2026-10-29）：部分被 D172–D174 取代**——M16 增加 pinned 快照自动注入（runtime context，每轮最多刷新一次）；“主动检索、不做每轮自动检索、不塞全量 entries”的其余口径保留。
 - **D144 systemd 通知（M6）** — 自定义：daemon 在恢复完成、写 ready 文件后，通过 `systemd-notify` 子进程发送 `READY=1`；按 `WATCHDOG_USEC` 的 1/3 周期发送 `WATCHDOG=1`；关闭时发送 `STOPPING=1`。unit 使用 `Type=notify` + `NotifyAccess=all`（helper 是子进程）。Node 24 `dgram` 没有 Unix datagram，故选 helper 而不引入 native addon；`NOTIFY_SOCKET` 缺失时 no-op。
 - **D145 Nix 运行时（M6）** — 自定义：`@deepseek-ai/dsh-app-boot` 依赖的 `node-addon-require-builtin` 会检查官方 Node 的代码布局；nixpkgs 构建的 Node 和 patchelf 改写后的官方 Node 都会失败。发行版包保留官方 Node 24.21.0 二进制（x86_64/aarch64），wrapper 用 Nix glibc loader + Nix libstdc++ 启动；构建阶段仍使用 nixpkgs Node/pnpm。这样 native addon、NixOS 运行时和 Nix store 都自洽。
 - **D146 NixOS 配置映射（M6）** — 自定义：module 生成完整 `cordis.patch.yml` overlay，不依赖运行时环境变量覆盖。选项按实现口径：`models.main`、`review.fast/strong`、`goal.{provider,model,allowedModels,maxRounds}`、`memory.{provider,model,curator}`、`hosts.*`、`channel.localTest.*`、`prompt.*`。不提供 `models.subagents`、`memory.enable`、`schedule.enable` 或可启用的 SSH host；memory/schedule 始终挂载，memory 只关闭提炼，SSH 留给 M7（现因 D149 顺延为 M8）。
@@ -387,7 +387,7 @@
 
 ---
 
-### 第十三轮：记忆系统设计（M11，P1，用户已确认 2026-10-29）
+### 第十三轮：记忆系统设计（M16，P1，用户已确认 2026-10-29）
 
 > 本节为 **P1 设计决策**：2026-10-29 用户确认方向（pinned + 自动画像标签、每轮刷新一次、仅主会话注入）。完整规格见 [09.5 自动注入](09-prompt-and-memory.md)；实现待执行。
 
@@ -401,8 +401,8 @@
 
 > 本节为 **P1 规划决策**：2026-10-29 用户确认下一阶段里程碑集合与口径；每个里程碑启动时仍需先落对应规格/决策，再实现。路线图见 [14.15](14-roadmap.md)。
 
-- **D175 OpenViking 可选记忆后端（P1，用户已确认 2026-10-29）** — ① 默认仍用本地记忆（entries + pinned 快照，D172–D174）；增加启用 OpenViking 的选项。② **启用后 OpenViking 接管**：停用本地 `nokoribi-memory` 组件（存储/工具/快照），不做双写/双读；两者互斥。③ **不打包 openviking-server**：只保留连接相关配置（endpoint、凭据 env/agenix、可选 peer/recall 参数）；server 由用户外部部署（uv/Docker/云），需自带 embedding + VLM provider。④ 接入组件为 `@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本，作为 profile bundle）；前置为 M13 Skill（`dsh-skill`/`dsh-skill-filesystem`）与 M14 MCP 客户端（`dsh-mcp-client`），插件已验证兼容 DSH `0.2.1-rc.3`。⑤ 配置命名/形状在 M15 启动时最终落定；启用时 `nokoribi-memory` 行 disabled、memory 提示词段不注册。⑥ 风险：额外 embedding/VLM provider 与密钥面、数据出界、AGPL server 的部署责任、离线/故障降级、MCP 工具审查策略；门禁见 [14.15](14-roadmap.md) 的 M15。
-- **D176 下一阶段里程碑集合与顺序（P1，用户已确认 2026-10-29）** — ① 已确认目标：M11 记忆本地自动注入、M12 会话检索、M13 Skill、M14 MCP 客户端、M15 OpenViking 可选后端、M16 消息图片（入站→出站）、M17 提问按钮。② 当前计划顺序 **M11 → M12 → M13 → M14 → M15 → M16 → M17**；M15 固定晚于 M13/M14，其余顺序可在启动前按优先级调整。③ 每个里程碑启动时先写决策/规格，再实现并按 AGENTS.md 回写文档；M11/M12 可并行但合并需串行；M17 真实验收沿用 M9 门禁 #15–#20。④ 本阶段不改变 v1 完成定义（14.14）；M11–M17 均为 v1 后增强。
+- **D175 OpenViking 可选记忆后端（P1，用户已确认 2026-10-29）** — ① 默认仍用本地记忆（entries + pinned 快照，D172–D174）；增加启用 OpenViking 的选项。② 配置形状：`memory.openviking.enable`（默认 `false`）；其他跟 OpenViking 连接相关的配置全部放在 `memory.openviking.*`（`endpoint`、`apiKeyEnv` 指向 EnvironmentFile/agenix 变量且不写入 store、可选 `peerId`/`workspacePeer`/`recallMaxTokens` 等）。③ **启用后 OpenViking 接管**：停用本地 `nokoribi-memory` 组件（存储/工具/快照），不做双写/双读；两者互斥。④ **不打包 openviking-server**：server 由用户外部部署（uv/Docker/云），需自带 embedding + VLM provider。⑤ 接入组件为 `@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本，作为 profile bundle）；前置为 M12 Skill（`dsh-skill`/`dsh-skill-filesystem`）与 M13 MCP 客户端（`dsh-mcp-client`），插件已验证兼容 DSH `0.2.1-rc.3`；启用时 `nokoribi-memory` 行 disabled、memory 提示词段不注册。⑥ 风险：额外 embedding/VLM provider 与密钥面、数据出界、AGPL server 的部署责任、离线/故障降级、MCP 工具审查策略；门禁见 [14.15](14-roadmap.md) 的 M17。
+- **D176 下一阶段里程碑集合与顺序（P1，用户已确认 2026-10-29）** — ① 已确认目标（按当前顺序）：**M11 会话检索、M12 Skill、M13 MCP 客户端、M14 消息图片（入站→出站）、M15 提问按钮、M16 记忆本地自动注入、M17 OpenViking 可选后端**。② 当前顺序 **M11 → M12 → M13 → M14 → M15 → M16 → M17**；**记忆与 OpenViking 放在最后**，M17 固定晚于 M12/M13，其余顺序可在启动前按优先级调整。③ 每个里程碑启动时先写决策/规格，再实现并按 AGENTS.md 回写文档；M11/M12 可并行但合并需串行；M15 真实验收沿用 M9 门禁 #15–#20。④ 本阶段不改变 v1 完成定义（14.14）；M11–M17 均为 v1 后增强。
 
 ---
 
@@ -417,7 +417,7 @@
 5. **启动/恢复顺序**：单实例锁 → 加载 state → resume main → 挂 channel 并缓冲 → 恢复 goal 子代理 → 清空待应答并通知 → 重发 outbox → 放行缓冲 → `sessionController.markReady()` → schedule 逾期交付。见 05。
 6. **状态文件**：`agent-state.json` 保存 mainSessionId、goals[]、lastActiveChat、cleanShutdown、outbox 游标等；原子写。见 05。
 7. **提示词分段**：环境/hosts、IM 交互、memory、goal、schedule、safety 六段静态 section；动态值走 runtime context（time-context）。见 09。
-8. **memory 规范**：全局 `$DSH_HOME/memory/entries/<id>.md` + frontmatter；单工具多 action；只存持久事实；提炼子代理去重写入；**按需检索 + M11 pinned 快照自动注入**（D172–D174），不做每轮自动检索；M15 可切换 OpenViking 可选后端（D175）。见 09。
+8. **memory 规范**：全局 `$DSH_HOME/memory/entries/<id>.md` + frontmatter；单工具多 action；只存持久事实；提炼子代理去重写入；**按需检索 + M16 pinned 快照自动注入**（D172–D174），不做每轮自动检索；M17 可切换 OpenViking 可选后端（D175）。见 09。
 9. **AGENTS.md**：首次启动 seed 全局与工作区模板，存在不覆盖；SOUL.md 不进 AGENTS。见 09。
 10. **NixOS module 选项表**（models/hosts/review/approval/channel/memory/goal/schedule/prompt/sudo/log 等）。见 12。
 11. **构建/装配**：bundle patch 行 id 稳定；Nix 生成 overlay；launcher 读打包 profile；store 目录布局。见 04。
@@ -441,5 +441,5 @@
 - D146 的“SSH 留给 M7” → D149 里程碑重排（M7 = channel-core 扩展；M8 = QQ 官方 Bot；M9 = SSH host）。
 - D149 的“M9 = SSH host” → D165 后续里程碑重排（M9 = QQ 按钮审批；M10 = host-aware 持久终端 + Web；SSH host 顺延，不再占用 M9/M10 编号）。
 - D163 的“M7/M8 不实现按钮渲染/回调” → D166/D167 在 M9 落地审批按钮（群聊按钮、提问按钮仍后置）。
-- D143（M5 不做自动注入）→ D172–D174：M11 增加 pinned 快照自动注入（runtime context、每轮最多一次、仅主会话）；主动检索与“不做每轮自动检索”保留。
+- D143（M5 不做自动注入）→ D172–D174：M16 增加 pinned 快照自动注入（runtime context、每轮最多一次、仅主会话）；主动检索与“不做每轮自动检索”保留。
 - D172 的“不做外部 memory provider” → D175：OpenViking 作为可选后端（默认关闭；启用即停用本地记忆；server 不打包，仅连接配置）。

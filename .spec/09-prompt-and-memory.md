@@ -43,7 +43,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 - M9（已实现）：审批提示正文不变（仍含“回复 允许 / 拒绝”作为文本 fallback）；C2C 渠道额外附按钮。无需新增段落，`nokoribi:interaction` 补充“按钮与文本等价、按钮失效时以文本重发”的一句说明。
 - M10（已实现）：`nokoribi:pty`（3100）由 `@nokoribi/terminal-host` 注册（`interpolate:false`、内容静态）；上游 `dsh-tool-terminal` 的 `tool:pty` 段（order 来自 `getSectionOrder("TOOL_PTY")`）保留不覆盖，两段分工：上游讲“何时用终端”，我们讲 host 路由/安全/生命周期。`dsh-tool-web` 另注册 `tool:web_search`/`tool:web_fetch` 引导段（上游 order）。`nokoribi:hosts` 仅在有 terminal backend 时追加一句终端指引，避免禁用部署误导。
 - 上述段落内容保持稳定，避免每轮变化破坏 KV cache。
-- M11 起 memory 快照走 **runtime context**（用户角色快照，不是 section）：静态段与 KV-cache 约定不变，见 9.5。
+- M16 起 memory 快照走 **runtime context**（用户角色快照，不是 section）：静态段与 KV-cache 约定不变，见 9.5。
 
 ### 动态 runtime context
 
@@ -74,7 +74,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 ### 定位
 
 - AGENTS.md：稳定操作指令（始终注入）。
-- memory：**持久事实/偏好/决定**（M11 起主会话自动注入 pinned 快照；完整内容仍按需检索，不全量注入，见本节末“自动注入”）。
+- memory：**持久事实/偏好/决定**（M16 起主会话自动注入 pinned 快照；完整内容仍按需检索，不全量注入，见本节末“自动注入”）。
 - 会话日志：原始历史（DSH 管理）。
 - goal：任务状态（DSH 管理）。
 
@@ -169,10 +169,10 @@ supersedes: null
 - 搜索：title 5/tags 3/body 1 的 OR token 评分，AND tag 过滤，updated desc tie，default 10 / max 50；不建 index、不做向量检索。损坏文件跳过并计入 invalid。
 - `write` 支持 upsert 与 `supersedes`；归档条目不允许复活；`read` 只读 active；`forget` 软归档。常见密钥模式在写入前拒绝。
 - 提炼子代理（D140）：goal `complete`/`blocked` 时由宿主触发，按 goal+phase 去重；`memory-*` child 使用 `delivery:"caller"`，输入 objective/rounds/last report，最多写 3 条；超时/失败只记日志，不通知用户。
-- **自动注入后移（D143）**：M5 不把 memory entries 注入 system prompt，也不在会话启动/每轮 pre-step 自动检索。`/clear` 后的新会话没有记忆预热，必须由模型调用 `memory search`。后续版本再评估。**M11 已确认改为自动注入**：见本节末“自动注入（M11 设计）”，D172–D174。
+- **自动注入后移（D143）**：M5 不把 memory entries 注入 system prompt，也不在会话启动/每轮 pre-step 自动检索。`/clear` 后的新会话没有记忆预热，必须由模型调用 `memory search`。后续版本再评估。**M16 已确认改为自动注入**：见本节末“自动注入（M16 设计）”，D172–D174。
 - `/status full` 提供 active/archived/invalid/bytes 计数；`memory` 工具和 curator 的 write/forget 仍经过 Auto review。
 
-### 自动注入（M11 设计，2026-10-29 已确认；待实现）
+### 自动注入（M16 设计，2026-10-29 已确认；待实现）
 
 > 决策 D172–D174。目标：主会话自动带上长期记忆，同时保持静态提示词稳定、token 可控，并避免每轮自动检索。
 
@@ -190,19 +190,20 @@ supersedes: null
 
 **安全**：记忆内容来自模型写入，进入上下文等价于持久化提示注入面；缓解：写入仍过 Auto review + secret guard、快照固定“数据非指令”声明、pinned 预算上限、可配置关闭；残余风险登记 [15](15-verification-and-risks.md)。
 
-**范围外**：不做每轮自动检索/向量召回（D143 的主动检索保留）、不做 embedding/外部 memory provider（可选 OpenViking 后端由 M15/D175 另行定义）、不做多用户作用域、本阶段不改提炼触发（`/clear` 前提取等后续再评估）。
+**范围外**：不做每轮自动检索/向量召回（D143 的主动检索保留）、不做 embedding/外部 memory provider（可选 OpenViking 后端由 M17/D175 另行定义）、不做多用户作用域、本阶段不改提炼触发（`/clear` 前提取等后续再评估）。
 
 **验收**：单元（frontmatter pinned 兼容、渲染排序/预算/footer/低置信过滤、缓存失效）；进程测试（fake LLM 捕获请求：写入 pinned 后下轮出现快照、goal child 无快照、关闭配置无快照、超预算 footer、重启恢复不重复追加）；Nix module-eval 断言；`pnpm check`/`test*`/`nix flake check`/`nix build`。
 
-### 记忆后端切换（M15 规划，2026-10-29 确认）
+### 记忆后端切换（M17 规划，2026-10-29 确认）
 
-> 决策 D175；里程碑见 [14.15](14-roadmap.md)。本节只定义后端口径，M11 仍实现本地后端。
+> 决策 D175；里程碑见 [14.15](14-roadmap.md)。本节只定义后端口径，M16 仍实现本地后端。
 
 - **默认本地**：本节的 entries + pinned 快照自动注入；无外部依赖。
 - **可选 OpenViking**：启用后由 OpenViking 接管（profile/recall/capture/commit），**停用本地 `nokoribi-memory` 组件**（存储/工具/快照）；两者互斥，不做双写/双读。
 - **边界**：openviking-server **不打包**；仓库只保留连接配置（endpoint、凭据 env/agenix、可选 peer/recall 参数）；server 由用户外部部署（uv/Docker/云），需自带 embedding + VLM provider。
-- **接入**：`@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本）作为 profile bundle；前置为 M13 Skill（`dsh-skill`/`dsh-skill-filesystem`）与 M14 MCP 客户端（`dsh-mcp-client`）；插件已验证兼容 DSH `0.2.1-rc.3`。
-- **门禁**：module-eval（本地行 disabled、连接 env）；无 server 启动不崩；fake server recall/capture；真实 server spike；配置命名在 M15 启动时最终落定。
+- **接入**：`@openviking/dsh-memory-plugin`（Apache-2.0，pin 版本）作为 profile bundle；前置为 M12 Skill（`dsh-skill`/`dsh-skill-filesystem`）与 M13 MCP 客户端（`dsh-mcp-client`）；插件已验证兼容 DSH `0.2.1-rc.3`。
+- **配置（已确认）**：`memory.openviking.enable`（默认 `false`）；其他跟 OpenViking 连接相关的配置全部放在 `memory.openviking.*`（`endpoint`、`apiKeyEnv` 指向 EnvironmentFile/agenix 变量且不写入 store、可选 `peerId`/`workspacePeer`/`recallMaxTokens` 等）。
+- **门禁**：module-eval（本地行 disabled、`memory.openviking.*` 连接 env）；无 server 启动不崩；fake server recall/capture；真实 server spike。
 
 ### 隐私
 

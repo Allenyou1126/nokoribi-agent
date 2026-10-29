@@ -26,8 +26,8 @@
 | 早期 `local-sandbox` host 概念（DSH Landlock 权限沙箱） | D44 干净 sandbox host | 用户澄清沙箱语义是"可回收/不保证持久"，不是权限沙箱 |
 | D149 “M9 = SSH host” | D165：M9 = QQ 按钮审批、M10 = host-aware 持久终端 + Web；SSH host 顺延（不占编号） | 两项日常可用性缺口优先；SSH 仍可只新增 provider，暂不排期 |
 | M8 的“按钮审批后置” | D166/D167：M9 在 C2C 审批落地按钮（契约 D163 不变；2026-10-29 代码完成，真实门禁待执行） | 平台内联键盘 + interaction 回调已具备，core 补生产者/解释器即可 |
-| D143 M5 不做 memory 自动注入 | D172–D174：M11 增加 pinned 快照自动注入（runtime context、每轮最多刷新一次、仅主会话） | 单主会话长期存在，需要跨会话记住用户偏好；快照机制不影响静态 system prompt/缓存；主动检索与“不做每轮自动检索”保留 |
-| D172 本地记忆不引入外部 provider | D175：OpenViking 作为可选后端（默认关闭；启用即停用本地 memory 组件；只保留连接配置，server 不打包；前置 M13 Skill + M14 MCP） | 用户确认可单独接入、单独配置；本地仍是默认实现，外部后端在 M15 排期 |
+| D143 M5 不做 memory 自动注入 | D172–D174：M16 增加 pinned 快照自动注入（runtime context、每轮最多刷新一次、仅主会话） | 单主会话长期存在，需要跨会话记住用户偏好；快照机制不影响静态 system prompt/缓存；主动检索与“不做每轮自动检索”保留 |
+| D172 本地记忆不引入外部 provider | D175：OpenViking 作为可选后端（默认关闭；启用即停用本地 memory 组件；只保留连接配置，server 不打包；前置 M12 Skill + M13 MCP） | 用户确认可单独接入、单独配置；本地仍是默认实现，外部后端在 M17 排期 |
 
 ## 16.2 被否决的方案（未采用，但讨论过）
 
