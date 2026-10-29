@@ -3,6 +3,16 @@ import { describe, expect, it } from "vitest";
 
 import { formatFullStatus, normalizeSandboxStatus } from "../src/status.js";
 
+const memory = {
+    activeEntries: 3,
+    archivedEntries: 1,
+    invalidEntries: 0,
+    bytes: 123,
+    pinnedEntries: 2,
+    snapshotChars: 456,
+    inject: "enabled" as const,
+};
+
 const details: FullStatusDetails = {
     workspace: "/work",
     state: "/home/state/agent-state.json",
@@ -61,12 +71,7 @@ const details: FullStatusDetails = {
             terminalSessions: 2,
         }),
     ],
-    memory: {
-        activeEntries: 3,
-        archivedEntries: 1,
-        invalidEntries: 0,
-        bytes: 123,
-    },
+    memory,
     recentErrors: [
         {
             at: "2026-01-01T00:00:00.000Z",
@@ -86,7 +91,8 @@ describe("full status", () => {
         expect(text).toContain("workspace: /work");
         expect(text).toContain("dsh: 0.2.1-rc.3");
         expect(text).toContain(
-            "memory: active=3 archived=1 invalid=0 bytes=123"
+            "memory: active=3 archived=1 invalid=0 bytes=123 " +
+                "pinned=2 snapshotChars=456 inject=enabled"
         );
         expect(text).toContain("goal-a1b phase=active rounds=2/9");
         expect(text).toContain("sandbox=gen=2");

@@ -3,6 +3,7 @@ import { unlink } from "node:fs/promises";
 
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle, AgentOptions } from "@deepseek-ai/dsh-agent";
+import type {} from "@deepseek-ai/dsh-attachment";
 import type {
     CommandInvocation,
     CommandResult,
@@ -49,6 +50,7 @@ import {
 } from "@nokoribi/shared";
 import type {} from "@nokoribi/shell-bash";
 
+import { createSendToUserTool, DEFAULT_SEND_FILE_MAX_BYTES } from "./files.js";
 import { parseGoalCommand } from "./goals/commands.js";
 import { installMainToolPolicy } from "./goals/main-policy.js";
 import { GoalManager } from "./goals/manager.js";
@@ -81,6 +83,8 @@ export interface AgentAppConfig {
     readonly goalDefaultMaxRounds?: number;
     /** Bound for one cold goal recovery. */
     readonly goalRecoveryTimeoutMs?: number;
+    /** Upper bound for one outbound file from `send_to_user` (default 32 MiB). */
+    readonly sendFileMaxBytes?: number;
     /** One-shot memory-curator route; defaults to the goal route. */
     readonly memoryProvider?: string;
     readonly memoryModel?: string;
@@ -232,9 +236,29 @@ export class Daemon {
             );
             this.ctx.shellHosts.requireDefaultHost();
             this.goals.install();
-            this.curator.install();
+            if (this.ctx.get("memory") !== undefined) {
+                this.curator.install();
+            } else {
+                this.logger.warn(
+                    "memory service is disabled; curator extraction is off"
+                );
+            }
             this.ctx.effect(() =>
                 this.ctx.tools.register(createStartGoalTool(this.goals))
+            );
+            this.ctx.effect(() =>
+                this.ctx.tools.register(
+                    createSendToUserTool({
+                        workspaceDir: this.paths.workspaceDir,
+                        maxBytes:
+                            this.config.sendFileMaxBytes ??
+                            DEFAULT_SEND_FILE_MAX_BYTES,
+                        channels: this.ctx.channels,
+                        saveFile: (input) =>
+                            this.ctx.attachments.saveFile(input),
+                        logger: this.logger,
+                    })
+                )
             );
             await this.ctx.channels.initialize();
             await this.recover();
@@ -760,24 +784,34 @@ export class Daemon {
             }
         }
 
-        let memory = {
+        let memory: FullStatusDetails["memory"] = {
             activeEntries: 0,
             archivedEntries: 0,
             invalidEntries: 0,
             bytes: 0,
+            pinnedEntries: 0,
+            snapshotChars: 0,
+            inject: "disabled",
         };
-        try {
-            const stats = await this.ctx.memory.stats();
-            memory = {
-                activeEntries: stats.active,
-                archivedEntries: stats.archived,
-                invalidEntries: stats.invalid,
-                bytes: stats.bytes,
-            };
-        } catch (error) {
-            this.logger.warn("failed to read memory stats", {
-                error: errorMessage(error),
-            });
+        const memoryService = this.ctx.get("memory");
+        if (memoryService !== undefined) {
+            try {
+                const stats = await memoryService.stats();
+                const runtime = memoryService.runtimeStatus;
+                memory = {
+                    activeEntries: stats.active,
+                    archivedEntries: stats.archived,
+                    invalidEntries: stats.invalid,
+                    bytes: stats.bytes,
+                    pinnedEntries: stats.pinned,
+                    snapshotChars: runtime?.snapshotChars ?? 0,
+                    inject: runtime?.enabled === true ? "enabled" : "disabled",
+                };
+            } catch (error) {
+                this.logger.warn("failed to read memory stats", {
+                    error: errorMessage(error),
+                });
+            }
         }
 
         const fastEffort = this.config.reviewFastReasoningEffort?.trim();

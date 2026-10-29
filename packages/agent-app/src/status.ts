@@ -1,5 +1,6 @@
 import type {
     FullGoalStatus,
+    FullMemoryStatus,
     FullSandboxStatus,
     FullScheduleStatus,
     FullStatusDetails,
@@ -86,6 +87,18 @@ function formatSandbox(sandbox: FullSandboxStatus): string {
     );
 }
 
+function formatMemory(memory: FullMemoryStatus): string {
+    return (
+        `memory: active=${String(memory.activeEntries)} ` +
+        `archived=${String(memory.archivedEntries)} ` +
+        `invalid=${String(memory.invalidEntries)} ` +
+        `bytes=${String(memory.bytes)} ` +
+        `pinned=${String(memory.pinnedEntries)} ` +
+        `snapshotChars=${String(memory.snapshotChars)} ` +
+        `inject=${memory.inject}`
+    );
+}
+
 function formatSchedule(schedule: FullScheduleStatus): string {
     return (
         `- ${schedule.id} [${schedule.kind}] ${schedule.title} ` +
@@ -122,10 +135,7 @@ export function formatFullStatus(details: FullStatusDetails): string {
         `lastStarted: ${details.lastStartedAt ?? "-"}`,
         `restart: ${details.restartReason ?? "-"}`,
         `nextOutboxSeq: ${String(details.nextOutboxSeq)}`,
-        `memory: active=${String(details.memory.activeEntries)} ` +
-            `archived=${String(details.memory.archivedEntries)} ` +
-            `invalid=${String(details.memory.invalidEntries)} ` +
-            `bytes=${String(details.memory.bytes)}`,
+        formatMemory(details.memory),
         "goals:",
         ...(details.goals.length === 0
             ? ["- (none)"]

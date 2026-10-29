@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/dsh-attachment";
 import type {} from "@deepseek-ai/dsh-goal";
 import type {} from "@deepseek-ai/dsh-permission-presets";
 import type {} from "@deepseek-ai/dsh-schedule";
@@ -10,6 +11,16 @@ import type {} from "@nokoribi/memory";
 import { Daemon, type AgentAppConfig } from "./daemon.js";
 
 export { Daemon } from "./daemon.js";
+export {
+    createSendToUserTool,
+    DEFAULT_SEND_FILE_MAX_BYTES,
+    readOutboundFile,
+} from "./files.js";
+export type {
+    OutboundFileSource,
+    SaveOutboundFile,
+    SendToUserToolOptions,
+} from "./files.js";
 export type { AgentAppConfig } from "./daemon.js";
 export { assistantText, planTurnEnd } from "./replies.js";
 export type { TurnReplyPlan } from "./replies.js";
@@ -31,7 +42,7 @@ export const inject: string[] = [
     "subagents",
     "schedule",
     "sessionController",
-    "memory",
+    "attachments",
     "tools",
 ];
 
@@ -62,6 +73,10 @@ export const Config: unknown = z.object({
     reviewStrongModel: z.string(),
     reviewStrongReasoningEffort: z.string(),
     reviewTimeoutMs: z.natural().min(1),
+    sendFileMaxBytes: z
+        .natural()
+        .min(1)
+        .default(32 * 1024 * 1024),
 });
 
 /** Start the daemon lifecycle. */

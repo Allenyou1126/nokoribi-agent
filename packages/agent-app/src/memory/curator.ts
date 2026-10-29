@@ -52,8 +52,9 @@ export function buildCuratorPrompt(input: CuratorPromptInput): string {
         "2. 只写持久、可复用、跨会话仍有价值的内容；临时任务状态、工具输出、完整转录不要写。",
         "3. 不写密钥、token、密码或其它敏感凭据；不写可从仓库直接读到的大段内容。",
         "4. 每条 entry 使用有意义的 title、`type:*`/`project:*`/`topic:*` tags 和简洁 body；source 使用 `goal:<短 id>`。",
-        "5. 最多写入 3 条；已有条目能更新时优先更新，确需取代时使用 supersedes。",
-        "6. 如果没有值得长期保留的内容，不要写入；直接结束。",
+        "5. 用户级偏好/身份（type:person / type:preference）写 pinned: true；其他条目默认不 pin；memory write 支持 pinned。",
+        "6. 最多写入 3 条；已有条目能更新时优先更新，确需取代时使用 supersedes。",
+        "7. 如果没有值得长期保留的内容，不要写入；直接结束。",
         "",
         "不要向用户或父 agent 发消息；不要创建 goal；不要执行无关任务。",
     ].join("\n");
