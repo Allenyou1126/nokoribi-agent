@@ -78,7 +78,9 @@
 | 子代理审批补丁复杂 | 中 | goal 工具被拒后无法请求用户 | V2 已验证；补丁写 child `ask` 并修正 delegation 文案；仍保留 report 回退 |
 | 多 goal 汇报噪声/token 消耗 | 中 | 主 agent 被刷屏、成本上升 | 提示词约束里程碑汇报；无并发上限（D96）为用户选择 |
 | memory 全局跨项目泄露 | 中 | 项目事实混在一起 | 只全局（D67）；tags 标记；不存秘密 |
-| memory 主动检索的回忆缺口 | 中 | 模型不 search 就“忘记”；`/clear` 后无自动预热 | M5 接受（D143）；提示词要求先 search；后续版本评估自动注入 |
+| memory 主动检索的回忆缺口 | 中 | 模型不 search 就“忘记”；`/clear` 后无自动预热 | M11 设计已确认自动注入（D172–D174）：主会话 pinned 快照走 runtime context、每轮最多刷新一次；提示词要求先 search；实现待执行 |
+| 记忆自动注入的持久化提示注入面（设计已确认，实现待执行） | 中高 | 模型写入的记忆进入上下文后可能长期改变行为，且比一次性外部内容更持久 | 写入仍过 Auto review + secret guard；快照固定“数据非指令”声明；pinned 预算/数量上限；`memory.inject.enable=false` 可关闭；残余风险接受（D174） |
+| 记忆快照 token 与过期（设计已确认，实现待执行） | 中 | 快照常驻上下文；旧快照留在历史，精确信息可能过期 | 默认 3000 字符/20 条；每轮最多追加一次；标题+单行摘要（全文用 `memory search/read`）；超预算 footer；可配置 |
 | schedule 存储/交付失败 | 中 | 存储损坏阻止启动；崩溃可能重复交付 | fail loud；at-least-once 已接受；`/clear` 删除旧任务；进程测试覆盖逾期 |
 | curator 成本/噪声 | 低中 | 每个终态 goal 多一次模型调用 | 按 goal+phase 去重、超时、失败静默、最多 3 条；可 `NOKORIBI_MEMORY_CURATOR=false` |
 | 测试覆盖不足（无 VM/CI） | 中 | 部署问题漏检 | 手工验收清单；flake checks；用户接受 |
@@ -114,7 +116,7 @@
 - sandbox 不是安全隔离；只是干净/可重置环境 + 禁提权。
 - 无真实 IM、无 web UI、无 VM 测试、无 CI。
 - 全局 memory、无加密、root 可读。
-- memory 只做主动检索，不自动注入；`/clear` 后可能想不起旧信息（D143）。
+- memory 在 M11 设计中改为自动注入 pinned 快照（D172–D174，实现待执行）：快照可能过期、旧快照留在历史、精确信息仍需主动检索；记忆内容作为长期上下文存在持久化提示注入风险（缓解后接受）。
 - schedule 是 at-least-once，崩溃可能重复交付；存储损坏 fail loud。
 - 发行版运行时依赖官方 Node 二进制（D145）；Node/DSH 升级时必须复测 native addon，且该二进制不受 nixpkgs 补丁覆盖。
 - NixOS 12.12 手工验收尚未在当前 Arch 开发机执行；在目标机记录前不能把 M6 视为生产验收完成。

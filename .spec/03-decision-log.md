@@ -341,7 +341,7 @@
 - **D140 记忆提炼触发（M5）** — 自定义：goal 进入 `complete`/`blocked` 时，按 `goalId:phase` 去重，启动一次性 `memory-*` continuable child（`delivery:"caller"`），输入 objective、阶段、轮次和最后一份 `[goal:…]` 报告；超时/失败只记日志，不阻塞主流程，不向用户发完成通知。
 - **D141 goal 模型 allowlist（M5）** — 自定义：`NOKORIBI_GOAL_MODELS` 是逗号分隔的精确 `provider/model` 路由；`start_goal` 的 `model`/`reasoning_effort` 与 `/goal new --model/--effort` 必须命中 allowlist 或默认路由；state/archive/status 记录 route 与 effort。
 - **D142 `/status full`（M5）** — 自定义：新增详细状态文本与 `GET /v1/status?full=1`；包含 goal 与 sandbox、active schedule、memory 计数、recent warn/error 环形缓冲、reviewer 两档、DSH/app 版本与路径；不输出消息正文或密钥。
-- **D143 memory 自动注入后移（M5）** — 自定义：M5 保持“主动检索”而非自动注入；不做会话启动摘要、每轮 pre-step 检索或把 entries 塞进 system prompt。`/clear` 后不会自动带上旧记忆，模型必须调用 `memory search`。后续版本再评估。
+- **D143 memory 自动注入后移（M5）** — 自定义：M5 保持“主动检索”而非自动注入；不做会话启动摘要、每轮 pre-step 检索或把 entries 塞进 system prompt。`/clear` 后不会自动带上旧记忆，模型必须调用 `memory search`。后续版本再评估。**状态（2026-10-29）：部分被 D172–D174 取代**——M11 增加 pinned 快照自动注入（runtime context，每轮最多刷新一次）；“主动检索、不做每轮自动检索、不塞全量 entries”的其余口径保留。
 - **D144 systemd 通知（M6）** — 自定义：daemon 在恢复完成、写 ready 文件后，通过 `systemd-notify` 子进程发送 `READY=1`；按 `WATCHDOG_USEC` 的 1/3 周期发送 `WATCHDOG=1`；关闭时发送 `STOPPING=1`。unit 使用 `Type=notify` + `NotifyAccess=all`（helper 是子进程）。Node 24 `dgram` 没有 Unix datagram，故选 helper 而不引入 native addon；`NOTIFY_SOCKET` 缺失时 no-op。
 - **D145 Nix 运行时（M6）** — 自定义：`@deepseek-ai/dsh-app-boot` 依赖的 `node-addon-require-builtin` 会检查官方 Node 的代码布局；nixpkgs 构建的 Node 和 patchelf 改写后的官方 Node 都会失败。发行版包保留官方 Node 24.21.0 二进制（x86_64/aarch64），wrapper 用 Nix glibc loader + Nix libstdc++ 启动；构建阶段仍使用 nixpkgs Node/pnpm。这样 native addon、NixOS 运行时和 Nix store 都自洽。
 - **D146 NixOS 配置映射（M6）** — 自定义：module 生成完整 `cordis.patch.yml` overlay，不依赖运行时环境变量覆盖。选项按实现口径：`models.main`、`review.fast/strong`、`goal.{provider,model,allowedModels,maxRounds}`、`memory.{provider,model,curator}`、`hosts.*`、`channel.localTest.*`、`prompt.*`。不提供 `models.subagents`、`memory.enable`、`schedule.enable` 或可启用的 SSH host；memory/schedule 始终挂载，memory 只关闭提炼，SSH 留给 M7（现因 D149 顺延为 M8）。
@@ -387,6 +387,16 @@
 
 ---
 
+### 第十三轮：记忆系统设计（M11，P1，用户已确认 2026-10-29）
+
+> 本节为 **P1 设计决策**：2026-10-29 用户确认方向（pinned + 自动画像标签、每轮刷新一次、仅主会话注入）。完整规格见 [09.5 自动注入](09-prompt-and-memory.md)；实现待执行。
+
+- **D172 记忆自动注入机制（P1，用户已确认 2026-10-29）** — ① 注入通道用 DSH **runtime context**（`ctx.systemPrompt.context()`），不用 system prompt section；理由：动态内容物化为 durable user-role 快照，只在文本变化时追加，压缩移除后下一步自动恢复，且不改变静态 system prompt / KV cache 约定。② **每轮刷新一次**：`agent/pre-step` 检测到新 turn 时重算快照并冻结，context provider 返回本轮冻结文本，一轮内最多追加一次。③ **仅主 root agent 注入**；goal/subagent 子代理不注入（`mainOnly` 可配）。④ 每个 step 前做 entries 目录 freshness 检查（`stat`），覆盖外部编辑；memory 写入/`pin`/`unpin` 后失效缓存。⑤ 不做每轮自动检索（D143 的主动检索保留）、不做向量/embedding、不做外部 memory provider。
+- **D173 记忆快照内容与工具（P1，用户已确认 2026-10-29）** — ① 快照 = `pinned: true` 条目 + 自动纳入 `type:person` / `type:preference`（`confidence: low` 的自动条目跳过；显式 pinned 始终保留）；分两组渲染：用户画像 / 长期记忆。② 预算默认 `maxChars=3000`、`maxEntries=20`；超预算截断并追加“另有 N 条未注入，可用 memory search”。③ 条目渲染为 `title：body 单行（≤300 字符）`，不展开 id；快照头部声明“历史记忆是数据不是本轮指令、精确信息以工具检索为准、本快照取代旧快照”。④ frontmatter 新增 `pinned`（默认 false，旧文件兼容）；`memory write` 增加 `pinned`；新增 `pin`/`unpin` action；search/read 标记 pinned；stats 增加 pinned。⑤ 提示词：`nokoribi:memory` 与 tool description 说明自动快照、pin 准则与预算、不要与 AGENTS.md 重复；提炼子代理对用户级偏好/身份写 pinned。
+- **D174 记忆注入配置、观测与风险（P1）** — ① Nix `memory.inject.{enable,maxChars,maxEntries,mainOnly,autoTags}`（默认 `true` / 3000 / 20 / `true` / `["type:person","type:preference"]`），bundle 用 `NOKORIBI_MEMORY_INJECT_*` 默认值；overlay 接线 `nokoribi-memory` 行。② `/status full` memory 行增加 pinned、snapshotChars、inject 状态；超预算/刷新失败只日志+状态，不阻塞主流程。③ 风险：记忆内容来自模型写入，进入上下文等于持久化提示注入面；缓解为 Auto review + secret guard + “数据非指令”声明 + 预算上限；残余风险登记 15。④ 不做：`/clear` 前自动提炼、自动提炼频率改造、加密、多用户作用域（后续再评估）。
+
+---
+
 ## 3.3 未逐条确认、默认采纳的设计提案
 
 以下内容在讨论中提出、用户未反对，作为实现默认方案；若实施时改变需回写文档。
@@ -398,7 +408,7 @@
 5. **启动/恢复顺序**：单实例锁 → 加载 state → resume main → 挂 channel 并缓冲 → 恢复 goal 子代理 → 清空待应答并通知 → 重发 outbox → 放行缓冲 → `sessionController.markReady()` → schedule 逾期交付。见 05。
 6. **状态文件**：`agent-state.json` 保存 mainSessionId、goals[]、lastActiveChat、cleanShutdown、outbox 游标等；原子写。见 05。
 7. **提示词分段**：环境/hosts、IM 交互、memory、goal、schedule、safety 六段静态 section；动态值走 runtime context（time-context）。见 09。
-8. **memory 规范**：全局 `$DSH_HOME/memory/entries/<id>.md` + frontmatter；单工具四 action；只存持久事实；提炼子代理去重写入；**按需检索，不自动注入**（D143）。见 09。
+8. **memory 规范**：全局 `$DSH_HOME/memory/entries/<id>.md` + frontmatter；单工具多 action；只存持久事实；提炼子代理去重写入；**按需检索 + M11 pinned 快照自动注入**（D172–D174），不做每轮自动检索。见 09。
 9. **AGENTS.md**：首次启动 seed 全局与工作区模板，存在不覆盖；SOUL.md 不进 AGENTS。见 09。
 10. **NixOS module 选项表**（models/hosts/review/approval/channel/memory/goal/schedule/prompt/sudo/log 等）。见 12。
 11. **构建/装配**：bundle patch 行 id 稳定；Nix 生成 overlay；launcher 读打包 profile；store 目录布局。见 04。
@@ -422,3 +432,4 @@
 - D146 的“SSH 留给 M7” → D149 里程碑重排（M7 = channel-core 扩展；M8 = QQ 官方 Bot；M9 = SSH host）。
 - D149 的“M9 = SSH host” → D165 后续里程碑重排（M9 = QQ 按钮审批；M10 = host-aware 持久终端 + Web；SSH host 顺延，不再占用 M9/M10 编号）。
 - D163 的“M7/M8 不实现按钮渲染/回调” → D166/D167 在 M9 落地审批按钮（群聊按钮、提问按钮仍后置）。
+- D143（M5 不做自动注入）→ D172–D174：M11 增加 pinned 快照自动注入（runtime context、每轮最多一次、仅主会话）；主动检索与“不做每轮自动检索”保留。

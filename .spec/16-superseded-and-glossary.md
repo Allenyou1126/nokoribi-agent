@@ -26,6 +26,7 @@
 | 早期 `local-sandbox` host 概念（DSH Landlock 权限沙箱） | D44 干净 sandbox host | 用户澄清沙箱语义是"可回收/不保证持久"，不是权限沙箱 |
 | D149 “M9 = SSH host” | D165：M9 = QQ 按钮审批、M10 = host-aware 持久终端 + Web；SSH host 顺延（不占编号） | 两项日常可用性缺口优先；SSH 仍可只新增 provider，暂不排期 |
 | M8 的“按钮审批后置” | D166/D167：M9 在 C2C 审批落地按钮（契约 D163 不变；2026-10-29 代码完成，真实门禁待执行） | 平台内联键盘 + interaction 回调已具备，core 补生产者/解释器即可 |
+| D143 M5 不做 memory 自动注入 | D172–D174：M11 增加 pinned 快照自动注入（runtime context、每轮最多刷新一次、仅主会话） | 单主会话长期存在，需要跨会话记住用户偏好；快照机制不影响静态 system prompt/缓存；主动检索与“不做每轮自动检索”保留 |
 
 ## 16.2 被否决的方案（未采用，但讨论过）
 
@@ -87,9 +88,9 @@
 - 删除 goal 子代理会话（DSH 无删除 API；保留 session + 索引）。
 - 归档用 web-debug 查看（不做 web-debug；看文件）。
 - memory 按项目作用域/多作用域（只全局）。
-- memory 全量注入/每轮自动注入（M5 只做按需检索；自动注入按 D143 后移）。
+- memory 全量注入/每轮自动检索（只做 pinned 快照 + 主动检索；D143 → D172–D174）。
 - 向量检索/嵌入（v1 不做）。
-- 用 session search 做记忆（未纳入 v1）。
+- 用 session search 做记忆（会话检索另立里程碑；memory 仍以 entries 快照/工具检索为主）。
 - 每条记忆一个文件改为单 MEMORY.md / JSONL（用户选每文件）。
 - SOUL.md 运行时热重载（启动加载）。
 - persona complete 模式（会丢工具引导）。

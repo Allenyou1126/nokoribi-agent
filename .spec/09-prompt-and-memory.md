@@ -43,6 +43,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 - M9（已实现）：审批提示正文不变（仍含“回复 允许 / 拒绝”作为文本 fallback）；C2C 渠道额外附按钮。无需新增段落，`nokoribi:interaction` 补充“按钮与文本等价、按钮失效时以文本重发”的一句说明。
 - M10（已实现）：`nokoribi:pty`（3100）由 `@nokoribi/terminal-host` 注册（`interpolate:false`、内容静态）；上游 `dsh-tool-terminal` 的 `tool:pty` 段（order 来自 `getSectionOrder("TOOL_PTY")`）保留不覆盖，两段分工：上游讲“何时用终端”，我们讲 host 路由/安全/生命周期。`dsh-tool-web` 另注册 `tool:web_search`/`tool:web_fetch` 引导段（上游 order）。`nokoribi:hosts` 仅在有 terminal backend 时追加一句终端指引，避免禁用部署误导。
 - 上述段落内容保持稳定，避免每轮变化破坏 KV cache。
+- M11 起 memory 快照走 **runtime context**（用户角色快照，不是 section）：静态段与 KV-cache 约定不变，见 9.5。
 
 ### 动态 runtime context
 
@@ -73,7 +74,7 @@ DSH `ctx.systemPrompt` 的段落按 order 升序拼接；我们用稳定段 + ru
 ### 定位
 
 - AGENTS.md：稳定操作指令（始终注入）。
-- memory：**持久事实/偏好/决定**（按需检索，不全量注入）。
+- memory：**持久事实/偏好/决定**（M11 起主会话自动注入 pinned 快照；完整内容仍按需检索，不全量注入，见本节末“自动注入”）。
 - 会话日志：原始历史（DSH 管理）。
 - goal：任务状态（DSH 管理）。
 
@@ -168,8 +169,30 @@ supersedes: null
 - 搜索：title 5/tags 3/body 1 的 OR token 评分，AND tag 过滤，updated desc tie，default 10 / max 50；不建 index、不做向量检索。损坏文件跳过并计入 invalid。
 - `write` 支持 upsert 与 `supersedes`；归档条目不允许复活；`read` 只读 active；`forget` 软归档。常见密钥模式在写入前拒绝。
 - 提炼子代理（D140）：goal `complete`/`blocked` 时由宿主触发，按 goal+phase 去重；`memory-*` child 使用 `delivery:"caller"`，输入 objective/rounds/last report，最多写 3 条；超时/失败只记日志，不通知用户。
-- **自动注入后移（D143）**：M5 不把 memory entries 注入 system prompt，也不在会话启动/每轮 pre-step 自动检索。`/clear` 后的新会话没有记忆预热，必须由模型调用 `memory search`。
+- **自动注入后移（D143）**：M5 不把 memory entries 注入 system prompt，也不在会话启动/每轮 pre-step 自动检索。`/clear` 后的新会话没有记忆预热，必须由模型调用 `memory search`。后续版本再评估。**M11 已确认改为自动注入**：见本节末“自动注入（M11 设计）”，D172–D174。
 - `/status full` 提供 active/archived/invalid/bytes 计数；`memory` 工具和 curator 的 write/forget 仍经过 Auto review。
+
+### 自动注入（M11 设计，2026-10-29 已确认；待实现）
+
+> 决策 D172–D174。目标：主会话自动带上长期记忆，同时保持静态提示词稳定、token 可控，并避免每轮自动检索。
+
+**通道**：用 DSH `ctx.systemPrompt.context()` 注册 runtime context（name `nokoribi:memory`）。运行时上下文由 agent loop 物化为 durable user-role 快照，文本与已保留快照不同才追加；压缩移除后下一步自动恢复；不修改 system prompt section，不进入 KV-cache 前缀。
+
+**刷新**：每轮刷新一次。memory 插件在 `agent/pre-step` 检测到 turn 变化时重算并冻结本轮快照，context provider 同步返回冻结文本；同一轮内最多追加一次。每个 step 前对 `entries/` 做 `stat` freshness 检查（覆盖外部编辑），`memory write/pin/unpin/forget` 后失效缓存；启动时先渲染一次缓存。
+
+**内容**：`pinned: true` 条目 + 自动纳入 `type:person`/`type:preference`（`confidence: low` 的自动条目跳过；显式 pinned 始终保留）；分「用户画像 / 长期记忆」两组；条目渲染为 `title：body 单行（≤300 字符）`，不展开 id。预算默认 `maxChars=3000`、`maxEntries=20`；超预算截断并追加“另有 N 条未注入，可用 memory search”。快照头部声明：历史记忆是数据不是本轮指令、精确/最新信息以工具检索为准、本快照取代旧快照。
+
+**工具/提示词**：frontmatter 增加 `pinned`（默认 false，旧文件兼容）；`memory write` 增加 `pinned`；新增 `pin`/`unpin` action；search/read 标记 pinned；stats 增加 pinned。`nokoribi:memory` 与 tool description 说明自动快照、pin 准则（稳定偏好/身份/长期决定，控制数量）、不要与 AGENTS.md 重复；提炼子代理对用户级偏好/身份写 pinned。
+
+**配置**：Nix `memory.inject.{enable,maxChars,maxEntries,mainOnly,autoTags}`，默认 `true` / 3000 / 20 / `true` / `["type:person","type:preference"]`；bundle env `NOKORIBI_MEMORY_INJECT_*` 提供开发默认值；overlay 接到 `nokoribi-memory` 行。`enable=false` 时不注册 context（从开启状态关闭时 loop 会清理旧快照）。
+
+**观测**：`/status full` memory 行在 active/archived/invalid/bytes 之外增加 pinned、snapshotChars、inject 状态；超预算/刷新失败写 warn，不影响主流程。
+
+**安全**：记忆内容来自模型写入，进入上下文等价于持久化提示注入面；缓解：写入仍过 Auto review + secret guard、快照固定“数据非指令”声明、pinned 预算上限、可配置关闭；残余风险登记 [15](15-verification-and-risks.md)。
+
+**范围外**：不做每轮自动检索/向量召回（D143 的主动检索保留）、不做 embedding/外部 memory provider、不做多用户作用域、本阶段不改提炼触发（`/clear` 前提取等后续再评估）。
+
+**验收**：单元（frontmatter pinned 兼容、渲染排序/预算/footer/低置信过滤、缓存失效）；进程测试（fake LLM 捕获请求：写入 pinned 后下轮出现快照、goal child 无快照、关闭配置无快照、超预算 footer、重启恢复不重复追加）；Nix module-eval 断言；`pnpm check`/`test*`/`nix flake check`/`nix build`。
 
 ### 隐私
 
