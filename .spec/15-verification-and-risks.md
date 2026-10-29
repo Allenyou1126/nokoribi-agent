@@ -20,6 +20,17 @@
 
 > V5 M5 补充：rc.3 `dsh-schedule` 不再给"插件加载后创建"的 agent 安装工具，而是 Host-wide 服务；交付依赖 `ctx.sessionController.resolveAgent()`。我们用最小 bridge 只解析当前 main，并在 `drainBuffered()` 后 markReady，进程测试覆盖了到期与 SIGKILL 逾期。
 
+## 15.1.1 M9/M10 规划待验证项（2026-10-27）
+
+| # | 验证项 | 为什么 | 验证方式 | 失败时的回退 |
+|---|---|---|---|---|
+| V10 | QQ `INTERACTION` intent（`1<<26`）能否随 Identify 订阅 | M9 按钮回调依赖它；平台可能要求申请/仅特定场景开放 | notes 的 #15 门禁：真实 Bot 订阅 `1<<25 \| 1<<26` 后 READY/收事件 | driver 降级为不订阅交互 intent（`approvalButtons=false` 或自动降级），文本审批保持可用 |
+| V11 | 内联键盘在 C2C 文本/Markdown 上的渲染与限制 | 按钮是否显示、label/行数/button data 长度未知 | notes 的 #16/#19 门禁：真实手机 QQ 观察 + 逐项构造超限 | 只保留文本审批；driver 校验并截断/跳过超限按钮 |
+| V12 | `BashTerminalBackend` 注入 `spawnTerminal`/`createSession` 是否够用 | M10 方案依赖上游公开导出面（非文档化 API） | 实现前 spike：构造 backend + fake/真实 PTY，跑 open/send/read/close | 回退 vendoring `dsh-terminal-bash` 并记录决策（D168） |
+| V13 | sandbox 内 `setpriv --no-new-privs` 下 PTY 交互 shell 可用性 | 沙箱终端要保留 no_new_privs/PATH guard 与 TTL | 目标机/开发机 Nix buildEnv 手工：`terminal_open` + send/close | 沙箱不提供持久终端（仅 local），或在 pin 语义确认前禁用 sandbox 终端 |
+| V14 | DeepSeek 搜索 API / 目标机网络出口 | `web_search` 默认走 Messages web_search；切新版 Search/Fetch API 需账号/接口可用 | 真实 key 发一次搜索；目标机 curl 搜索基址；记录延迟/结果 | 关掉 web 工具（`web.enable=false`）或退回 `dsh-web-fetch-http` + 其他搜索 provider |
+| V15 | sandbox 终端 pin 与 TTL/reset/`disposeSession` 顺序 | 终端打开时 TTL 回收/`/clear` 会竞争目录删除 | 集成/手工：打开终端后触发 TTL sweep、reset、`/clear`、SIGTERM | reset/dispose 在 pin>0 时拒绝并提示；`/clear` 前显式关闭 terminals |
+
 ## 15.2 其他实现期需确认的点
 
 1. `/clear` 时 outbox 中属于旧会话的未发送回复：M1 决定**保留并继续发送**（已写回 06/05）；后续里程碑如改变需再记录。
@@ -42,6 +53,10 @@
 18. 按钮审批 UX 与 `INTERACTION_CREATE` 的 `event_id` 前缀、`PUT /interactions/{id}` ack 仍在事实门禁中（D163 只预留契约；M8 不实现）。
 19. M8 真实 Bot 14 项平台事实门禁与 17.8.2 尚未执行；代码只按保守默认与 fake 自动化验收。门禁记录见 `.spec/notes/qq-fact-gate.md`。
 20. SDK 1.0.5 把 WS 关闭码 4009 当 `SESSION_TIMEOUT` 并重新 Identify（不是 Resume）；其它可恢复关闭走 Resume。真实平台若依赖 4009 resume，需后续评估。
+21. M9：action token/payload 的大小与 button 限制（`label` ≤10、data 长度、每行按钮数）需按 V11 校准；driver 侧应有兜底（超限跳过按钮，prompt 文本仍可回复）。
+22. M9：`PUT /interactions/{id}` 的 ack 时机（收到即 ack vs 处理完再 ack）与重复 ack 行为；计划收到并归一化成功后立即 ack code 0，处理失败只影响业务结果，不回滚 ack。
+23. M10：sandbox 终端 cwd 语义（工具把相对 cwd 解析成 workspace 绝对路径）——计划默认忽略并提示，或后续改成“schema 层禁止 sandbox terminal 传 cwd”。
+24. M10：`exemptTools` 的部署默认与审计口径（Web 豁免是否要额外记录一次 debug 审计）；`terminal_*` 的 reviewer 成本（每次 send 一次审查）需在提示词中引导合并操作。
 
 ## 15.3 风险登记
 
@@ -79,6 +94,15 @@
 | 官方 SDK 新依赖与升级维护 | 中 | `qqbot-nodejs` 1.0.x 演进；Nix FOD 哈希变更 | exact pin 1.0.5；升级 diff CHANGELOG + 真实 Bot 回归；`nix/deps.nix` 同步更新 |
 | 归档不可删除、磁盘增长 | 低 | 长期磁盘占用 | 用户接受；人工清理；memory/session 保留策略未设计 |
 | 审批/提问在纯文本渠道歧义 | 低中 | 误答/超时 | 串行、编号、帮助重提示、超时兜底 |
+| M9：`INTERACTION` intent 未开放/受限（代码已实现，门禁待测） | 中高 | 按钮不可用，甚至 Identify 失败 | driver 降级：不订阅 `1<<26`、`approvalButtons` 可关；文本审批保持；V10 门禁先测 |
+| M9：keyboard/button 平台限制或渲染差异（代码已实现，门禁待测） | 中 | 按钮不显示/点击无效/acked 语义不符 | V11/#19 门禁；超限跳过按钮；保留文本 fallback；driver 记录平台错误 |
+| M9：动作回调劫持/旧按钮误批（token 清理与 action 权威已实现） | 中 | 过期按钮误答新审批 | action 权威 + token 只在内存 + 失效提示；不从 fallback 文本回退审批；C2C-only |
+| M10：`BashTerminalBackend` 注入面变动 | 中高 | 升级 DSH 后持久终端不可用 | 固定 rc.3 + 升级回归（D171）；失败回退 vendoring（D168）；V12 spike |
+| M10：sandbox 终端生命周期竞争 | 中高 | 终端被 TTL/reset 回收、目录删除时 shell 仍活 | terminal pin + TTL 跳过 + reset/dispose 拒绝/显式关闭顺序；V15 验证 |
+| M10：持久终端 token 成本/输出过大 | 中 | 长 scrollback 与 send 结果消耗上下文 | 上游 `maxResultBytes`/结果截断 + 提示词要求有界使用；可配置 |
+| M10：终端交互式状态绕过审查 | 中 | reviewer 只审 `terminal_send` 文本，难跟踪前台进程状态 | 每次 send 仍审查；提示词约束；风险接受并登记 |
+| M10：Web 工具豁免审查 | 中高 | 外部内容注入且无 reviewer 兜底 | provider 自带 SSRF/大小/重定向限制；结果标记不可信；豁免列表可配置；风险接受（D170） |
+| M10：Web provider API/网络不可用 | 中 | `web_search`/`web_fetch` 失败影响任务 | 结构化错误返回模型；可切 provider/关闭 web；V14 门禁；目标机网络前置 |
 | 本地测试通道不是真实 IM | 中 | 无法验证真实平台行为 | v1 明确后置；真实适配器需单独里程碑 |
 
 ## 15.4 已接受的残余风险（汇总）
@@ -97,10 +121,14 @@
 - QQ 官方 Bot 的准入边界就是平台限制：任何能被加入开发体验用户或在你群里 @ 机器人的人都能驱动全权限 agent；若 `sudo.enable=true` 等价于远程 root 入口（D152 已接受，建议保持 sudo 关闭、只加可信群）。
 - QQ 官方主动推送已于 2025-04-21 下线：提醒/系统通知在 QQ-only 部署可能无法送达；D161/D162 已在 M7 core 实现 active 尝试 + 失败 defer 到下次入站补投，但仍不能承诺主动触达。
 - M7 的 deferred 通知受 TTL/上限约束，长期无入站会丢失最旧项；补投依赖用户下一次发言（平台限制）。
-- M7 的 actions 只是契约与持久化预留，未实现按钮渲染/回调；M8 也未订阅 `INTERACTION_CREATE`，按钮审批仍后置。
+- M7 的 actions 只是契约与持久化预留，M8 未订阅 `INTERACTION_CREATE`；M9 已在 C2C 审批落地按钮（代码完成，真实门禁待执行），群聊/提问按钮仍后置。
 - M8 的代码与 fake 自动化已完成，但真实平台 14 项门禁、17.8.2 与目标机部署尚未执行；在记录前只能称“代码完成”，不能称 M8 验收通过。
 - QQ 平台可封禁机器人或账号且不支持解封；AI 输出合规由用户与提示词承担，M8 不做内容审核服务。
 - 官方 SDK 引入维护成本：`@tencent-connect/qqbot-nodejs` 版本与协议行为需随平台更新回归；升级时同步 lock 与 `nix/deps.nix` 哈希。
+- M9 的按钮只是审批 UX 增强：C2C 之外（群聊/提问）仍是文本；平台限制或 intent 不可用时自动回退文本，不阻塞审批流程。
+- M10 的持久终端是**进程内**的：daemon 重启、`/clear`、agent 释放即丢失 shell 状态；跨重启恢复不在范围。
+- M10 的 Web 工具豁免 Auto review：外部内容可能注入模型且无 reviewer 兜底；依赖 fetch provider 自身限制、结果“不可信内容”标记与可配置豁免列表（D170）。
+- M10 的终端复用依赖上游 `BashTerminalBackend` 公开导出面；DSH 升级可能破坏该注入点，失败时按 D168 回退 vendoring。
 
 ## 15.5 停止/回退条件（建议）
 
@@ -110,3 +138,7 @@
 - 若 V7（Nix 固定输出构建）不可行：重新评估薄启动器打包方式（容器/venv 式），但保持版本锁定。
 - 若 M8 真实 Bot 实测 WebSocket 已不可用（平台改为仅 WebHook）：暂停 QQ driver 实现，评估 WebHook + 公网回调/TLS 方案（与当前无入站端口部署冲突）或改选其他平台。
 - 若 M8 实测主动推送完全不可用：按 D161 的 defer 方案补投，并在 README/规格中写明“提醒时效性受平台限制”；评估后续通知渠道（如第二 IM 适配器）。
+- 若 V10/V11（INTERACTION intent/keyboard）不可用：M9 降级为纯文本审批（保留代码与契约），不宣称按钮 UX；必要时关闭 `approvalButtons`。
+- 若 V12（`BashTerminalBackend` 注入点）不可行：按 D168 回退 vendoring `dsh-terminal-bash`；若仍不可行，暂停 sandbox 终端，仅提供 local 持久终端并重新评估 host-aware 要求。
+- 若 V13（sandbox PTY）不可用：M10 先交付 local host 持久终端 + Web，sandbox 终端作为后续增强，需在 README/规格中标注。
+- 若 V14（搜索/网络）不可用：`web.enable=false` 发行，保留代码路径与 provider 配置，待网络/账号条件满足后再启用。

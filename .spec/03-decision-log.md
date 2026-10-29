@@ -158,6 +158,13 @@
 | D160 | IM 能力位/窗口（P1） | markdown basic、maxTextLength 4500、maxReplies 4、`c2c:`/`group:`、replySeq |
 | D161 | 提醒/通知降级（用户已确认） | **B：active 尝试 + 失败后 defer（下次入站以被动回复补投）**；A 丢失风险 / C 换渠道不采用 |
 | D164 | M8 实现口径（P1） | SDK protocol 薄封装；显式 msg_seq/HTTP 200 body code；4009 由 SDK re-identify；flat Nix 选项、无 sandbox/白名单；零依赖 fake；不改 core |
+| D165 | 后续里程碑排期（P1，用户已确认） | **M9 = QQ 按钮审批；M10 = host-aware 持久终端 + Web 能力**；原“M9 = SSH host”顺延 |
+| D166 | QQ 按钮审批范围与 UX（P1，用户已确认） | 仅审批；2 按钮「允许一次/拒绝」；不补发确认消息；**仅 C2C**；群聊/提问保持文本；文本 fallback 保留；超时=拒绝 |
+| D167 | 动作回调实现口径（P1） | core 产出/解释 action；action 权威、失效不回退文本；ack `PUT /interactions/{id}`；intents `1<<26` + 降级；local-test 可注入；群聊剥离 |
+| D168 | 持久终端 host-aware（P1，用户已确认） | 复用 `dsh-terminal` + `dsh-tool-terminal` + `BashTerminalBackend` 注入 `spawnTerminal`；type=host id；host 协议 `terminalLaunch` + sandbox pin；进程内持久；失败回退 vendoring |
+| D169 | Web provider 默认（P1，用户已确认） | 双 provider 挂载；默认 `deepseek-official` 搜索 + `http` 抓取；可切 `deepseek-search-api`/`deepseek-fetch-api`；复用 `DEEPSEEK_API_KEY` |
+| D170 | Web 工具豁免 Auto review（P1，用户已确认） | `exemptTools` 默认 `["web_search","web_fetch"]`；其余工具仍逐次审查；残余风险登记 15 |
+| D171 | 新增 DSH 依赖与升级回归（P1） | 依赖固定 `0.2.1-rc.3`；升级回归 `BashTerminalBackend` 注入签名、reviewer patch、web provider id、sandboxPolicy 行为 |
 
 ---
 
@@ -366,6 +373,20 @@
 
 ---
 
+### 第十二轮：后续改进（M9/M10，P1，用户已确认 2026-10-27）
+
+> 本节为 **P1 规格决策**：2026-10-27 用户确认需求后完成规划并落盘。完整规格见 [18](18-qq-button-approval.md)（M9）与 [19](19-persistent-terminal-and-web.md)（M10）。
+
+- **D165 后续里程碑排期（P1，用户已确认 2026-10-27）** — 在 M8 代码完成、真实门禁待执行的基础上，新增两个 v1 后增强里程碑：**M9 = QQ 按钮审批（审批 UX）**、**M10 = host-aware 持久终端 + Web Search/Fetch 能力补齐**。原 D149 中“M9 = SSH host”顺延、不再占用 M9/M10 编号（见 16）。理由：两项都是日常可用性的直接缺口；终端/Web 可本地完整验收，按钮真实平台验收沿用 M8 门禁并新增交互事实门禁。规格见 18/19 与 14.10/14.11。
+- **D166 QQ 按钮审批范围与 UX（P1，用户已确认 2026-10-27）** — ① 只有 approval（🔐）使用按钮卡片；`ask_user_question`（❓）暂不改按钮，登记为后续增强。② 两个 callback 按钮：「允许一次」「拒绝」；不提供“始终允许”（DSH `ApprovalOutcome` 只有 `allowed-once`/`rejected`/`cancelled`/`unavailable`，reviewer 也无持久 grant）。③ 点击后**不补发**确认消息，依赖 `PUT /interactions/{id}` 的 ack 反馈。④ **仅 C2C 单聊**启用按钮；群聊保持文本审批（避免群成员可点击与权限指定不确定性）。⑤ 文本回复通道完全保留（允许/拒绝/1/2、超时=拒绝、`/stop`/`/clear` 中止语义不变）。⑥ 规格见 18。
+- **D167 动作回调实现口径（P1）** — ① channel-core 产出/解释 `OutboundAction`：broker 为每个待审批交互生成 2 个 `callback` action（短 token，payload 为小 JSON `{"k":"<token>","t":"<fallback>"}`），维护 token→{interactionId,outcome} 映射并在 settle/abort/timeout 清理。② **action 权威**：`process()` 先 `broker.handleAction()`；未知/过期 action 只提示一次“按钮已失效”，不回退把 fallback 文本当审批（防止旧按钮误批新交互）；无 action 的文本路径不变。③ QQ driver 收到 `INTERACTION_CREATE` 先 ack（`PUT /interactions/{id}`，code 0/1/4），再交 ingress；仅 type=11；`messageId=event.id` 用于去重；intents 增加 `1<<26` 并在 Identify 受限时降级重连（health 标记）。④ actions 仅当 driver 能力位为 true 时下发（D163 已有），且 QQ driver 只在 C2C 渲染；群聊剥离。⑤ local-test 通道支持注入 action 供进程测试。⑥ 规格与门禁见 18 / notes/qq-fact-gate.md。
+- **D168 持久终端 host-aware 复用方案（P1，用户已确认 2026-10-27）** — 持久终端**必须 host-aware**（模型可选择 `local:*`/`sandbox:*`），**进程内**持久（跨工具调用保留 shell 状态；daemon 重启/`/clear`/agent 释放即关闭），优先复用 DSH。实现：原样复用 `@deepseek-ai/dsh-terminal`（服务）与 `@deepseek-ai/dsh-tool-terminal`（6 工具），利用 `@deepseek-ai/dsh-terminal-bash` 公开导出的 `BashTerminalBackend` 构造函数注入 `spawnTerminal`：按已注册 host 各注册一个 backend（`type`=host id），注入实现经新 host 协议 `terminalLaunch()` 拿 argv/cwd/env，再由 `ctx.subprocess.spawnTerminal` 起真 PTY；PTY 会话机制（就绪检测/scrollback/信号/清理）留在上游。需挂载 `@deepseek-ai/dsh-sandbox-policy`（`mode: danger-full-access`，仅策略解析，无强制）作为 backend 前置。若施工证明注入点不足，回退为 vendoring `dsh-terminal-bash` 并记录新决策。规格见 19。
+- **D169 Web 能力与 provider 默认（P1，用户已确认 2026-10-27）** — 同时挂载 `dsh-web` + 双搜索/抓取 provider（`deepseek-official` 搜索 + `http` 抓取为默认；`deepseek-search-api`/`deepseek-fetch-api` 可配置切换），显式 pin provider 以避免多 provider 歧义；`web_search`/`web_fetch` 默认启用；复用 `DEEPSEEK_API_KEY`（`apiKeyEnv` 默认），不新增密钥。真实搜索/API 可用性列为部署门禁。规格见 19。
+- **D170 Web 工具豁免 Auto review（P1，用户已确认 2026-10-27）** — `web_search`/`web_fetch` 不进入 vendored auto-review（在 `tools/pre-execute` hook 开头按 `exemptTools` 放行）；`terminal_*`/`bash`/文件等其余工具保持逐次审查。理由：只读外部内容、fetch provider 自带公网地址/SSRF/大小/重定向限制、搜索/抓取高频调用不宜每次多一轮 reviewer；残余风险（外部内容注入、绕过审查）登记 15。豁免列表可配置（默认 `["web_search","web_fetch"]`）。
+- **D171 新增 DSH 依赖与升级回归（P1）** — 新增依赖固定 `0.2.1-rc.3`：`dsh-terminal`、`dsh-terminal-bash`（类导入）、`dsh-tool-terminal`、`dsh-sandbox-policy`、`dsh-web`、`dsh-web-search-deepseek`、`dsh-web-fetch-http`、`dsh-web-deepseek-api`、`dsh-tool-web`，以及模块级库 `dsh-credentials`/`dsh-launch-environment`/`dsh-timeout`/`dsh-http-proxy`/`dsh-output-retention`。升级 DSH 时必须回归：`BashTerminalBackend` 构造/注入签名、auto-review `tools/pre-execute` 拦截点与 patch、web provider id/配置、`sandboxPolicy`/session projection 行为。`nix/deps.nix` FOD 哈希与 lock 随依赖更新。
+
+---
+
 ## 3.3 未逐条确认、默认采纳的设计提案
 
 以下内容在讨论中提出、用户未反对，作为实现默认方案；若实施时改变需回写文档。
@@ -399,3 +420,5 @@
 - D11（v1 仅消息闭环）→ D125 六阶段扩展。
 - D97（通用 `subagent` 创建 goal）→ D136（专用 `start_goal` + 宿主创建）。
 - D146 的“SSH 留给 M7” → D149 里程碑重排（M7 = channel-core 扩展；M8 = QQ 官方 Bot；M9 = SSH host）。
+- D149 的“M9 = SSH host” → D165 后续里程碑重排（M9 = QQ 按钮审批；M10 = host-aware 持久终端 + Web；SSH host 顺延，不再占用 M9/M10 编号）。
+- D163 的“M7/M8 不实现按钮渲染/回调” → D166/D167 在 M9 落地审批按钮（群聊按钮、提问按钮仍后置）。

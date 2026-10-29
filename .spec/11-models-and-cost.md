@@ -36,6 +36,7 @@
 - 最坏情况（大量 sudo/复杂动作）会同时消耗 fast + strong；这是安全换成本的显式取舍。
 - reviewer 请求不缓存、不重试、不压缩；超时/超窗会失败（fail closed）。
 - 成本/延迟直接与工具调用数相关：系统提示词要求模型合并命令、减少无意义工具调用。
+- **M10 规划**：`web_search`/`web_fetch` 按 D170 豁免 Auto review（不产生 reviewer 请求）；`terminal_send` 等终端工具仍逐次审查，因此交互式工作会产生额外的 reviewer 调用，提示词引导模型合并 send。`web_search` 若用默认 `deepseek-official` provider，一次搜索在延迟与 token 上等价一次模型轮次（计入主模型预算），`deepseek-search-api` 则为独立 API 计费、不耗辅助轮次（D169）。
 
 ## 11.4 上下文与压缩
 

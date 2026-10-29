@@ -1,6 +1,6 @@
 # QQ 官方 Bot 平台事实门禁记录
 
-> 状态：**待真实 Bot 实测（2026-10-27 创建）**。M8 代码与 fake 自动化已完成；本文件的 14 项门禁需要 AppID/ClientSecret、开发体验用户与自己的群，由用户配合执行。执行后把结果写回本表，并同步 [.spec/17](../17-qq-official-bot.md) 17.10 与 [事实表](qq-official-bot-api-facts.md) §13。
+> 状态：**待真实 Bot 实测（2026-10-27 创建；M9 代码 2026-10-29 完成）**。M8 代码与 fake 自动化已完成；本文件的 14 项 M8 门禁需要 AppID/ClientSecret、开发体验用户与自己的群，由用户配合执行。M9（按钮审批，[18](../18-qq-button-approval.md)）另追加 6 项门禁（#15–#20），代码已实现、待实测。执行后把结果写回本表，并同步 [.spec/17](../17-qq-official-bot.md) 17.10/17.8.3 与 [事实表](qq-official-bot-api-facts.md) §13。
 
 ## 探针
 
@@ -23,9 +23,16 @@ node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --passive \
 # 主动消息（最高优先级冲突）
 node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --active \
   --chat group:<group_openid> --text "probe"
+
+# M9 交互/按钮门禁
+node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --interaction-connect
+node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --keyboard \
+  --chat c2c:<user_openid> --message-id <event-id> --seq 1 --text "probe"
+node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --watch-interaction
+node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --ack <interaction-id> 0
 ```
 
-## 14 项门禁
+## M8：14 项门禁
 
 | # | 事实 | 验证方式 | 结果/日期 | 结论 |
 |---|---|---|---|---|
@@ -44,8 +51,22 @@ node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --active \
 | 13 | 目标机网络 | 目标机 TLS/DNS 直连 `api.bot.qq.com`/`api.sgroup.qq.com`；代理 | 待实测 | 部署前置 |
 | 14 | 附件 URL（V8 门禁） | URL 有效期/鉴权/大小/rkey 绑定 | 待实测 | V8 范围，M8 只忽略 |
 
+## M9：交互/按钮门禁（候选，实现后实测）
+
+> 状态：**代码已实现（2026-10-29），待真实 Bot 实测**。探针脚本已扩展 `--interaction-connect`/`--keyboard`/`--watch-interaction`/`--ack`，凭据与前置同 M8。
+
+| # | 事实 | 验证方式 | 结果/日期 | 结论 |
+|---|---|---|---|---|
+| 15 | `INTERACTION` intent（`1<<26`）能否订阅（代码：自动降级） | Identify intents `1<<25 \| 1<<26` 是否 READY；失败记录 4014/4914/4915 | 待实测 | 决定 `approvalButtons` 默认与降级路径 |
+| 16 | 内联键盘在 C2C 文本/Markdown 消息上的渲染（代码：两种 body 都发送） | 分别以 `msg_type=0`（content）与 `msg_type=2`（markdown）发送 2 按钮 keyboard，用手机 QQ 观察 | 待实测 | 决定是否强制 markdown / 保留原 msg_type |
+| 17 | `INTERACTION_CREATE` 事件字段（代码：type=11/chat_type=2/button_data） | type=11 回调的 `scene`/`chat_type`/`user_openid`/`group_openid`/`group_member_openid`/`data.resolved.button_data`/`button_id`/`message_id` | 待实测 | 校准 normalize 与 chatId/senderId/fallback 文本映射 |
+| 18 | `PUT /interactions/{id}` ack 语义（代码：先 ack 0/1 再 ingress） | code 0/1/3/4 的实际表现；重复 ack；超时未 ack 的客户端行为 | 待实测 | 校准 ack 时机与错误提示 |
+| 19 | 按钮限制（代码：1 行/2 按钮/label≤10） | label 超 10 字符、单行多按钮、多行、button data 长度、`action.permission` 行为 | 待实测 | 决定 driver 截断/跳过与 permission 配置 |
+| 20 | 群聊按钮关闭行为（代码：群聊剥离 keyboard） | 群聊提示不渲染 keyboard；若人为注入群聊 interaction 事件，driver ack/忽略是否符合预期 | 待实测 | 确认 C2C-only 口径无意外交互 |
+
 ## 已知实现口径（非门禁结论）
 
 - SDK 把 `4009` 视为 `SESSION_TIMEOUT` 并重新 Identify（不是 Resume）；其它可恢复断线（如 1000/4008）走 SDK 的 Resume。这是 SDK 1.0.5 行为，与规格“4009 可 resume”的事实描述不同，已记录在 D164。
 - 业务错误可能是 HTTP 200 + body `code`；driver 在 REST 层显式检查，不依赖 SDK `ApiClient` 的非 2xx 判断。
 - `msg_seq` 只随 `msg_id` 发送；active 消息不发送 `msg_seq`（driver 直接走 `ApiClient`，不经过 SDK 的自动注入）。
+- M9 已实现 action payload `{"k":"<token>","t":"<fallback>"}`（token 22 字符 base64url，仅在 broker 内存；一次性、settle/timeout/abort/重启失效）。若 #19 实测 button data 长度受限，压缩字段名或改用短 token 映射表；若 #17 未回传 `button_data`，按 18.9 评估 button_id 兜底。

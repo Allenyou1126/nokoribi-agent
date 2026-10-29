@@ -1,7 +1,7 @@
 # 17 真实 IM 适配器：QQ 官方 Bot
 
-> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（已实现，2026-10-27）**、**M8 = QQ 官方 Bot 适配器（代码已实现，2026-10-27；真实平台门禁/验收待执行）**、M9 = SSH host。
-> 用户已确认：协议层采用官方 SDK（D154）；channel-core 扩展拆成独立里程碑先做（D158）。M7 实现口径见 D162；M8 实现口径见 D164；动作按钮扩展空间见 D163（仅契约/持久化，未实现）。
+> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149/D165 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（已实现，2026-10-27）**、**M8 = QQ 官方 Bot 适配器（代码已实现，2026-10-27；真实平台门禁/验收待执行）**、**M9 = QQ 按钮审批（代码完成，真实平台验收待执行；完整规格见 [18](18-qq-button-approval.md)）**；原“M9 = SSH host”按 D165 顺延。
+> 用户已确认：协议层采用官方 SDK（D154）；channel-core 扩展拆成独立里程碑先做（D158）。M7 实现口径见 D162；M8 实现口径见 D164；动作按钮契约见 D163；M9 需求口径 D166、实现口径 D167。
 > 调研材料（工作稿，评审后决定是否入库）：
 > - 平台事实表：[.spec/notes/qq-official-bot-api-facts.md](notes/qq-official-bot-api-facts.md)（807 行，S1–S41 来源）
 > - 代码接口映射：[.spec/notes/channel-qq-mapping.md](notes/channel-qq-mapping.md)（893 行，含 A2 契约草案与文件清单）
@@ -28,11 +28,11 @@
 - 群全量消息（`GROUP_MESSAGE_CREATE`，需群主单独授权）；只接 `GROUP_AT_MESSAGE_CREATE`。
 - 频道（guild）/文字子频道、频道私信；多 Bot/多账号；WebHook 接入方式。
 - 入站图片/附件、出站富媒体、Markdown 图片转存（图片链路属 V8，另立里程碑）。
-- 流式消息、消息按钮/内联键盘、指令面板、互动回调（`INTERACTION_CREATE`）。M8 不实现；M7 已预留通用动作按钮契约与 outbox 持久化（D163），按钮审批/回调应答留待后续增强。
+- 流式消息、消息按钮/内联键盘、指令面板、互动回调（`INTERACTION_CREATE`）。**M8 不实现**；M7 已预留通用动作按钮契约与 outbox 持久化（D163）；**M9 在 C2C 审批落地内联键盘按钮（代码完成，真实门禁待执行）**（D166/D167，见 [18](18-qq-button-approval.md)），流式/群聊按钮/指令面板/提问按钮仍后置。
 - 驱动级白名单/配对（D152，用户已决策）。
 - C2C `is_wakeup` 互动召回（作为后续提醒降级通道评估）。
 
-里程碑编号（D149 修订）：**M7 = channel-core IM 基础设施扩展**（被动回复上下文、多 driver 路由、`trustedChannels`、非重试错误；独立里程碑先做）；**M8 = 本适配器（QQ 官方 Bot）**；**M9 = SSH host**。M7 的规格要点见 17.6.2 与映射文档 §3/§6.2；M8 在本规格实现计划中展开。
+里程碑编号（D149/D165 修订）：**M7 = channel-core IM 基础设施扩展**（被动回复上下文、多 driver 路由、`trustedChannels`、非重试错误；独立里程碑先做）；**M8 = 本适配器（QQ 官方 Bot）**；**M9 = QQ 按钮审批**（见 [18](18-qq-button-approval.md)）；**M10 = host-aware 持久终端 + Web**（见 [19](19-persistent-terminal-and-web.md)）；SSH host 顺延。M7 的规格要点见 17.6.2 与映射文档 §3/§6.2；M8 在本规格实现计划中展开；M9 的 QQ 平台映射与门禁见 17.2.5/17.8.3。
 
 ## 17.2 平台事实
 
@@ -46,7 +46,7 @@
 | 网关地址：`GET /gateway`（通用）或 `GET /gateway/bot`（带分片/会话创建限制）；返回 WSS URL，不硬编码 | ✅ |
 | payload `{id, op, d, s, t}`；opcode 0/1/2/6/7/9/10/11（webhook 另有 12/13） | ✅ |
 | **Identify token 为 `QQBot {AccessToken}`**（旧文档 `Bot {appid}.{app_token}` 属废弃 Bot Token 体系，不采用） | ✅⚡ |
-| intents：`GROUP_AND_C2C_EVENT = 1 << 25`；互动事件 `1 << 26`（本轮不订阅）；无权限的 intent 会导致 WS `4014` | ✅ |
+| intents：`GROUP_AND_C2C_EVENT = 1 << 25`；互动事件 `1 << 26`（M8 不订阅；M9 在 `approvalButtons` 开启时订阅，失败自动降级）；无权限的 intent 会导致 WS `4014`/`4914` | ✅ |
 | 分片：单 Bot 无分片需求，`shard: [0, 1]`；`/gateway/bot` 返回 24h 会话创建上限 | ✅ |
 | 心跳按 Hello 的 `heartbeat_interval` 发送，带最新 `s`；`Op 11` ACK | ✅ |
 | 断线优先 `Resume`（`session_id` + `seq` 补发），`Op 9` 重新 Identify | ✅ |
@@ -89,6 +89,22 @@
 - 管理员账号可直接测试；旧版沙箱群配置已停止支持。
 - AI 输出须符合平台运营规范，违规可能导致机器人/账号封禁且**不支持解封**。
 - 官方个人认证开发者可创建 5 个机器人。
+
+### 17.2.5 交互事件与内联键盘（M9 已实现）
+
+> 状态：**代码完成（2026-10-29），真实平台门禁待执行**；完整设计见 [18](18-qq-button-approval.md)，事实来源见 [notes/qq-official-bot-api-facts.md](notes/qq-official-bot-api-facts.md) §5.6/§6.5。
+
+| 事实 | 状态 |
+|---|---|
+| `INTERACTION_CREATE`：intent `1<<26`；`d.id` 为互动事件 ID（同时用于应答与被动回复）；字段含 `id`/`type`/`scene`/`chat_type`/`timestamp`/`user_openid`/`group_openid`/`group_member_openid`/`data` | ✅ |
+| `type=11` = 消息按钮回调（INLINE_KEYBOARD）；仅 type 11/12 需要 `PUT /interactions/{id}` 回应，否则客户端 loading | ✅ |
+| ack 请求体 `{code:0..5}`（0 成功/1 操作失败/2 频繁/3 重复/4 无权限/5 仅管理员）；同一 id 只可回应一次；PUT 频控 50 QPS | ✅ |
+| 按钮事件里 `data.resolved` 提供 `button_data`/`button_id`/`user_id`/`message_id` | ✅ |
+| 内联键盘：`keyboard.content.rows[].buttons[]`；button `id`/`render_data.label`（**≤10 字符**）/`visited_label`/`style`（0 灰线框/1 蓝线框/3 白底红字/4 蓝底白字）/`action.type`（0 链接/1 回调/2 指令）/`action.data`/`action.permission`/`action.modal` | ✅ |
+| 单聊/群聊自定义 Markdown 与消息按钮已开放所有机器人（官方 FAQ）；发送接口 `msg_type=0/2` 均可带 `keyboard` | ✅（渲染差异待实测 🧪） |
+| `event_id` 被动回复 `INTERACTION_CREATE` 是否需要 `INTERACTION_CREATE:` 前缀存在冲突 | ⚡🧪 |
+
+M9 映射（计划）：仅 C2C 审批提示附加 1 行 2 按钮（「允许一次」/「拒绝」，`action.type=1` callback，`data` 携带短 token + fallback 文案）；收到 type=11 事件先 ack 再交 core；群聊不渲染按钮、收到事件仅 ack/忽略。新事实门禁见 [notes/qq-fact-gate.md](notes/qq-fact-gate.md) #15–#20。
 
 ## 17.3 总体设计
 
@@ -135,7 +151,7 @@ online → stopping(close ws) → stopped
 - **chatId 使用命名空间**（`c2c:` / `group:`）：driver 需要在无状态重启后从 outbox 条目判断发送端点；裸 openid 无法区分单聊/群聊（D160）。
 - `content` 在群 @ 事件已由平台去除 @ 前缀（✅）；做防御性 trim，清理可能的 `<@!botid>` 残留。
 - `delivery` 不设置：由 channel-core 按忙碌/空闲选择 steer/followup。
-- 忽略：机器人自身消息、`GROUP_MESSAGE_CREATE`（记录 debug）、lifecycle/互动事件；纯非文本消息不转发（无文本 → 不产生入站）；带附件但含文本的消息只转发文本（不设置 `images`）。
+- 忽略：机器人自身消息、`GROUP_MESSAGE_CREATE`（记录 debug）、lifecycle/互动事件；纯非文本消息不转发（无文本 → 不产生入站）；带附件但含文本的消息只转发文本（不设置 `images`）。**M9 已实现**：`INTERACTION_CREATE` type=11 单独归一化为 `InboundMessage.action`（带文本 fallback），不再归入忽略集合。
 - `message_type=103` 引用消息：提取 `msg_elements` 中被引用文本作为上下文（可选，v1 可仅用 `content`）。
 
 ### 17.4.2 去重
@@ -155,6 +171,8 @@ online → stopping(close ws) → stopped
 | `outboundFiles` | `false` | 不做富媒体/附件 |
 | `activeMessages` | `false`（M8；`auto` 探测失败后更新） | 主动推送官方已宣告下线（🧪） |
 | `maxRepliesPerReply` | `4`（保守值，可配） | 单聊上限 4，群聊 5；core 预截断避免必然失败的第 5 段 |
+| `outboundActions` | M8 `false`；**M9 C2C 为 true** | M9 起审批提示渲染内联键盘；群聊剥离 actions（D166） |
+| `inboundActions` | M8 `false`；**M9 为 true** | 接收 `INTERACTION_CREATE` 并归一化 `InboundAction`；`approvalButtons=false` 时不订阅交互 intent |
 
 ### 17.5.2 被动回复上下文（D153：core + outbox 承载）
 
@@ -217,6 +235,18 @@ Hermes Agent（NousResearch/hermes-agent）的参考实现（详见 [notes](note
 
 > 错误码表以事实表 §8.2 为准；实现集中为映射表并加单测。
 
+### 17.5.5 审批按钮（M9 已实现，D166/D167）
+
+> 状态：**代码完成（2026-10-29），真实平台门禁待执行**；core/驱动详细设计见 [18](18-qq-button-approval.md)，实现记录见 18.11。
+
+- 仅在 **C2C 单聊**的审批提示附加内联键盘；群聊保持文本审批（避免群成员可点击与 permission 指定不确定性）。
+- 按钮：1 行 2 个 `callback` 按钮「允许一次」「拒绝」；`label` ≤10 字符；`style` 用 primary/danger；`action.type=1`、`action.data` 携带短 token + fallback 文案；不提供“始终允许”（DSH outcome 无持久 grant）。
+- 发送体：core 的 `OutboundContent.actions` → driver 构造 `keyboard`；markdown/text 两种 `msg_type` 都保留 keyboard；core 已有的“actions 只附最后一段 / 无正文不单独成消息”语义不变。
+- 回调：订阅 `INTERACTION_CREATE`（intents `1<<25 | 1<<26`）；仅 type=11；driver 先 `PUT /interactions/{id}` ack（code 0/1/4），再把归一化的 `InboundMessage.action` 交 core；messageId 用事件 `id` 去重；文本 fallback 取 payload 的 `t`。
+- 失效/重复：core 以 action 为权威路由 broker；未知/过期 action 提示一次“按钮已失效”，不回退文本审批；超时仍=拒绝；点击不补发确认消息。
+- 降级：`approvalButtons=false` 或 Identify 因 intent 受限失败时，driver 不订阅交互 intent、capabilities 关闭 actions，审批回到纯文本。
+- 验收：真实平台 #15–#20 门禁（17.8.3）；自动化 fake WS/REST 覆盖。
+
 ## 17.6 配置（NixOS module）
 
 ### 17.6.1 新增选项（草案）
@@ -234,12 +264,13 @@ channel.qqBot = {
   requestTimeoutSeconds = 10;
   connectTimeoutSeconds = 30;
   activeMessageFallback = "auto";        # auto | off
+  approvalButtons = true;                # C2C 审批按钮；false=纯文本且不订阅交互 intent
   reconnectBaseMs = 1000;
   reconnectMaxMs = 60000;
 };
 ```
 
-- 与 2026-10-27 初稿的差异（D164）：**不暴露** `sandbox`、`platformLimitsOnly`、`allowedUsers/allowedGroups`。QQ 已不支持沙箱群；D152 不做 driver 白名单，假选项只会误导。测试/联调需要的域名覆盖只放 bundle env（`NOKORIBI_QQ_BOT_API_BASE` / `TOKEN_BASE` / `GATEWAY_URL`），不进 Nix option。选项名用 `maxRepliesPerReply`，窗口/超时用扁平字段；overlay 把秒转成 driver 的毫秒字段。
+- 与 2026-10-27 初稿的差异（D164）：**不暴露** `sandbox`、`platformLimitsOnly`、`allowedUsers/allowedGroups`。QQ 已不支持沙箱群；D152 不做 driver 白名单，假选项只会误导。测试/联调需要的域名覆盖只放 bundle env（`NOKORIBI_QQ_BOT_API_BASE` / `TOKEN_BASE` / `GATEWAY_URL`），不进 Nix option。选项名用 `maxRepliesPerReply`，窗口/超时用扁平字段；overlay 把秒转成 driver 的毫秒字段。**M9** 新增 `approvalButtons`（默认 true；见 17.5.5）。
 - 断言（`enable = true` 时）：`appId != ""`；`clientSecretEnv != ""`；`reconnectMaxMs >= reconnectBaseMs`；`environmentFile != null`（全局断言已有，显式加一条更清晰）。运行期检查 `clientSecretEnv` 指向的环境变量非空（fail loud，不打印值）。
 - warnings：QQ 平台限制即准入边界（高残余风险）；主动推送争议（2025-04-21 横幅 vs 配额表）；Markdown 代码块/表格未实测；QQ-only 无本地回退时通知 defer/drop；`localTest.enable` 与 `qqBot.enable` 同时启用时使用 per-turn 路由；secret 只走 EnvironmentFile/agenix。
 - overlay：新增 `nokoribi-channel-qq-bot` patch（写全字段，不含 secret/测试 URL）；`nokoribi-channel-core` patch 增加 `trustedChannels = lib.optional qqBot.enable "qq-bot"` 与 `defaultChannelId`（localTest 启用时 `local-test`，否则空串回退首个 driver）。
@@ -305,6 +336,20 @@ channel.qqBot = {
 9. 断网/恢复：网关重连并继续收发（若平台补发）。
 10. 目标机部署：NixOS module 配置 + EnvironmentFile 密钥，systemd 服务自启与 notify ready。
 
+### 17.8.3 M9 按钮审批验收（规划，待真实 Bot）
+
+> 状态：**代码完成（2026-10-29），门禁待实测**；门禁候选见 [notes/qq-fact-gate.md](notes/qq-fact-gate.md) #15–#20。
+
+- 自动化（fake WS/REST + 进程级）：C2C 审批提示带 keyboard → 注入 type=11 interaction → ack 调用 → broker 允许/拒绝 → 工具执行/失败；文本回复 fallback 回归；超时/daemon 重启后旧按钮提示失效；群聊提示无 keyboard；`approvalButtons=false` 无交互 intent。
+- 真实平台（手工，需 M8 凭据）：
+  1. `1<<25|1<<26` Identify 是否成功；失败时降级路径是否生效（health/detail、文本审批仍可用）。
+  2. C2C 文本与 Markdown 消息上的 keyboard 是否显示、label 是否被截断、按钮行数/数量限制。
+  3. 点击按钮后 `PUT /interactions/{id}` ack 是否停止 loading；重复/超时点击的错误码。
+  4. 事件字段（`chat_type`/`user_openid`/`data.resolved.button_data`/`button_id`/`message_id`）与 payload 映射是否正确。
+  5. 旧按钮点击不会错误批准新审批；daemon 重启后点击给出失效反馈。
+  6. 群聊不显示按钮；群内文本审批行为与 M8 一致。
+- 通过前 M9 只能标“代码完成”。
+
 ## 17.9 风险与未决项
 
 | 风险/未决 | 等级 | 缓解 |
@@ -320,8 +365,11 @@ channel.qqBot = {
 | WS 被封禁/下架（4914/4915） | 中 | 停止重连并告警 |
 | 账号封禁/内容合规 | 中 | 遵守平台规范；不做公开服务；接受风险 |
 | 图片链路缺失（V8） | 低中 | 能力位关闭，入站拒绝/忽略并记录 |
+| M9：`INTERACTION` intent 未开放/受限 | 中高 | 按钮不可用甚至 Identify 失败；driver 降级：不订阅 `1<<26`、`approvalButtons` 可关；文本审批保持；门禁 #15 先测 |
+| M9：keyboard/button 限制或渲染差异 | 中 | 按钮不显示/点击无效/acked 语义不符；门禁 #16/#19；超限跳过按钮；保留文本 fallback |
+| M9：旧按钮误批新审批 | 中 | 交互错乱/安全影响；action token 只在内存、action 权威、失效提示；C2C-only；不从 fallback 文本回退审批 |
 
-## 17.10 实现计划（暂不启动）
+## 17.10 实现计划（M7/M8 已实现；M9 见 18，M10 见 19）
 
 ### 17.10.1 里程碑拆分与顺序
 
@@ -340,6 +388,13 @@ channel.qqBot = {
 3. P8c：集成与装配：fake WS/REST 集成测试、bundle 行、Nix module/overlay/eval、`.env.example`、launcher/bundle 依赖清单、`nix/deps.nix` 哈希。
 4. P8d：进程级与文档：fake QQ server 进程测试、`pnpm check`、`nix flake check`、README/spec 回写。
 5. P8e：真实 Bot 验收：17.8.2 清单 + 目标机部署；记录结果。
+
+**M9（代码完成，M8 之后）：QQ 按钮审批**
+1. P9a：channel-core broker action 生成/`handleAction`、service 入站 action 路由、outbox 透传 + 单测。
+2. P9b：QQ driver C2C keyboard 渲染、`INTERACTION_CREATE` 归一化/ack、intents 与降级、`approvalButtons` 配置 + 单测。
+3. P9c：`channel-local-test` inbound action 注入 + 集成/进程测试（fake WS/REST）。
+4. P9d：bundle/NixOS/`.env.example`/`.spec` 回写；真实平台按 17.8.3。
+> 完整交付物、文件级清单与验收见 [18](18-qq-button-approval.md) 18.6/18.8；状态：**代码完成（2026-10-29），真实平台验收待执行**。
 
 ### 17.10.2 文件级清单
 
@@ -382,6 +437,9 @@ channel.qqBot = {
 | D156 | 密钥与配置 | AppID 入 store；ClientSecret 走 EnvironmentFile/agenix；token 仅内存 | M8 已实现 |
 | D157 | 验收边界 | fake 自动化 + 真实个人 Bot 手工 + 目标机部署；不做公开/群全量；14 项平台事实门禁 | fake 已通过；真实验收待执行 |
 | D158 | channel-core 最小扩展 | 拆成**独立里程碑 M7** 先做（contract/outbox/错误分类/allowlist/多 driver），独立提交 | 用户已确认（2026-10-27） |
+| D165 | 里程碑排期（M9/M10） | **M9 = QQ 按钮审批（见 18）；M10 = host-aware 持久终端 + Web（见 19）**；原“M9 = SSH host”顺延 | 用户已确认（2026-10-27） |
+| D166 | 按钮审批范围/UX | 仅审批；2 按钮「允许一次/拒绝」；不补发确认消息；**仅 C2C**；群聊/提问保持文本；文本 fallback 保留；超时=拒绝 | 用户已确认（2026-10-27） |
+| D167 | 动作回调实现口径 | core 产出/解释 action；action 权威、失效不回退文本；`PUT /interactions/{id}` ack；intents `1<<26` + 降级；local-test 可注入 | 规划已确认（2026-10-27）；M9 待实现 |
 | D159 | 多 driver 路由与通知降级 | per-turn 路由 + notice active-capable 回退/丢弃 + 缺 driver 短路 + 显式默认渠道 | M7 已实现；M8 双渠道进程测试通过 |
 | D160 | 能力位/窗口默认 | `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N | M8 已接入；真实平台校准待门禁 |
 | D161 | 提醒/系统通知降级 | **B：active 尝试 + 失败后 defer（下次入站被动补投）**；A/C 不采用 | 用户已确认（2026-10-27）；M7 core + M8 driver 已实现 |

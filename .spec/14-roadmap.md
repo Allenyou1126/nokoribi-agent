@@ -243,7 +243,7 @@
 - `outbox.ts` + `shared/src/schemas.ts`：持久化 `replyTo`/`replyReceivedAt`/`replySeq`、`actions` 与 `deferredNotices`（旧文件兼容）。
 - `format.ts` 分段前缀预留、`maxChunks` 截断；`channel-local-test` 适配 + 单测/集成回归。
 - **notice defer 等待语义（D161）**：active 不可用时通知保留为 per-chat pending，下一次入站以被动回复补投（有上限/TTL 清理）。
-- **动作按钮扩展空间（D163）**：通用 `OutboundAction`/`InboundAction`、能力位与 outbox 持久化；只预留，不实现按钮渲染/回调。
+- **动作按钮扩展空间（D163）**：通用 `OutboundAction`/`InboundAction`、能力位与 outbox 持久化；M7 只预留、不实现按钮渲染/回调（M9 起落地 C2C 审批按钮）。
 - 不引入 QQ 代码、不新增外部依赖。
 
 ### 验收
@@ -263,7 +263,7 @@
 - 已验证：`pnpm check`；`pnpm test` 44 文件/328 测试；`pnpm test:unit` 42 文件/314 测试；`pnpm test:process` 6 文件/42 场景；`nix flake check`（package/unit/package-smoke/module-eval）通过。flake unit 使用 `pnpm test:unit`，不跑 `tests/integration`。
 - 实现口径（D162）：defer 覆盖 `kind=notice` 及“无可用入站上下文”的 reply；通知优先同 chat，其次其他 active-capable（`defaultChatId`），再次 defer，最后 drop；`lastActiveChat` 恢复不受 active 能力限制；deferred 补投每条 1 个被动槽位并加“⚠️ 补发”。
 - 动作按钮（D163）：只落契约、能力位与 outbox 持久化；M7 没有生产者，deferred 通知/回复丢弃 actions。
-- 未完成/后置：M8 QQ driver、真实平台事实门禁、按钮渲染与 `INTERACTION_CREATE`、图片链路、M6 目标机 12.12 清单。
+- 未完成/后置：M8 QQ driver、真实平台事实门禁、按钮渲染与 `INTERACTION_CREATE`（已由 [M9](14-roadmap.md) 认领）、图片链路、M6 目标机 12.12 清单。
 
 ## 14.9 M8 真实 IM 适配器：QQ 官方 Bot（代码已实现，真实验收待执行）
 
@@ -286,7 +286,7 @@
 
 - 依赖 M7（core 扩展）以及 M2/M5/M6（审批、schedule、部署）。
 - 最大风险：平台准入/封禁、白名单只有平台边界、主动推送不可用、协议冲突。
-- 后置：图片链路（V8）、C2C `is_wakeup` 召回、按钮审批、群全量消息。
+- 后置：图片链路（V8）、C2C `is_wakeup` 召回、按钮审批（已由 [M9](14-roadmap.md) 认领）、群全量消息。
 
 ### M8 实现记录（2026-10-27）
 
@@ -294,12 +294,61 @@
 - 已实现 NixOS `channel.qqBot.*`（13 选项）、overlay row、`trustedChannels`、bundle/launcher 装配、`.env.example` 与 flake module-eval/package-smoke；`nix/deps.nix` FOD 哈希更新。
 - 已验证：`pnpm check`；`pnpm test` 52 文件/374 测试；`pnpm test:process` 7 文件/52 场景（含 M8 10 场景）；`nix flake check`（package/unit/package-smoke/module-eval）通过；`nix build .#default` 通过。
 - 实现口径（D164）：SDK 只消费 protocol；不暴露 `sandbox`/`platformLimitsOnly`/driver 白名单；active 消息不发送 `msg_seq`；HTTP 200 + body code 显式转错；4009 由 SDK 重新 Identify；零依赖 fake WS/REST；不改 core。
-- 未完成/后置：14 项平台事实门禁、17.8.2 真实 Bot 验收、目标机部署、按钮/`INTERACTION_CREATE`、图片链路、群全量消息、C2C `is_wakeup`。
+- 未完成/后置：14 项平台事实门禁、17.8.2 真实 Bot 验收、目标机部署、按钮/`INTERACTION_CREATE`（已由 [M9](14-roadmap.md) 认领）、图片链路、群全量消息、C2C `is_wakeup`。
 
-## 14.10 后置（v1 之外）
+## 14.10 M9 QQ 按钮审批（代码完成，真实验收待执行）
 
-- **M9 SSH host**（原 M7，因 D149 两次顺延）：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。
-- **交互按钮/动作回调**：M7 已预留 `OutboundAction`/`InboundAction` 契约与 outbox 持久化（D163）；QQ 内联键盘、`INTERACTION_CREATE`、`PUT /interactions/{id}` 应答与按钮审批留给 M8 后置增强。
+> 状态：**代码完成（2026-10-29），真实平台验收待执行**。完整规格见 [18](18-qq-button-approval.md)；需求口径 [D165](03-decision-log.md)/[D166](03-decision-log.md)，实现口径 [D167](03-decision-log.md)。真实平台验收沿用 M8 的 14 项门禁并新增交互门禁（[notes/qq-fact-gate.md](notes/qq-fact-gate.md) #15–#20）。
+
+### 交付物
+
+- channel-core：broker 为审批生成/解释动作按钮（短 token + fallback），新增 `handleAction`；service 入站 action 路由（action 权威、失效提示、不误回退文本）；outbox `actions` 透传语义不变。
+- channel-qq-bot：能力位打开；C2C 内联键盘渲染（「允许一次」/「拒绝」）；`INTERACTION_CREATE` 归一化与 `PUT /interactions/{id}` ack；intents `1<<26` 与 Identify 受限降级；`approvalButtons` 配置。
+- channel-local-test：可选 inbound `action` 注入 + 能力位，供进程级测试。
+- bundle/launcher/NixOS 选项（`channel.qqBot.approvalButtons`）、`.env.example`、文档回写。
+- fake WS/REST 单元/集成/进程测试。
+
+### 验收
+
+- `pnpm check`、`pnpm test`、`pnpm test:unit`、`pnpm test:process`、`nix flake check`。
+- fake 场景：提示带 keyboard → 按钮允许/拒绝 → 工具执行/拒绝；文本 fallback 回归；超时；重复/过期点击；群聊无按钮；daemon 重启后按钮失效；intent 降级。
+- 真实平台：notes 的 #15–#20 门禁通过前只算“代码完成”。
+
+### 依赖/风险
+
+- 依赖 M7/M8；与 M10 无依赖，可并行。
+- 风险：`INTERACTION` intent 平台未开放（降级为文本）、keyboard 在文本/Markdown 上的渲染差异、button data 长度/行数限制、ack 幂等。
+
+### M9 实现记录（2026-10-29）
+
+- 已实现 core action 生成/解释、QQ C2C keyboard、`INTERACTION_CREATE` ack/归一化、intents 降级、`approvalButtons` 配置与 local-test action 注入；实现细节与澄清见 [18.11](18-qq-button-approval.md)。
+- 验证：`pnpm check`；`pnpm test` 54 文件/403 测试；`pnpm test:unit` 50 文件/383 测试；`pnpm test:process` 8 文件/58 场景；`nix flake check` 通过。真实平台 #15–#20 与 12.14 未执行，只能标“代码完成”。
+
+## 14.11 M10 host-aware 持久终端 + Web（规划已确认，代码未实现）
+
+> 状态：**规划已确认（2026-10-27），代码未实现**。完整规格见 [19](19-persistent-terminal-and-web.md)；决策 [D168–D171](03-decision-log.md)。
+
+### 交付物
+
+- 终端：新包 `packages/terminal-host`（每 host 注册一个上游 `BashTerminalBackend`，注入 `spawnTerminal` 走 `ctx.shellHosts`）；`ShellTerminalLaunch` host 协议 + registry `terminalLaunch`；local/sandbox launch 实现与 sandbox pin（TTL/reset 保护）；`/clear`、goal archive、daemon 退出的显式清理顺序；`nokoribi:pty` 提示词段；NixOS `terminal.*` 选项。
+- Web：挂载 `dsh-web` + `dsh-web-search-deepseek` + `dsh-web-fetch-http` + `dsh-web-deepseek-api` + `dsh-tool-web`（默认 pin `deepseek-official` 搜索 / `http` 抓取）；vendor reviewer 的 `exemptTools`（默认 web 工具）；NixOS `web.*` 选项与 `.env.example`。
+- 依赖：新增 DSH `0.2.1-rc.3` 包；`pnpm-lock.yaml` 与 `nix/deps.nix` FOD 哈希更新。
+
+### 验收
+
+- `pnpm check`、`pnpm test`、`pnpm test:unit`、`pnpm test:process`、`nix flake check`、`nix build .#default`。
+- 终端：fake `spawnTerminal` 单测；local host 真实 PTY 集成（cwd/env 持久、owner 隔离、agent 释放清理、pin/release）；sandbox 终端需 Nix buildEnv（目标机/手工）。
+- Web：fake provider 单测/集成（注册、provider 选择、缺 key、截断、豁免不调用 reviewer）；真实搜索需 `DEEPSEEK_API_KEY` + 网络出口（门禁）。
+
+### 依赖/风险
+
+- 依赖 M1–M3 基线；与 M9 无依赖，但建议先做终端方案 spike。
+- 风险：`BashTerminalBackend` 注入面非文档化（失败回退 vendoring）、sandbox PTY 与 TTL/reset 的生命周期竞争、NixOS 无 `/bin/bash`（host launch 用 buildEnv bash）、终端输出 token 成本、Web 豁免审查的残余风险。
+
+## 14.12 后置（v1 之外与 M9/M10 之外）
+
+- **SSH host**（原 M7/M9，因 D149/D165 顺延）：`shell-host-ssh` provider、host 配置映射、ssh_config/agent/ProxyJump、后台任务限制、主机白名单/审批；不改 router/工具。
+- **交互按钮扩展**：群聊按钮、`ask_user_question` 选项按钮、按钮点击后的消息编辑/撤回、流式消息；M9 只做 C2C 审批按钮。
 - **真实 IM 适配器（第二平台）**：Telegram/Discord 等其他 `ChannelDriver` 实现；sender/chat 白名单细化；图片下载；平台限速/长消息。
 - **heartbeat/主动唤醒**：当前明确不做。
 - **多人/群聊权限**：需要身份、权限、审计、隔离重新设计。
@@ -310,8 +359,9 @@
 - **更强的 sandbox 隔离**（bwrap/容器）：在 host 接口下可加。
 - **远程文件工具**（read/write/edit 走远程）：未设计。
 - **session search/长期记忆增强**：未纳入。
+- **持久终端的跨 daemon 重启恢复**：DSH 终端是进程内的；需要 tmux/screen 重新附着，未纳入。
 
-## 14.11 实现前必须验证（进入 M1 前/早期）
+## 14.13 实现前必须验证
 
 详见 [15 待验证项与风险](15-verification-and-risks.md)。摘要：
 
@@ -325,10 +375,16 @@
 8. 主模型图像支持（查 API 目录）。
 9. 主 agent 隐藏 goal 工具的实现方式。
 10. `/clear` 时 outbox 旧消息处理（文档中标注待实现决策）。
+11. QQ `INTERACTION_CREATE` intent / keyboard 渲染 / ack / 按钮限制（M9 门禁 #15–#20）。
+12. `BashTerminalBackend` 注入点 + sandbox 内 setpriv PTY 可行性（M10 spike）。
+13. NixOS 上终端 bash 路径与 PTY 可用性。
+14. DeepSeek 搜索 API / 目标机网络出口可用性（Web）。
+15. sandbox 终端与 TTL/reset/`disposeSession` 的清理顺序（M10）。
 
-## 14.12 v1 完成定义
+## 14.14 v1 完成定义
 
 - M1–M8 代码与自动化门禁通过；M6/M8 真实验收（NixOS 12.12、QQ 14 项门禁/17.8.2）执行并记录。
 - 文档（本套）与实现一致；所有偏离回写。
 - 安全检查清单（08）中的已接受风险被再次确认。
 - 手工验收清单（12.12）执行并记录结果。
+- M9/M10 是 v1 后增强，不改变上述 v1 完成定义；其验收标准分别见 [18.6](18-qq-button-approval.md) 与 [19.5](19-persistent-terminal-and-web.md)。

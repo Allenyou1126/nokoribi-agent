@@ -137,7 +137,7 @@
 }
 ```
 
-4. 删除该 child session 的 sandbox 目录（per-session scope）。
+4. 删除该 child session 的 sandbox 目录（per-session scope）。**M10 规划**：先关闭该 child 的持久终端（`killTerminalsForSession`）再 `disposeSession`，避免 pin 拒绝或 PTY 悬空（见 [19.3.7](19-persistent-terminal-and-web.md)）。
 5. 保留 DSH session 文件（不删除；没有 web-debug，可按 sessionId 在会话存储中查看原始记录）。
 6. 回用户"已归档 <前缀>"。
 
@@ -150,7 +150,7 @@
 ## 10.9 Sandbox 与 goal
 
 - sandbox 按 session 独立（D92）：每个 goal child 有自己的 sandbox 目录与 TTL。
-- 归档/`/goal clear`/`/clear` 时通过 `ctx.shellHosts.disposeSession(childId)` 删除对应 sandbox（如果存在）。
+- 归档/`/goal clear`/`/clear` 时通过 `ctx.shellHosts.disposeSession(childId)` 删除对应 sandbox（如果存在）；M10 规划在删除前先关闭该 child 的持久终端（pin 互锁）。
 - 重启恢复 goal child 时；其 sandbox 若仍在 TTL 内可复用，过期则重建。
 - goal child 默认使用 sandbox host（跟随 defaultHost）；需要持久化 workspace 时可以在任务中显式使用 `local:*`（受 auto-review）。
 

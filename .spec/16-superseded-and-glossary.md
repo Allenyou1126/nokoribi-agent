@@ -24,6 +24,8 @@
 | 中间提案：升级前快照 | D110 直接升级 | 用户选择 |
 | 早期 auto-review 接法 B/C | D31 A 全局 Auto | 用户选择 |
 | 早期 `local-sandbox` host 概念（DSH Landlock 权限沙箱） | D44 干净 sandbox host | 用户澄清沙箱语义是"可回收/不保证持久"，不是权限沙箱 |
+| D149 “M9 = SSH host” | D165：M9 = QQ 按钮审批、M10 = host-aware 持久终端 + Web；SSH host 顺延（不占编号） | 两项日常可用性缺口优先；SSH 仍可只新增 provider，暂不排期 |
+| M8 的“按钮审批后置” | D166/D167：M9 在 C2C 审批落地按钮（契约 D163 不变；2026-10-29 代码完成，真实门禁待执行） | 平台内联键盘 + interaction 回调已具备，core 补生产者/解释器即可 |
 
 ## 16.2 被否决的方案（未采用，但讨论过）
 
@@ -48,6 +50,13 @@
 - 出站 reporter/summarizer subagent（改为 main 直接回复）。
 - 控制台/fake 作为产品渠道（最终只做本地测试通道用于验收）。
 - 流式输出/编辑消息（用户未选；v1 不做）。
+- M9 用平台卡片模板/自定义 Markdown 卡片替代内联键盘按钮（只用通用 `OutboundAction` + 内联键盘；卡片模板不复用）。
+- M9 群聊按钮与 `ask_user_question` 选项按钮（M9 只做 C2C 审批按钮；其余后置）。
+- M9 的“始终允许”按钮（DSH `ApprovalOutcome` 无持久 grant，不做）。
+- M10 直接 vendoring `dsh-terminal-bash`（默认用公开导出 `BashTerminalBackend` 注入；仅失败时回退 vendoring）。
+- M10 用 DSH 权限沙箱（`ctx.sandbox`/workspace-write）承载持久终端（与 M2/M3 的“不使用 DSH 权限沙箱”冲突，不采用）。
+- M10 持久终端跨 daemon 重启恢复（需要 tmux/screen 等外部机制，未纳入）。
+- M10 自研 PTY 会话机制（优先复用上游 `LocalPtySession` 机制）。
 - 多用户/群聊支持（后置，未设计）。
 - 真实 IM 适配器进 v1（后置到 M8；M7 core 与 M8 QQ 官方 Bot 代码已实现，真实平台验收待执行）。
 - 直接挂官方 `@tencent-connect/dsh-qqbot` 作为 QQ 适配层（端到端 agent 插件、绕过 `ctx.channels`/审批/outbox；硬依赖 UNLICENSED `qqbot-connector`，peer semver 与 `0.2.1-rc.3` 不匹配）→ M8 自研 driver（D154）。
@@ -104,7 +113,7 @@
 ## 16.3 讨论中形成但最终未采用的细节
 
 - goal 汇报里加入结构化 JSON schema（最终用纯文本格式）。
-- 审批提示使用按钮/交互卡片（纯文本渠道，编号/文本回复）。
+- 审批提示使用按钮/交互卡片：v1 纯文本渠道；M9 起 C2C 审批改用内联键盘按钮（D166），群聊/提问仍为文本。
 - 渠道消息合并/防抖（v1 逐条 steer）。
 - outbox 至多一次/不持久化（选至少一次持久化）。
 - 测试通道 SSE（选长轮询）。
@@ -167,8 +176,15 @@
 | replySeq | channel-core 为同一被动上下文分配的 `msg_seq`（1..N，持久、重试稳定） |
 | turnChat | 当前轮的来源 chat；回复优先路由到它，避免多 driver 串渠道 |
 | deferred notice | active 不可投时暂存的 per-chat 通知；下一次该 chat 入站以“⚠️ 补发”被动回复补投 |
-| OutboundAction | 平台无关的消息动作按钮描述（D163 预留；M7 不渲染） |
-| InboundAction | driver 归一化的按钮/菜单回调元数据；必须同时提供 text fallback |
+| OutboundAction | 平台无关的消息动作按钮描述（D163）；M9 起审批提示生产 `callback` action，只在支持 `outboundActions` 的驱动渲染 |
+| InboundAction | driver 归一化的按钮/菜单回调元数据；必须同时提供 text fallback；M9 起 core 以 action 为权威路由 broker |
+| action token（M9） | broker 为一次审批生成的短 token，绑定 interactionId 与 outcome；只在内存、随 settle/超时清理 |
+| keyboard（QQ） | QQ 消息内联键盘（`keyboard.content.rows[].buttons[]`）；M9 只用于 C2C 审批 |
+| INTERACTION_CREATE | QQ 按钮/菜单回调节点事件（intent `1<<26`）；type=11 为消息按钮回调，需 `PUT /interactions/{id}` ack |
+| host-aware 持久终端（M10） | 复用 DSH `ctx.terminals`/`terminal_*` 工具，但 PTY 启动经 shell host provider；`terminal_open.type` 即 host id |
+| terminal launch（M10） | host provider 新增的 PTY 启动规格（argv/cwd/env/release）；registry 暴露 `terminalLaunch()` |
+| terminal pin（M10） | sandbox 内有持久终端时阻止 TTL 回收/reset/dispose 的引用计数；PTY 退出/关闭释放 |
+| exemptTools（M10） | vendored auto-review 的工具名豁免列表；默认 `web_search`/`web_fetch`（D170） |
 | defaultChatId（driver） | driver 在无入站上下文时可寻址的 chat，用于通知的 active-capable 回退 |
 | trusted channel | channel-core 跳过静态 allowlist、由 driver 自行保证准入的渠道（M8：`qq-bot`） |
 | ingress | 入站处理管线（allowlist/去重/命令/注入） |

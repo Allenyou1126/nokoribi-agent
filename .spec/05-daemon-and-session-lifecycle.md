@@ -81,10 +81,11 @@ M1/M2 实际流程：
 2. 调用 `channels.abortInteractions("shutdown")`，中止待审批/提问并写入失效提示；outbox 持久化，下次启动继续投递。
 3. 等待当前轮完成至 `shutdownGraceMs`（默认 20s，可配）；超时用 `cancel({ kind:'disposed' })`。
 4. goal 子代理不在这里逐个清理；由 profile-boot 后续的 context teardown 交给 DSH subagent manager 释放，重启后按 active goal 冷恢复。
-5. `ctx.sessions.flush()`，写 state 并置 `cleanShutdown=true`。
-6. 进程由 vendored profile-boot 的 bounded shutdown 退出；vendored 上限由 `NOKORIBI_SHUTDOWN_TIMEOUT_MS` 控制，默认 30s。M6 的 systemd `TimeoutStopSec` 必须大于它。
+5. **M10 规划**：flush 前后、释放单实例锁之前，显式关闭 main agent 的持久终端（`ctx.terminals.list(main)` + `kill`，有界等待；失败只 log），避免 PTY 与 sandbox 目录在 teardown 顺序中悬空；`ctx.terminals` 未挂载时 no-op（见 [19.3.7](19-persistent-terminal-and-web.md)）。
+6. `ctx.sessions.flush()`，写 state 并置 `cleanShutdown=true`。
+7. 进程由 vendored profile-boot 的 bounded shutdown 退出；vendored 上限由 `NOKORIBI_SHUTDOWN_TIMEOUT_MS` 控制，默认 30s。M6 的 systemd `TimeoutStopSec` 必须大于它。
 
-> Cordis 的插件 effect teardown 是并发的，session-persistence 的写句柄 teardown 可能先于第 5 步关闭句柄。该后端 `close()` 会先 drain 已路由事件再释放，因此此时 flush 抛出 `SessionHandleClosedError` 表示“已持久化”，只记 debug，不计为关闭失败；daemon 对 `AggregateError` 中全是该错误的情形做同样处理，m1 进程测试断言干净退出日志不出现 `shutdown flush failed`。
+> Cordis 的插件 effect teardown 是并发的，session-persistence 的写句柄 teardown 可能先于第 6 步关闭句柄。该后端 `close()` 会先 drain 已路由事件再释放，因此此时 flush 抛出 `SessionHandleClosedError` 表示“已持久化”，只记 debug，不计为关闭失败；daemon 对 `AggregateError` 中全是该错误的情形做同样处理，m1 进程测试断言干净退出日志不出现 `shutdown flush failed`。
 
 > 关闭时不在 outbox 中的"正在生成的回复"会丢失；若已生成但尚未入队，属于可接受窗口。所有已入 outbox 的消息会重发。
 
@@ -113,7 +114,7 @@ M1/M2 实际流程：
 4. 用 `ctx.schedule.catalog()` 找出绑定旧 `mainSessionId` 的全部任务（含 inactive），逐条 `delete`；失败记录日志但继续。确认消息附带删除数量。
 5. dispose 主 agent handle；旧会话保持在 DSH 会话库中（不删除）。
 6. 生成新的 `mainSessionId`，`ctx.agents.create()` 新会话；重新 bind `sessionController` 与 memory curator；写回 state；保留 outbox（已生成的消息仍发给用户），新消息进入新会话。
-7. 删除旧会话对应的 sandbox 目录（per-session scope）。M3 实现：旧 agent `dispose()` 后调用 `ctx.shellHosts.disposeSession(previousId)`，删除目录与 sidecar；失败只记录日志，不阻断 `/clear`。
+7. 删除旧会话对应的 sandbox 目录（per-session scope）。M3 实现：旧 agent `dispose()` 后调用 `ctx.shellHosts.disposeSession(previousId)`，删除目录与 sidecar；失败只记录日志，不阻断 `/clear`。**M10 规划**：在 `disposeSession` 之前先 `killTerminalsForAgent(oldAgent)` 关闭旧终端（有界等待、失败 log），避免 sandbox 目录删除时 PTY 仍持有 pin/目录（见 [19.3.7](19-persistent-terminal-and-web.md)）。
 8. 发送确认消息："已新建会话，旧会话已归档"（如有提醒删除则追加数量）。
 
 - `/new` 与 `/clear` 等价（别名）。

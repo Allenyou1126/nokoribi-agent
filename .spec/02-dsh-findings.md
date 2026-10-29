@@ -291,3 +291,29 @@ Inbox：
 - 探针验证：goal child 的自动 round 会保持 Activation 驻留，直到 goal complete 或到达轮次上限；`startActivation` 可预留 `goal-*` child id，随后宿主 `ctx.goals.create` 正常驱动。
 - `ctx.tools.restrict({ deny: [...] })` 可在 main agent setup 中隐藏 `create_goal/get_goal/update_goal`；`system-prompt/assemble` waterfall 可移除/替换 `tool:goal` 段。
 - 测试通道 `/v1/outbound` 的 `nextSeq` 必须与返回 items 对齐（`lastSeq + 1`，无 items 时保持 `after`）；否则并发 enqueue 会让客户端跳过未见条目。
+
+## 2.21 M9/M10 规划期调研结论（2026-10-27）
+
+### M9：QQ 按钮审批
+
+- `@tencent-connect/qqbot-nodejs` `./protocol` 已提供 `InlineKeyboard`/`InteractionEvent` 类型、`MessageApi.acknowledgeInteraction()` 与 `interactionPath()`；当前 driver 直接用 `ApiClient` 发送，**只需在 raw body 增加 `keyboard`、订阅 `onInteraction`、用 `ApiClient` PUT `interactionPath`**，不需要换协议层。
+- `GatewayConnectionOptions` 已有 `onInteraction` 回调与 `intents` 字段；M8 只订阅 `1<<25`，M9 计划 `1<<25 | 1<<26`。`INTERACTION_CREATE` 的 type=11/12 需要 `PUT /interactions/{id}` ack，否则客户端持续 loading（事实表 §5.6）。
+- SDK 的 `InteractionType` 常量（2001/2002）与文档的按钮 type 11/12 不是同一维度，M9 以事件 `data.type` 数字判断，不依赖该常量。
+- M7 已预留 `OutboundAction`/`InboundAction` 与 outbox `actions`；M9 的 core 改动集中在 broker 生成/解释 action 与 service 入站路由，不需要改契约结构。
+
+### M10：host-aware 持久终端
+
+- rc.3 `@deepseek-ai/dsh-terminal-bash` **公开导出 `BashTerminalBackend`**，ctor 为 `(ctx, ResolvedConfig, spawnTerminal?, createSession?)`；注入 `spawnTerminal` 即可替换进程启动来源，而 PTY 就绪探测/scrollback/sanitize/信号/清理仍由包内 `LocalPtySession` 承担 → M10 可以不 vendoring 复用。
+- `Config` 是 schemastery 对象，可直接 `Config({...})` 解析默认值；`shellPath` 默认 `/bin/bash`、`shellArgs` 默认 `["--noprofile","--norc","-i"]`（NixOS 无 `/bin/bash`，终端启动 argv 由 host provider 提供，不受该默认影响）。
+- `BashTerminalBackend.spawn()` 在调用注入的 `spawnTerminal` 之前会执行 `ensureSandboxModeFence`、`ctx.sandboxPolicy.resolve()` 与内部 `spawnArgv()`；因此组合必须挂载 `@deepseek-ai/dsh-sandbox-policy`（`danger-full-access` 时不会要求 `ctx.sandbox`），并满足 `terminals`/`sessionProjections`/`subprocess` 注入。
+- `dsh-terminal` 的 owner 清理注册在 `owner.ctx.effect`（agent 作用域释放时关闭全部会话）；sandbox 目录由我们的 `disposeSession` 删除，**清理顺序不可依赖**，M10 需在 `/clear`/goal archive/daemon 退出前显式关闭 terminals。
+- 终端只存在于进程内（daemon 重启丢失），与需求“进程内持久”一致；跨重启恢复需外部机制。
+- `@deepseek-ai/dsh-tool-bash-persistent` 不可用：它注册的工具名固定为 `bash`，与现有 host-aware `bash` 冲突。
+
+### M10：Web Search/Fetch
+
+- 能力 seam 是 `ctx.web`（`@deepseek-ai/dsh-web`）：`search()`/`fetch()` 每调用解析 provider；未配置 provider 且有多个可用后端时报 `WEB_PROVIDER_AMBIGUOUS` → 必须显式 pin。
+- 可用 provider：`dsh-web-search-deepseek`（`deepseek-official`，Anthropic-compatible Messages + 原生 `web_search`，一次搜索=一次模型轮次）、`dsh-web-fetch-http`（`http`，匿名公网抓取，含 SSRF/公网地址/同源重定向/大小限制）、`dsh-web-deepseek-api`（`deepseek-search-api`/`deepseek-fetch-api`，直连、无辅助模型轮次）。三者都固定 rc.3。
+- 模型工具 `@deepseek-ai/dsh-tool-web` 注入 `tools`/`web`/`systemPrompt`；`web_search`/`web_fetch` 注册受配置开关控制，结果带“外部不可信内容”前缀。
+- `dsh-web-fetch-http` 在模块级 import `dsh-timeout` 与 `dsh-http-proxy`（后者是库、非可挂载插件）；`dsh-web-search-deepseek`/`dsh-web-deepseek-api` import `dsh-credentials` 与 `dsh-launch-environment` → 这些必须是安装依赖，即使不挂载对应服务。
+- auto-review 的拦截点是 `createAutoReview` 内 `ctx.on("tools/pre-execute", ...)`（仅 Auto preset 下进入）；M10 的 `exemptTools` 补丁在 hook 开头按 `exec.name` 直接 `next()`，是局部改动。`web_search`/`web_fetch` 豁免后仍受 tool timeout/spill/结果上限约束。

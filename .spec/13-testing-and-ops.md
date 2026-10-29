@@ -28,12 +28,19 @@ M7 落点（已实现，2026-10-27）：`packages/channel-core/test/` 的 outbox
 
 M8 落点（已实现，2026-10-27）：`packages/channel-qq-bot/test/` 共 7 文件/44 测试，覆盖事件归一化（C2C/群 @、忽略全量事件/附件/机器人消息）、被动优先/`replySeq`/超窗回退、错误码分类、长度/Markdown 回退、频控、token 缓存/401 刷新、gateway Identify/READY/断线/致命关闭与配置。`tests/integration/m8-qq.test.ts` 用 `dsh-agent-loop-testkit` + 真实 driver + fake transport 覆盖 trustedChannels、被动回复、active 关闭时 defer/补投。`tests/process/m8-qq.test.ts`（10 场景，零依赖 fake QQ server：token/发送 HTTP + WS 握手/帧）覆盖启动、C2C/群 @、去重、超窗 active、active 失败 defer、被动过期重试、token 刷新、断线 Resume、SIGTERM 与双渠道路由。实测：`pnpm test` 52 文件/374 测试；`pnpm test:process` 7 文件/52 场景；`nix flake check`（package/unit/package-smoke/module-eval）与 `nix build .#default` 通过。真实 Bot 14 项门禁/17.8.2 仍待手工验收，不进入 flake。
 
+M9 落点（已实现，2026-10-29）：`packages/channel-core/test/` 覆盖 broker 审批 action 生成/`handleAction`/过期与重复点击、service 入站 action 路由（action 权威、失效不回退文本）、outbox actions 透传；`packages/channel-qq-bot/test/` 覆盖 C2C keyboard body、群聊剥离、interaction 归一化、ack 调用、intents 与降级、markdown 回退保留 keyboard；`packages/channel-local-test/test/` 覆盖 inbound `action`；`tests/integration/m9-qq-buttons.test.ts` 用真实 driver + fake transport 走审批按钮端到端；`tests/process/m9-qq-buttons.test.ts` 用 daemon + fake QQ server 覆盖“提示带 keyboard → 注入 INTERACTION_CREATE → 工具执行/拒绝、文本 fallback、重启后失效、群聊无按钮、intent 降级”。实测 `pnpm test` 54 文件/403 测试；`pnpm test:unit` 50 文件/383 测试；`pnpm test:process` 8 文件/58 场景；真实平台 #15–#20 门禁不进入 flake。
+
+M10 落点（规划，代码未实现）：`packages/shell-bash/test/` 覆盖 `ShellTerminalLaunch` 协议与 `terminalLaunch` 路由；`packages/terminal-host/test/` 用注入的 fake `spawnTerminal` 覆盖 per-host backend 注册、launch 规格、release/pin、失败清理；`packages/shell-host-*` 覆盖 local/sandbox launch（sandbox pin、TTL/reset 拒绝）；`packages/reviewer/test/` 覆盖 `exemptTools`（web 工具不调用 reviewer）；`packages/agent-app/test/` 覆盖 `/clear`/goal archive/daemon 退出前关闭 terminals；`tests/process/m10-terminal.test.ts` 用真实 `dsh-subprocess-local` PTY（local host）验证 open/send/read/close、cwd/env 持久、owner 隔离、agent 释放清理；`tests/process/m10-web.test.ts` 用 fake provider 覆盖 tool 注册/provider 选择/缺 key/截断；sandbox 终端与真实搜索走手工门禁（12.14）。flake unit 不跑真实 PTY 测试。
+
 ## 13.2 测试替身
 
 - **fake ChannelDriver**：内存 driver，记录入站/出站（含 `kind/reply/actions`），可配置 `capabilities`、`canDeliver`、`health`、一次性/永久失败；M7 集成用双 driver 验证 per-turn 路由与通知回退。
 - **scripted fake LLM**：不调用真实 API；按脚本返回 assistant 文本/工具调用；用于 agent-loop、reviewer、记忆提炼测试。
 - **fake shell host**：内存 host provider，返回预设输出/退出码，模拟 background/超时/错误；用于 channel/agent 集成测试。
 - **fake clock**：TTL、超时、退避重试测试；避免真实等待。
+- **fake terminal spawn（M10 规划）**：向 `BashTerminalBackend` 注入的 `spawnTerminal` stub，记录 argv/cwd/env 并返回可控 `SubprocessTerminalHandle`；用于 backend/launch/pin 单测，不需要真实 PTY。
+- **fake PTY（M10 规划）**：真实 `dsh-subprocess-local` PTY 仅用于本地集成测试；flake unit 与无 PTY 环境不跑。
+- **fake web provider（M10 规划）**：实现 `ctx.web` 的 search/fetch provider 接口；用于 tool 注册、provider 选择、错误与截断测试，禁止真实网络。
 - **临时 DSH_HOME**：每个测试用独立目录，结束后清理；保证并发测试隔离。
 - **测试 kit**：如 DSH 提供的 `dsh-agent-loop-testkit` 可用则复用；否则自建最小 harness。
 
@@ -57,6 +64,9 @@ M8 落点（已实现，2026-10-27）：`packages/channel-qq-bot/test/` 共 7 �
 | interaction broker | 提示格式、解析、超时、串行、abort | approval/question 端到端、steer 旁路、stop/clear | 重启残留清理 |
 | channel-core M7 | reply context/replySeq、trustedChannels、canDeliver、NonRetryableDeliveryError/PassiveReplyExpiredError、缺 driver 短路、actions 持久化、deferred 上限/TTL | per-turn 多 driver 路由、notice 回退/defer 补投、双 driver 集成、actions 最后一段 | 重启后被动上下文/超窗（进程回归覆盖 outbox 重发） |
 | channel-qq-bot（M8） | 事件归一化、被动/主动策略、错误分类、频控、config、gateway/rest | fake WS+REST + core 的 trustedChannels/defer | daemon + fake QQ server、重连/token 刷新/双渠道 |
+| action/按钮（M9 已实现） | broker action 生成/handle、token 生命周期、service action 路由、outbox actions 透传 | QQ C2C keyboard body/群聊剥离、interaction 归一化/ack、local-test action 注入 | 审批按钮端到端、文本 fallback、超时/重启失效、intent 降级 |
+| terminal-host（M10 规划） | per-host backend 注册、launch 规格、release/pin、fake spawnTerminal 清理 | local 真实 PTY（open/send/read/close、状态持久、owner 隔离）、sandbox launch/pin | daemon 清理顺序、`/clear`/goal archive/重启无残留 |
+| web（M10 规划） | tool 注册/参数校验、provider pin/切换、错误码、截断、`exemptTools` | fake provider 端到端、reviewer 豁免断言 | 真实搜索/抓取（手工门禁）、网络失败降级 |
 | NixOS module | option schema/eval | overlay 生成快照 | 手工（12.12 / 12.13） |
 
 ## 13.4 关键场景
@@ -70,6 +80,9 @@ M8 落点（已实现，2026-10-27）：`packages/channel-qq-bot/test/` 共 7 �
 7. **Memory**：任务结束提炼子代理写入；跨会话 search 命中；forget 归档。
 8. **Schedule**：创建 1 分钟提醒（或 fake clock）→ 到期 follow-up → 主 agent 回复镜像到测试通道。
 9. **QQ Bot（M8）**：fake QQ 网关推 C2C/群 @ 事件 → agent 回复 → REST 收到带 `msg_id/msg_seq` 的被动请求；重复事件去重；被动超窗 → 主动尝试/失败；active 失败 defer 到下一次入站；被动过期码 → 清 reply 后 active 重试；断线 Resume/重连后可继续收发；token 401 刷新；`40054005` 视为成功；文件/群全量/机器人消息被忽略。
+10. **QQ 按钮审批（M9 已实现）**：fake reviewer deny → 审批提示（C2C 带 keyboard）→ fake WS 推 `INTERACTION_CREATE` type=11 → PUT ack → broker 结算 → 工具执行/拒绝；文本回复路径回归；超时/daemon 重启后点击旧按钮提示失效；群聊提示不带 keyboard；`approvalButtons=false` 或 intent 受限时降级文本。
+11. **持久终端（M10 规划）**：local host `terminal_open` → `terminal_send` 改变 cwd/env → `terminal_read`/再次 send 看到持久状态 → `terminal_close` 清理进程树；goal child 与 main 的终端 owner 隔离；`/clear`、goal archive、daemon 退出前 terminals 关闭且 sandbox `disposeSession` 不因 pin 失败。
+12. **Web 工具（M10 规划）**：fake provider 下 `web_search` 多 query 合并/上限、`web_fetch` HTML→markdown/截断；provider 缺失/歧义/凭据缺失结构化错误；`web_search`/`web_fetch` 不触发 fake reviewer，其他工具仍触发。
 
 ## 13.5 flake checks
 

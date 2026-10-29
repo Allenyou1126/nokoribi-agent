@@ -6,7 +6,7 @@
 
 - 专用系统用户 `nokoribi`，`NOPASSWD: ALL` sudo；
 - systemd 不做文件系统硬化；
-- 所有工具调用默认经过 LLM reviewer；
+- 所有工具调用默认经过 LLM reviewer（M10 规划的唯一例外是 `web_search`/`web_fetch`，见 8.9/D170）；
 - 只有 reviewer 拒绝/不确定时才向 IM 用户请求单次授权；
 - 不做高危命令硬确认、不做备份、不做自动回滚、只保留日志。
 
@@ -94,7 +94,8 @@ services.nokoribi-agent.review = {
   1. reviewer 路由从"当前 agent 模型"改为配置的 fast/strong；
   2. 双阶段复审逻辑；
   3. sudo 启发式识别；
-  4. child 审批桥接（若可行）。
+  4. child 审批桥接（若可行）；
+  5. M10 规划：`exemptTools`（默认 `web_search`/`web_fetch`）在 `tools/pre-execute` hook 开头直接放行（D170）。
 - 补丁尽量小；升级 DSH 时重新对照上游，记录 diff。
 - 若上游未来支持这些能力，可退回直接依赖上游包。
 
@@ -105,7 +106,8 @@ services.nokoribi-agent.review = {
 | 宿主/服务隔离 | 专用用户 + systemd | 与用户个人账户分离；服务崩溃不影响系统 | 无法阻止 `sudo`（用户显式开启）；不是安全沙箱 |
 | sandbox host | Nix 环境 + 临时目录 + `no_new_privs` + PATH 去 sudo | 干净/可重置环境；阻止 sandbox 内提权；减少误操作污染 | 不隔离文件读（同用户可访问宿主可读路径）；不是安全边界 |
 | local host | 真实主机 + NOPASSWD sudo | 完整主机操作能力 | 没有任何隔离；一切靠 reviewer |
-| Auto review | fast→strong reviewer | 拦截高风险动作、要求单次授权 | 误判、prompt injection、reviewer 技术失败（后者 fail closed） |
+| Auto review | fast→strong reviewer | 拦截高风险动作、要求单次授权 | 误判、prompt injection、reviewer 技术失败（后者 fail closed）；Web 工具按 D170 豁免 |
+| 持久终端（M10 规划） | `terminal_send` 等工具调用逐次过 reviewer；owner 隔离；sandbox 内 no_new_privs | 交互式工作有地方可跑、状态可保留 | reviewer 只看到输入文本/工具参数，难以跟踪交互式前台状态；终端输出可能含敏感内容 |
 | IM 渠道 | 单用户白名单/allowlist + 测试 token | 只接受授权用户消息 | 真实 IM 适配器未实现；token 明文在 store；无多用户模型 |
 | 审计 | journald + 会话 JSONL + sudo 日志 | 事后追溯 | 不能预防；无自动回滚；无备份 |
 
@@ -113,8 +115,9 @@ services.nokoribi-agent.review = {
 
 | 威胁 | 当前控制 | 残余风险 |
 |---|---|---|
-| 外部内容（网页/工具结果/文件）注入模型 | reviewer 把历史/工具结果视为 fact；系统提示词约束 | reviewer 是实验性 LLM，可能被绕过；root 下后果是整机级 |
+| 外部内容（网页/工具结果/文件）注入模型 | reviewer 把历史/工具结果视为 fact；系统提示词约束；web 工具结果带“外部不可信内容”标记 | reviewer 是实验性 LLM，可能被绕过；root 下后果是整机级；Web 工具自身豁免审查（D170）放大注入面 |
 | reviewer 误放行危险动作 | fast→strong；fail closed | 无自动回滚、无备份；可能误放行 |
+| Web 工具豁免审查（M10 规划） | fetch provider 自带公网地址/SSRF/同源重定向/大小上限；只读、不执行本地命令；默认只挂可信 provider | 无 LLM 审查；恶意页面内容仍可注入模型上下文；DeepSeek 搜索请求会携带查询/触发问题 |
 | sandbox 提权 | no_new_privs + PATH 去 sudo | sandbox 仍可读宿主可读文件；不是安全隔离 |
 | local host 滥用 | NOPASSWD ALL + reviewer | 一旦获准，可改 sudoers/systemd/自身 unit，持久化控制 |
 | IM 身份伪造 | v1 只有 loopback + token；未来 adapter 白名单 | token 明文在 Nix store；测试通道仅验收期建议开启 |
@@ -123,7 +126,17 @@ services.nokoribi-agent.review = {
 | 持久数据 | 会话/记忆/日志在 `/var/lib` | 主机 root 可读；无备份；升级回滚可能不兼容 format |
 | 可用性 | 单实例锁、systemd restart、watchdog | root agent 可停服务、改配置；日志是唯一审计 |
 
-## 8.9 已明确接受的风险
+## 8.9 Web 工具审查豁免（M10 规划，D170）
+
+> 状态：**规划已确认（2026-10-27），代码未实现**；完整规格见 [19](19-persistent-terminal-and-web.md)。
+
+- 用户确认：`web_search`/`web_fetch` **豁免 Auto review**；其余工具（`bash`、文件、`terminal_*` 等）保持逐次审查。
+- 实现：vendored auto-review 的 `tools/pre-execute` hook 开头按 `exemptTools`（reviewer 配置，默认 `["web_search","web_fetch"]`）直接 `next()`，不调用 fast/strong；仅 Auto preset 下进入该 hook 的行为不变。
+- 理由：Web 工具只读外部内容、不执行本地命令；`dsh-web-fetch-http` 自带公网地址解析、SSRF 防护、同源重定向、字节/字符上限；搜索/抓取调用频繁，逐次 reviewer 会显著增加延迟与成本。
+- 补偿控制：fetch provider 的安全限制；结果在模型上下文中带“外部不可信内容”提示；可配置豁免列表（部署方可收紧为只豁免搜索或完全关闭）。
+- 残余风险：外部页面内容注入、绕过 LLM 审查；登记在 8.8 与 [15](15-verification-and-risks.md)。该豁免**不**扩展到 `bash`、文件写入或终端工具。
+
+## 8.10 已明确接受的风险
 
 - 无高危命令硬确认（D103）。
 - 无备份（D105）。
@@ -134,21 +147,24 @@ services.nokoribi-agent.review = {
 - 真实 IM 适配器延后，v1 只有本地测试通道。
 - 不做 NixOS VM 安全测试。
 - 不做 web-debug，归档只能通过 session 文件查看。
+- Web 工具豁免 Auto review（M10 规划，D170）；无 LLM 审查兜底，依赖 provider 自身限制与提示词。
 
-## 8.10 审计与可观测
+## 8.11 审计与可观测
 
 - sudo 命令与结果进 journald（`log_output` 不开启，避免敏感输出进日志；D104）。
 - 会话 JSONL 保存所有模型可见的 user/assistant/tool 事实（DSH 原生）。
 - 桥接日志记录：消息 id、命令、注入模式、审批决策、outbox 重试、恢复事件。
 - 不做集中式日志/OTel/告警；journald 保留由系统配置决定。
 
-## 8.11 安全相关配置（详见 12）
+## 8.12 安全相关配置（详见 12）
 
 - `sudo.enable`：默认 false；开启写 `NOPASSWD: ALL`。
 - `review.fast` / `review.strong`：reviewer 两档模型。
 - `review.timeoutMs`：单次 reviewer 调用超时（默认 30s）。
+- `review.exemptTools`（M10 规划）：Auto review 豁免的工具名列表，默认 `["web_search","web_fetch"]`；设为空数组即恢复全量审查。
 - `approval.approvalTimeoutSeconds` / `questionTimeoutSeconds`。
 - `hosts.sandbox.enable`、`hosts.local.enable`、`hosts.default`。
-- `channel.localTest.enable` / token。
+- `channel.localTest.enable` / token；`channel.qqBot.approvalButtons`（M9 已实现，默认 true）。
+- `terminal.*`（M10 规划）：持久终端开关、bash 路径、结果上限与超时；`web.*`：Web 工具开关与 provider 选择。
 - `log.level`。
-- 没有任何运行时安全降级/关闭开关。
+- 没有任何运行时安全降级/关闭开关（除上述按部署配置的豁免列表）。

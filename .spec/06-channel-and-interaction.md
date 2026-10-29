@@ -13,7 +13,7 @@
 type OutboxKind = 'reply' | 'notice' | 'interaction';
 type OutboundActionKind = 'callback' | 'link' | 'command';
 
-interface OutboundAction {        // D163 预留；M7 不渲染
+interface OutboundAction {        // D163；M9 起审批提示使用
   id: string;
   label: string;
   kind: OutboundActionKind;
@@ -81,7 +81,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 - v1 的 driver 只需要文本；`outboundFiles` 预留。
 - 真实 IM 适配器：M8 先接 QQ 官方 Bot（见 [17](17-qq-official-bot.md)）；其他平台后置。
 - **M7 已实现（D153/D158/D159/D161/D163）**：`OutboundContent` 扩展、`ReplyContext`、`NonRetryableDeliveryError`/`PassiveReplyExpiredError`、capabilities、`canDeliver()`/`health()`/`defaultChatId?`；channel-core 增加 `trustedChannels`/`defaultChannelId`、`turnChat` 路由、通知 defer 与 outbox 持久字段 `replyTo/replyReceivedAt/replySeq`/`actions`/`deferredNotices`。
-- 动作按钮只是扩展空间（6.11）：`actions` 只附在最后一段；不支持 `outboundActions` 的 driver 不会收到；入站 `action` 必须同时带 `text` fallback，M7 不解释 `action`。
+- 动作按钮（D163/M9）：`actions` 只附在最后一段；不支持 `outboundActions` 的 driver 不会收到；生产 driver 的 action 仍提供 `text` fallback；M7/M8 只预留契约，**M9 已实现**由 broker 为审批提示生产 action，并在 core 入站按 action 权威路由（详见 6.11 与 [18](18-qq-button-approval.md)）。
 
 ## 6.3 入站处理顺序
 
@@ -91,13 +91,14 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 2. **allowlist**：单用户白名单（senderId + chatId）；不在白名单的消息只记日志、丢弃。`trustedChannels` 中的渠道跳过该检查（由 driver 依赖平台准入，M7/D152），启动时逐条 warn。
 3. **幂等去重**：以 `channelId + messageId` 为键，持久记录（`$DSH_HOME/state/ingress-seen.json` 或等价有界存储）；重复消息直接忽略。
    - 先记录再注入（避免崩溃后重复处理）；极小窗口内崩溃可能丢弃一条消息，用户可重发。
-4. **命令解析**：以 `/` 开头进入命令分发（见 6.5）。未知命令直接回错误，不进入模型。
-5. **待应答检查**：存在审批/提问时，普通文本作为应答交给 broker（除非是 `/steer` 等命令旁路）。
-6. **默认注入**：
+4. **动作回调（M9 已实现）**：若消息带 `action`，先交 `broker.handleAction()`（仅对 approval）；action 未知/过期时提示一次“按钮已失效”，**不回退**把 fallback 文本当作审批答案。带 action 的消息不进入命令/模型管线。
+5. **命令解析**：以 `/` 开头进入命令分发（见 6.5）。未知命令直接回错误，不进入模型。
+6. **待应答检查**：存在审批/提问时，普通文本作为应答交给 broker（除非是 `/steer` 等命令旁路）。
+7. **默认注入**：
    - 若本消息带代码层 `delivery` 或上一条裸 `/steer`/`/queue` 设置的一次性模式，按该语义；
    - 否则 `agent.status === 'running' ? agent.steer(userMessage) : agent.followup(userMessage)`。
-7. 用户消息的 `source` 使用 `{ kind: 'user' }`（这是人类，不是 agent-to-agent 消息）。
-8. 更新 `lastActiveChat`。
+8. 用户消息的 `source` 使用 `{ kind: 'user' }`（这是人类，不是 agent-to-agent 消息）。
+9. 更新 `lastActiveChat`。
 
 补充：
 
@@ -173,6 +174,15 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 
 - 每个待应答只展示一次；outbox 是 at-least-once，仍可能重复。broker 记录已终止的 interactionId，outbox pump 对同 id 的未发送项直接丢弃/标记失败；已发送后的重复展示接受。
 
+### 动作按钮（M9 已实现，D166/D167）
+
+- 仅 **approval** 提示附带按钮；`ask_user_question` 仍为文本（后续增强）。
+- broker 在展示时生成 2 个 `callback` action：`允许一次`（`allowed-once`）与 `拒绝`（`rejected`）；action 使用短 token，payload 为 `{"k":"<token>","t":"<fallback>"}`；token→{interactionId,outcome} 映射只在内存，随 settle/abort/timeout 清理（重启后失效）。
+- 入站 action 由 core 路由到 `broker.handleAction()`；**action 权威**（见 6.3）：未知/过期 action 不会被当作文本审批，避免旧按钮误批新交互；一次提示只结算一次。
+- 文本回复路径完全保留；超时语义不变（approval 超时=拒绝）。
+- 平台渲染由 driver 决定：QQ **仅 C2C** 渲染内联键盘，群聊剥离 actions 并保持文本审批；driver 收到平台回调后先做 ack（`PUT /interactions/{id}`），再交 core。
+- 点击按钮**不补发**确认消息（依赖平台 ack 反馈）；按钮点击后的 agent 输出仍按常规回复镜像。
+
 ## 6.7 出站投递
 
 ### 触发
@@ -226,11 +236,12 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
   "text": "帮我看看磁盘占用",
   "images": [{ "mime": "image/png", "dataBase64": "..." }],
   "messageId": "optional-client-id",
-  "chatId": "optional-chat-id"
+  "chatId": "optional-chat-id",
+  "action": { "id": "callback-token", "payload": "{\"k\":\"...\",\"t\":\"允许\"}", "messageId": "platform-msg-id" }
 }
 ```
 
-响应：`202 { "messageId": "..." }`；同 messageId 重复请求幂等返回已接受。`delivery` 可选，用于测试代码层参数（`steer`/`followup`/`interrupt`）。
+响应：`202 { "messageId": "..." }`；同 messageId 重复请求幂等返回已接受。`delivery` 可选，用于测试代码层参数（`steer`/`followup`/`interrupt`）。**M9 已实现**：`action` 可选，用于进程测试模拟按钮回调；`action` 存在时 `text` 可省略（测试通道允许 action-only；生产 driver 仍必须提供 text fallback）；core 对带 action 的消息优先路由 broker（见 6.3）。
 
 ### `GET /v1/outbound?after=<seq>&timeout=<sec>`
 
@@ -285,7 +296,7 @@ M8 先接 QQ 官方 Bot，完整规格（平台事实、被动回复策略、配
 - 被动回复：`msg_id + msg_seq` 由 core 的 outbox 上下文承载（D153），超窗按能力回退主动消息（D151）。
 - 图片下载为 bytes；大小限制与 mime 校验——M8 不做，V8 后置（D155）。
 - `maxTextLength`、markdown 能力、发送重试/限速由 driver 能力位与错误分类承担。
-- 长消息切分由 core 做，driver 不切；消息按钮/流式/互动回调后置。
+- 长消息切分由 core 做，driver 不切；按钮审批由 M9 落地（仅 C2C），流式/群聊按钮/互动菜单仍后置。
 - 私聊单用户 + 群内 @ 提及；群全量消息与多人权限不在 M8 范围。
 
 **M8 实现口径（2026-10-27，D164）**：`packages/channel-qq-bot` 已实现；driver 直接使用 SDK `ApiClient` 发送以精确控制 `msg_id`/`msg_seq`（active 不带 `msg_seq`），REST 层把 HTTP 200 + body `code` 显式转 `ApiError`；`GatewayConnection` 只订阅 `1<<25`，首个 READY 有界等待，后台重连；能力位 `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、`activeMessages` 动态；chatId 为 `c2c:<user_openid>`/`group:<group_openid>`；无 `defaultChatId`（无入站上下文时通知 defer/drop）；`outboundActions/inboundActions=false`，不订阅 `INTERACTION_CREATE`。SDK 1.0.5 对 4009 重新 Identify（不是 Resume），记录在 D164/15.4。
@@ -303,17 +314,17 @@ M8 先接 QQ 官方 Bot，完整规格（平台事实、被动回复策略、配
 | 被动回复窗口过期（M8） | driver 抛 `PassiveReplyExpiredError`；core 清 reply 后按主动重试一次。仍失败且无上下文时按 D161 defer（notice/reply），有上下文时记 failed（17.5.2 的接受边界） |
 | outbox 发送失败超上限 | 日志记录；reply 耗尽在存在 active-capable 渠道时合并发一条系统通知；可 defer 的 notice/无上下文 reply 转 deferred 队列并在下次入站补投；其余置 failed |
 | 平台拒绝（永久错误，M8） | driver 抛 `NonRetryableDeliveryError`，core 立即 failed，不重试；可 defer 的无上下文 notice/reply 先转 deferred |
-| 按钮/回调入站（D163） | driver 归一化为 `InboundMessage.action` + 必需的 `text` fallback；M7 不解释 action，纯回调无文本仍按 `empty` 丢弃 |
+| 按钮/回调入站（D163/M9） | driver 归一化为 `InboundMessage.action` + 生产路径的 `text` fallback；M9 已实现：core 以 action 为权威路由 broker，未知/过期只提示失效、不回退文本；无 `action` 的文本仍按文本管线处理 |
 | 空 assistant 回复 | 不发消息 |
 | 超长回复 | 分段；每段独立进入 outbox；有被动上下文时按 `maxRepliesPerReply` 截断并加省略标记 |
 | 审批/提问超时 | 拒绝/工具报错 |
 | 多个待应答 | 串行展示 |
 
-## 6.11 动作按钮扩展（D163，M7 只预留）
+## 6.11 动作按钮（D163 契约预留，M9 审批落地规划）
 
-- 背景：QQ 官方 Bot 支持消息内联键盘（`keyboard`）与 `INTERACTION_CREATE` 回调；其他平台也有 inline button/component。为避免未来接入时迁移 core 契约与 outbox，M7 只定义通用模型与持久化。
-- 出站：`OutboundAction{id,label,kind:'callback'|'link'|'command',payload?,url?,style?,disabled?}`；`OutboundContent.actions` 只下发给 `capabilities.outboundActions===true` 的 driver；同一消息分段时只附在最后一段；无正文时 actions 不单独成消息；`sendReply`/`notify` 预留可选 `actions` 参数（M7 无生产者）。
-- 入站：`InboundAction{id,payload?,messageId?}`；driver 必须同时提供 `text` fallback（按钮 label、命令或“允许/拒绝”），core 的文本管线照常工作；M7 不把 action 路由给 broker，按钮审批属后续增强。
+- 背景：QQ 官方 Bot 支持消息内联键盘（`keyboard`）与 `INTERACTION_CREATE` 回调；其他平台也有 inline button/component。M7 先定义通用模型与持久化，M9 在审批场景首次落地。
+- 出站：`OutboundAction{id,label,kind:'callback'|'link'|'command',payload?,url?,style?,disabled?}`；`OutboundContent.actions` 只下发给 `capabilities.outboundActions===true` 的 driver；同一消息分段时只附在最后一段；无正文时 actions 不单独成消息。
+- 入站：`InboundAction{id,payload?,messageId?}`；driver 必须同时提供 `text` fallback（按钮 label、命令或“允许/拒绝”）。**M9 已实现**：`action` 存在时 core 以 action 为权威来源（见 6.3/6.6），fallback 仅用于展示与无 action 的驱动。
 - 持久化：outbox 条目保存 `actions`（重试/重启保留）；deferred 通知/回复丢弃 actions，补投不带按钮。
-- 平台映射（M8+，不实现）：QQ `keyboard.content.rows[].buttons[]`；`action.type` 0=link、1=callback、2=command；`label` ≤10 字符、`style`、`permission`、`modal`、`event_id` 与 `PUT /interactions/{id}` ack 由 QQ driver/后续里程碑处理；事实见 `.spec/notes/qq-official-bot-api-facts.md` §5.6/§6.5。
-- 明确不做：按钮渲染、`INTERACTION_CREATE` 订阅（intent `1<<26`）、互动回调应答、按钮审批 UX。
+- 平台映射（M9，QQ）：`keyboard.content.rows[].buttons[]`；`action.type` 0=link、1=callback、2=command；`label` ≤10 字符、`style`、`permission`、`modal`、`event_id` 与 `PUT /interactions/{id}` ack 由 QQ driver 处理；事实见 `.spec/notes/qq-official-bot-api-facts.md` §5.6/§6.5。
+- M9 范围：仅 C2C 审批按钮（「允许一次」/「拒绝」），提问按钮、群聊按钮、`始终允许`、消息编辑/撤回、流式仍后置（见 [18](18-qq-button-approval.md) 18.9）。

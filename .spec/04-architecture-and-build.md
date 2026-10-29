@@ -23,6 +23,8 @@
 
 设计目标：**不是 fork DSH 内核**，而是在 DSH 的组合系统上做一个精简发行版 + 少量自研插件。所有自研包只依赖稳定 seam（`ctx.agents`、`ctx.commands`、`ctx.userQuestions`、approval waterfall、`ctx.jobs`、`ctx.subagents`、`ctx.goals`、`ctx.systemPrompt`、`ctx.llm` 等）。
 
+M9（代码完成，2026-10-29）在 channel 层落地动作按钮（core 产出/解释 action，QQ C2C 渲染与 ack）；M10 规划增加 `terminal-host`（复用上游 `ctx.terminals` 与 `dsh-tool-terminal`，启动走 `ctx.shellHosts`）与 `ctx.web`（`dsh-web` + 搜索/抓取 provider），详见 [18](18-qq-button-approval.md) 与 [19](19-persistent-terminal-and-web.md)。
+
 ## 4.2 仓库结构
 
 ```
@@ -30,9 +32,10 @@ nokoribi-agent/
 ├─ packages/
 │  ├─ launcher/               # 薄启动器 + vendored profile-boot
 │  ├─ shared/                 # zod schema、路径、原子状态文件、日志、通用类型
-│  ├─ shell-bash/             # host router、bash(host) 工具、get_available_shell_host
+│  ├─ shell-bash/             # host router、bash(host) 工具、get_available_shell_host、host terminal launch 协议
 │  ├─ shell-host-local/       # local host provider
 │  ├─ shell-host-sandbox/     # sandbox host + sandbox/sandbox_packages 工具
+│  ├─ terminal-host/          # M10（规划）：host-aware 持久终端 backend（复用上游 BashTerminalBackend）
 │  ├─ channel-core/           # ChannelDriver 契约、ingress、broker、outbox、delivery
 │  ├─ channel-local-test/     # loopback HTTP + token 测试驱动
 │  ├─ channel-qq-bot/         # M8（已实现）：QQ 官方 Bot driver（WebSocket 网关 + OpenAPI v2）
@@ -58,12 +61,13 @@ nokoribi-agent/
 |---|---|---|
 | `launcher` | 解析参数、读打包 profile、叠加 Nix patch overlay、设置 DSH_HOME、调用 app-boot 启动。vendor profile-boot。 | `@deepseek-ai/dsh-app-boot`、`dsh-cmdline`、`dsh-home-paths`、`dsh-launch-environment`、`dsh-http-proxy`、cordis |
 | `shared` | 配置 schema（zod）、DSH_HOME/路径约定、原子读写、单实例锁、日志辅助、公共类型。 | cordis（仅类型/轻量）、node |
-| `shell-bash` | `shellHosts` service 定义、`shell-router`（唯一 `ctx.shell` provider）、`bash(host)` 工具、`get_available_shell_host`、hosts 提示词。`@nokoribi/shell-bash/tool` 是模型工具入口。 | shared、cordis、`dsh-bash-local`、`dsh-shell`、`dsh-jobs`、`dsh-tools`、`dsh-shell-env`、`dsh-working-directory` |
-| `shell-host-local` | local host provider：系统 PATH + extraPackages，cwd 为持久 workspace；前台/后台。 | shared、cordis、`ctx.shellHosts` |
-| `shell-host-sandbox` | sandbox host provider：profile Nix buildEnv + shellHook、临时目录、TTL、no_new_privs；`sandbox` 与 `sandbox_packages` 工具。 | shared、cordis、`ctx.shellHosts`、`ctx.subprocess`、`dsh-tools` |
+| `shell-bash` | `shellHosts` service 定义、`shell-router`（唯一 `ctx.shell` provider）、`bash(host)` 工具、`get_available_shell_host`、hosts 提示词；M10 规划增加 host 侧 `terminalLaunch` 协议。`@nokoribi/shell-bash/tool` 是模型工具入口。 | shared、cordis、`dsh-bash-local`、`dsh-shell`、`dsh-jobs`、`dsh-tools`、`dsh-shell-env`、`dsh-working-directory` |
+| `shell-host-local` | local host provider：系统 PATH + extraPackages，cwd 为持久 workspace；前台/后台；M10 规划增加 local 终端 launch。 | shared、cordis、`ctx.shellHosts` |
+| `shell-host-sandbox` | sandbox host provider：profile Nix buildEnv + shellHook、临时目录、TTL、no_new_privs；`sandbox` 与 `sandbox_packages` 工具；M10 规划增加终端 launch 与 terminal pin。 | shared、cordis、`ctx.shellHosts`、`ctx.subprocess`、`dsh-tools` |
+| `terminal-host` | M10（规划）：为每个已注册 shell host 注册一个复用上游 `BashTerminalBackend` 的持久 PTY backend（`type`=host id），注入 `spawnTerminal` 走 `ctx.shellHosts`；不 vendoring 上游。 | shell-bash（host 协议/类型）、`dsh-terminal`、`dsh-terminal-bash`、`dsh-subprocess`、cordis |
 | `channel-core` | driver 注册、ingress 管线（allowlist/去重/命令）、交互 broker、outbox、出站投递、系统通知。 | shared、cordis、`ctx.agents`、`ctx.commands` |
 | `channel-local-test` | 本地测试通道：HTTP server、token、长轮询。 | channel-core contract |
-| `channel-qq-bot` | M8（已实现）：QQ 官方 Bot driver：WebSocket 网关事件 → `InboundMessage`；被动优先/active 门禁；REST 发送；错误分类/频控；SDK protocol 薄封装。 | channel-core contract、shared、官方 `@tencent-connect/qqbot-nodejs`（`./protocol`，D154） |
+| `channel-qq-bot` | M8/M9（已实现）：QQ 官方 Bot driver：WebSocket 网关事件 → `InboundMessage`；被动优先/active 门禁；REST 发送；错误分类/频控；C2C 审批 keyboard、INTERACTION_CREATE ack/归一化、intents 降级；SDK protocol 薄封装。 | channel-core contract、shared、官方 `@tencent-connect/qqbot-nodejs`（`./protocol`，D154） |
 | `memory` | memory 工具（search/read/write/forget）、Markdown 文件存储、检索。 | shared、cordis |
 | `prompt` | SOUL.md 加载、系统提示词 section 注册、AGENTS.md seed 模板。 | shared、cordis、`ctx.systemPrompt` |
 | `agent-app` | daemon 启动、主 agent create/resume、单实例锁、状态文件、goal 跟踪/恢复、`/goal`/`/clear` 等命令、系统通知、提示词/记忆/定时装配。 | shared、prompt、channel-core（契约）、`ctx.*` |
@@ -102,8 +106,8 @@ nokoribi-agent/
 - `dsh-skill` + `dsh-skill-filesystem` + `dsh-tool-skill`（技能能力保留，v1 不重点使用）。
 - `dsh-spill-local` + `dsh-spill-policy`、`dsh-session-checkpoint-policy`、`dsh-tool-call-timeout-policy`（实际名）、`dsh-repeat-tool-reminder` 等辅助行。
 - `dsh-scope`、`dsh-atomic-write` 是库而不是可加载行；作为编译期/运行期依赖保留。
-- 可选：`dsh-tool-web` + `dsh-web-search-deepseek` + `dsh-web-fetch-http`（联网能力；是否 v1 启用需在配置层决定）。
 - 可选：`dsh-mcp-client`（v1 不纳入，后续可加）。
+- **M10 规划**：`dsh-web` + `dsh-tool-web` + `dsh-web-search-deepseek` + `dsh-web-fetch-http` + `dsh-web-deepseek-api`（双 provider 挂载、默认 pin `deepseek-official`/`http`）；`dsh-terminal` + `dsh-tool-terminal` + `dsh-terminal-bash`（仅类导入）+ `dsh-sandbox-policy`（`danger-full-access`，只作为 backend 前置策略服务）。
 
 ### 自研行
 
@@ -118,10 +122,11 @@ nokoribi-agent/
 - `nokoribi-prompt`
 - `nokoribi-agent-app`
 - `nokoribi-reviewer`（替换上游 auto-review 行）
+- `nokoribi-terminal-host`（M10 规划，注册每 host 一个终端 backend）
 
 ### 明确不安装 / 不加载
 
-- 所有 `dsh-web-*` / `dsh-client-*` / `dsh-client-ui-*` / host webserver / API gateway / apiproxy / typert gateway 的 Web 用途行（本项目没有 Web UI）。
+- Web UI 相关：`dsh-client-*` / `dsh-client-ui-*` / host webserver / API gateway / apiproxy / typert gateway 的 Web 用途行（本项目没有 Web UI）。M10 只安装 `dsh-web*` 能力行，不安装任何客户端/UI 行。
 - `dsh-pwsh-*`、`dsh-win32-process`、Windows ACL 相关。
 - `dsh-acp*`、`dsh-sdk-*`、`dsh-headless`（v1 不作为表面；可作为开发测试参考，不打包）。
 - `dsh-hooks-claude-code`、`dsh-hooks-codex`。
@@ -142,6 +147,8 @@ nokoribi-agent/
 - **M4 新增/调整行**：`session-query`（sqlite，`openAt:"never"`）、`goal`、`subagent`、`subagent-spawn`、`tool-subagent`、`tool-subagent-control`、`tool-goal`、`goal-round-driver`；`agent-app` 新增 `start_goal` 工具、goal tracker/命令/恢复/归档，`/clear` 清理 goals。
 - **M5 新增/调整行**：`storage` + `storage-json`（root `$DSH_HOME/storage`）+ `storage-domain`（backend json）、`nokoribi-session-bridge`（`@nokoribi/agent-app/session-bridge`）、`schedule` + `tool-schedule`、`time-context`、`nokoribi-memory`。`agent-app` 新增 memory curator、schedule ready-gating、`/clear` 提醒清理与 `/status full`；`packages/memory` 提供 `memory` 服务/工具。
 - **M6 新增/调整**：没有新增 bundle 行；host/channel 增加 `enabled` 配置，`agent-app` 增加 `goalDefaultMaxRounds`；Nix overlay 覆盖已有稳定行 id。运行时新增 `SystemdNotifier` 与 `NOKORIBI_LOG_LEVEL`。
+- **M9 新增/调整（已实现）**：不新增上游行；`channel-core` 增加 action 生产/路由，`channel-qq-bot` 能力位与 `approvalButtons` 配置，`channel-local-test` 支持 inbound action；bundle 行 config 与 NixOS `channel.qqBot.approvalButtons` 同步。
+- **M10 新增行（规划）**：`web`、`web-search-deepseek`、`web-fetch-http`、`web-deepseek-api`、`tool-web`；`terminal`、`tool-terminal`、`sandbox-policy`；自研 `nokoribi-terminal-host`。`dsh-terminal-bash` 不加载为行（只用其导出的 `BashTerminalBackend` 类）。
 
 ## 4.5 薄启动器
 
@@ -224,6 +231,7 @@ $out/
 - 不跟随 semver 范围、不自动升级。
 - vendored 代码保留上游 LICENSE 与来源/版本注释；补丁尽量小并单独记录。
 - M2 vendor：`packages/reviewer/vendor/auto-review.js`（上游 rc.3 `lib/index.js`），补丁见 `packages/reviewer/PATCHES.md`，版本/SHA 见 `VERSION.md`。
+- M10 起的新增 DSH 依赖见 D171；升级 DSH 时除既有回归外，还必须回归：`BashTerminalBackend` 构造/`spawnTerminal` 注入签名、auto-review `tools/pre-execute` 拦截点（含 `exemptTools` 补丁）、web provider id/配置、`dsh-sandbox-policy`/session projection 行为。若上游破坏终端注入面，按 D168 回退为 vendoring `dsh-terminal-bash` 并记录新决策。
 
 ## 4.8 代码规范
 
