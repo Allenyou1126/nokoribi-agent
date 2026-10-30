@@ -42,6 +42,7 @@ flake outputs：
 
 - Node.js 24；pnpm 版本由 `packageManager` 固定（开发 12.4.1）。
 - `nix/package.nix` 使用 `fetchPnpmDeps`（`fetcherVersion = 4`、nixpkgs `pnpm_12`）拉取固定依赖，构建阶段用 nixpkgs Node 24 + pnpm 执行 `pnpm build`。
+- **消费者 flake 的 nixpkgs follows**：`nix/package.nix` 以 `pnpm_12` 为 callPackage 参数；若消费者给本 input 加 `inputs.nokoribi-agent.inputs.nixpkgs.follows = "nixpkgs"` 而跟随的 nixpkgs 较旧、缺少 `pnpm_12`，`nixos-rebuild` 会在 eval 阶段报 `Function called without required argument "pnpm_12"`。本仓库锁定 `nixos-unstable`（已验证组合）；要么不要给该 input 加 follows，要么确认跟随的 nixpkgs 提供 `pnpm_12`。Nix 层尚未实现版本 assert/回退。
 - 构建后删除 node_modules，重新执行 `pnpm install --prod --offline --frozen-lockfile --trust-lockfile --ignore-scripts`，只保留生产依赖；`vitest`/`oxlint`/mock server 不进入发行版。
 - **运行时 Node 使用官方 24.21.0 二进制**（x86_64/aarch64），不是 nixpkgs Node。原因：DSH `node-addon-require-builtin` 对 Node 二进制代码布局有要求，nixpkgs 构建的 Node 与 patchelf 改写后的官方二进制都不能通过其检查（D145）。
 - 官方 Node 保留原始二进制；启动 wrapper 用 Nix glibc loader + `lib.makeLibraryPath`（libstdc++/libgcc/glibc）执行它，避免 patchelf 改写导致 segfault，同时不依赖 NixOS 的 `/lib64`。

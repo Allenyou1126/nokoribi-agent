@@ -146,6 +146,8 @@ M6 提供 `flake.nix`、`packages.<system>.default` 与 `nixosModules.default`�
 }
 ```
 
+若你的 flake 给本 input 添加 `inputs.nokoribi-agent.inputs.nixpkgs.follows = "nixpkgs"`，请确认跟随的 nixpkgs 提供 `pnpm_12`；否则 `nixos-rebuild` 会在 eval 阶段报缺参，详见 [12.3](.spec/12-nixos-deployment.md#123-package-构建)。
+
 agenix secret 内容至少包含：
 
 ```text
