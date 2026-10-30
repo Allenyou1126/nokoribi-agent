@@ -277,7 +277,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 }
 ```
 
-`ready` 在 `run/ready.json` 与主会话恢复完成后置 true；启动中返回 `agentStatus:"starting"`。`images` 入站当前未实现（V8 后置；测试通道返回 501）。
+`ready` 在 `run/ready.json` 与主会话恢复完成后置 true；启动中返回 `agentStatus:"starting"`。`images` 入站已由 M14 实现（base64，代码完成）；真实平台媒体门禁与视觉模型验证见 V8/V16/V20。
 
 ### 其他
 

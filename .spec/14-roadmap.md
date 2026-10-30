@@ -232,6 +232,13 @@
 - 本次仅覆盖：拉取/构建、daemon 启动、测试通道 `/v1/status`、真实模型对话、bash 缺陷复现与修复验证。12.12 清单其余项（审批、sandbox 生命周期、goal、memory、schedule、watchdog、重启恢复、升级演练）仍未在目标机执行。
 - 附带观察（2026-10-27 已修复）：shutdown 日志偶发 `shutdown flush failed ... flush on a closed handle`。根因是 Cordis 并发 teardown 中 persistence 先关闭写句柄；该后端 `close()` 会先 drain 已路由事件，数据未丢（`cleanShutdown=true`、session JSONL 完整）。daemon 现在把该错误识别为已持久化并降为 debug；m1 进程测试断言干净退出不再出现该错误。
 
+### M6 修复记录（2026-10-30）
+
+- 下游 review 发现 systemd unit 缺少 `Description` 与 `ExecStart`（后者使 `Type=notify` 服务无法启动），且 `config = { assertions; warnings; } // mkIf cfg.enable {…}` 会丢弃 sibling key，29 条 assertion 与 13 条 warning（其中 1 条不可达）实际未生效。
+- 已在本地修复：`systemd.services.nokoribi-agent` 增加 `description = "Nokoribi Agent";` 与 `serviceConfig.ExecStart = "${cfg.package}/bin/nokoribi-agent";`；`config` 改用 `lib.mkMerge` 保留断言与 warning，并删除不可达的 OpenViking `apiKeyEnv` warning。
+- `nix flake check` 扩展覆盖：module-eval 校验 unit 文本 `Description=`/`ExecStart=`、`serviceConfig.ExecStart` 与 config warnings；新增 `module-eval-invalid`（`environmentFile = null` 负样本）确认 required-field assertion 仍被收集，防止上述回归。
+- 本地门禁（2026-10-30 修复后）：`nix flake check --offline` 通过（8 个 check：package/unit/package-smoke/module-eval/module-eval-disabled/module-eval-openviking/module-eval-mcp-single/module-eval-invalid）；真实 NixOS 目标机 12.12 验收仍未执行，M6 仍只能标“代码实现完成、手工验收待执行”；README 状态不变。
+
 ## 14.8 M7 channel-core IM 基础设施扩展（已实现）
 
 > 状态：**代码已实现（2026-10-27）**；按 D149，本项是 M8 的前置。实现口径见 D162/D163，规格要点见 [17](17-qq-official-bot.md) 17.6.2 与 `.spec/notes/channel-qq-mapping.md` §3/§6.2。

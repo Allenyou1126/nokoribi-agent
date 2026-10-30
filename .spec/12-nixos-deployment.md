@@ -34,7 +34,7 @@ flake outputs：
 - `packages.<system>.default` / `.nokoribi-agent` = `nokoribi-agent`
 - `overlays.default`
 - `nixosModules.default`
-- `checks.<system>.{package,package-smoke,unit,module-eval}`
+- `checks.<system>.{package,package-smoke,unit,module-eval,module-eval-disabled,module-eval-openviking,module-eval-mcp-single,module-eval-invalid}`
 
 `nix flake check` 只检查当前系统；不支持的系统会提示 omitted（当前支持 x86_64-linux/aarch64-linux）。
 
@@ -194,7 +194,7 @@ services.nokoribi-agent = {
 - **纯 Nix 只读配置**（D118）：module 将选项渲染为完整 `cordis.patch.yml`，由 `NOKORIBI_PATCH` 叠加在 bundle 之后；没有运行时 override 文件。改参数必须 `nixos-rebuild switch`。
 - `sudo.enable` 默认 false（D120）；开启时写 `NOPASSWD: ALL`，唯一闸是 Auto review。
 - 测试 token 明文（D119），store 中本地用户可读；只建议验收期开启。
-- `models.main` 由用户填写；图片仍 501，不要求当前模型支持图片（V8）。
+- `models.main` 由用户填写；M14 已实现入站图片链路（代码完成），真实视觉模型能力仍按 V8/V20 待验证（text-only 模型由 DSH llm 层投影占位文本）。
 - `review.fast`/`strong` 为 null 时分别回退 main/fast；`goal` 回退 main；`memory` 回退 goal。
 - `goal.allowedModels` 是精确 `provider/model` allowlist；默认 goal 路由始终允许（D141）。
 - `goal.maxRounds` 映射到 daemon 的 `goalDefaultMaxRounds`，`start_goal`/`/goal new` 省略轮次时使用。
@@ -264,10 +264,10 @@ WorkingDirectory=/var/lib/nokoribi-agent
 UMask=0077
 ExecStart=/nix/store/.../bin/nokoribi-agent
 Restart=on-failure
-RestartSec=5
-WatchdogSec=120
-TimeoutStartSec=300
-TimeoutStopSec=45
+RestartSec=5s
+WatchdogSec=120s
+TimeoutStartSec=300s
+TimeoutStopSec=45s
 KillMode=mixed
 KillSignal=SIGTERM
 StandardOutput=journal
@@ -291,6 +291,7 @@ PrivateTmp=false
 - 不在 systemd 层限制网络（需要 Nix 下载/API/未来 IM）。
 - 测试通道只绑 127.0.0.1，不开放防火墙端口。
 - `NOKORIBI_READY_TIMEOUT_MS=0` 避免 launcher 在 cold goal 恢复较慢时先退出；`TimeoutStartSec=300` 是唯一启动上限。
+- **静态门禁**：`module-eval` 从真实 NixOS eval 取 unit 文本与 `serviceConfig`，断言 unit 包含 `Description=Nokoribi Agent` 与 `ExecStart=<serviceConfig.ExecStart>`，且 `serviceConfig.ExecStart` 指向包内 `bin/nokoribi-agent`；`module-eval-invalid`（`environmentFile = null` 负样本）确认 required-field assertion 仍被收集，防止 unit 字段缺失或 assertion/warning 被静默丢弃。
 
 ## 12.7 sudo
 
@@ -384,7 +385,7 @@ age.secrets.nokoribi-agent-env = {
 6. sandbox：默认 host 生效；workspace 与 sandbox 文件边界符合规格；`cp` 搬运可用；TTL/reset/status；`sandbox_packages add nixpkgs#hello`；sandbox 内 sudo 失败。
 7. local：系统工具可用；`sudo -n true` 成功（仅 `sudo.enable = true`）。
 8. goal：`/goal new` 与自然语言各创建一个；报告、重启恢复、归档。
-9. memory：自然语言写入；跨会话 search；确认不会自动注入（D143）。
+9. memory：自然语言写入；跨会话 search；确认 pinned 快照在下一轮自动注入（M16/D172–D174），并验证 `memory.inject.enable = false` 时不再注入。
 10. schedule：创建提醒，到期后收到主动消息；SIGKILL 后逾期重启仍交付；`/clear` 删除旧会话任务。
 11. `/status full` 与 `GET /v1/status?full=1` 返回 goals/sandbox、schedule、memory、reviewer、recent errors。
 12. `systemctl restart nokoribi-agent`：恢复会话、inbox、goal、outbox。
@@ -507,7 +508,7 @@ services.nokoribi-agent = {
 - **M15**：`ask_user_question` 单选（1–10 选项）渲染 C2C 按钮，label ≤10 字符；多选/自定义/超限保持文本；`questionButtons=false` 时纯文本；ack/intent 语义沿用 M9，真实平台门禁待执行。
 - **M16**：overlay 把 `inject.*` 写进 `nokoribi-memory` 行（bundle 侧默认值用 `NOKORIBI_MEMORY_INJECT_*`）；`/status full` memory 行显示 pinned/snapshotChars/inject；快照走 runtime context（`required:true`），每轮最多刷新一次。
 - **M17**：启用时 module 注入 systemd env `NOKORIBI_OPENVIKING_ENABLED=true`、`NOKORIBI_MEMORY_ENABLED=false`、`NOKORIBI_OPENVIKING_API_KEY_ENV`、连接项（非 null 时）与 `OPENVIKING_STATE_DIR=$DSH_HOME/openviking-state`；launcher 追加 `@openviking/dsh-memory-plugin` bundle 并把 `NOKORIBI_OPENVIKING_*` 归一为 `OPENVIKING_*`。插件 bundle 缺失/被跳过时 launcher 启动失败；本地 memory 行不靠 overlay 停用（env 开关 owns）。`endpoint` 在启用时必填（assertion）。真实 server spike 待外部部署；见 [25](25-openviking-backend.md)。
-- **module-eval**：`nix flake check` 的 `module-eval` 断言 M11/M12/M13/M14/M15/M16/M17 行/enable 分支、`mcp.servers` 0/1/2 server 矩阵、OpenViking 启用/停用与必填校验；`module-eval-disabled` 覆盖 terminal/web 的停用分支。
+- **module-eval**：`nix flake check` 的 `module-eval` 断言 M11/M12/M13/M14/M15/M16/M17 行/enable 分支、`mcp.servers` 0/1/2 server 矩阵、OpenViking env 与 overlay 行；必填校验由 NixOS module 的 `assertions` 执行。`module-eval` 还断言 systemd unit 文本（`Description=`/`ExecStart=`）与 `serviceConfig.ExecStart`、config warnings；`module-eval-invalid` 用 `environmentFile = null` 负样本确认 required-field assertion 仍被收集（防止 assertion/warning 被静默丢弃）；`module-eval-disabled` 覆盖 terminal/web 停用分支。
 - **依赖与哈希**：M11–M17 新增 `dsh-tool-session-query`/`dsh-skill*`/`dsh-tool-skill`/`dsh-mcp-client`/`dsh-mcp-resources` 与 `@openviking/dsh-memory-plugin@0.5.31`（launcher 依赖，含显式 DSH peer），lock 与 `nix/deps.nix` FOD 哈希已更新；M12 的 `share/skills` 由 `nix/package.nix` 打包，package-smoke 断言存在。
 - **验收**：本地自动化门禁通过（见 13.1 的 M11–M17 记录）；真实平台项（QQ 图片/文件上传、提问按钮、真实 OpenViking server）与目标机 NixOS 部署仍需执行，执行前只标“代码完成”。
 - **不做**：不在 NixOS module 中提供 openviking-server 的 package/systemd unit/模型服务；server 由用户外部部署，本仓库只读取连接配置。
