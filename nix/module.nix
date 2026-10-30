@@ -9,6 +9,7 @@ let
   inherit (lib)
     mkEnableOption
     mkIf
+    mkMerge
     mkOption
     types;
 
@@ -833,237 +834,238 @@ in
     };
   };
 
-  config = {
-    assertions = [
-      {
-        assertion = !cfg.enable || cfg.environmentFile != null;
-        message = "services.nokoribi-agent.environmentFile is required when the service is enabled.";
-      }
-      {
-        assertion = !cfg.enable || cfg.models.main.provider != "" && cfg.models.main.model != "";
-        message = "services.nokoribi-agent.models.main.provider/model must not be empty.";
-      }
-      {
-        assertion = !cfg.enable || cfg.hosts.local.enable || cfg.hosts.sandbox.enable;
-        message = "At least one of hosts.local.enable or hosts.sandbox.enable must be true.";
-      }
-      {
-        assertion = !cfg.enable || cfg.hosts.default != "local:workspace" || cfg.hosts.local.enable;
-        message = "hosts.default local:workspace requires hosts.local.enable = true.";
-      }
-      {
-        assertion = !cfg.enable || cfg.hosts.default != "sandbox:default" || cfg.hosts.sandbox.enable;
-        message = "hosts.default sandbox:default requires hosts.sandbox.enable = true.";
-      }
-      {
-        assertion = !cfg.enable || !cfg.channel.localTest.enable || cfg.channel.localTest.token != "";
-        message = "channel.localTest.token is required when the test channel is enabled.";
-      }
-      {
-        assertion = !cfg.enable || !cfg.channel.localTest.enable
-          || builtins.elem cfg.channel.localTest.bind [ "127.0.0.1" "::1" "localhost" ];
-        message = "channel.localTest.bind must be a loopback address.";
-      }
-      {
-        assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.channel.qqBot.appId != "";
-        message = "channel.qqBot.appId is required when the QQ bot channel is enabled.";
-      }
-      {
-        assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.channel.qqBot.clientSecretEnv != "";
-        message = "channel.qqBot.clientSecretEnv must name the EnvironmentFile variable holding the client secret.";
-      }
-      {
-        assertion = !cfg.enable || !cfg.channel.qqBot.enable
-          || cfg.channel.qqBot.reconnectMaxMs >= cfg.channel.qqBot.reconnectBaseMs;
-        message = "channel.qqBot.reconnectMaxMs must be at least channel.qqBot.reconnectBaseMs.";
-      }
-      {
-        assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.environmentFile != null;
-        message = "channel.qqBot requires services.nokoribi-agent.environmentFile for the client secret.";
-      }
-      {
-        assertion = !cfg.enable || routePairOk cfg.review.fast;
-        message = "review.fast.provider and review.fast.model must both be set or both be null.";
-      }
-      {
-        assertion = !cfg.enable || routePairOk cfg.review.strong;
-        message = "review.strong.provider and review.strong.model must both be set or both be null.";
-      }
-      {
-        assertion = !cfg.enable || routePairOk cfg.goal;
-        message = "goal.provider and goal.model must both be set or both be null.";
-      }
-      {
-        assertion = !cfg.enable || routePairOk cfg.memory;
-        message = "memory.provider and memory.model must both be set or both be null.";
-      }
-      {
-        assertion = !cfg.enable || lib.all allowedModelOk cfg.goal.allowedModels;
-        message = "goal.allowedModels entries must use the exact provider/model form.";
-      }
-      {
-        assertion = !cfg.enable || cfg.shutdown.stopTimeoutSeconds > cfg.shutdown.graceSeconds + 5;
-        message = "shutdown.stopTimeoutSeconds must exceed shutdown.graceSeconds by more than 5 seconds.";
-      }
-      {
-        assertion = !cfg.enable || lib.hasPrefix "/" cfg.dshHome;
-        message = "dshHome must be an absolute path.";
-      }
-      {
-        assertion = !cfg.enable || lib.hasPrefix "/" workspace;
-        message = "workspace must be an absolute path.";
-      }
-      {
-        assertion = !cfg.enable || lib.all mcpNameOk mcpServerNames;
-        message = "mcp.servers[].name must match [A-Za-z0-9_-]{1,32}.";
-      }
-      {
-        assertion = !cfg.enable
-          || builtins.length (lib.unique mcpServerNames) == builtins.length mcpServerNames;
-        message = "mcp.servers[].name values must be unique.";
-      }
-      {
-        assertion = !cfg.enable
-          || lib.all (server: server.transport != "stdio" || server.command != null) cfg.mcp.servers;
-        message = "mcp.servers[].command is required for the stdio transport.";
-      }
-      {
-        assertion = !cfg.enable
-          || lib.all (server: server.transport != "streamable-http" || server.url != null) cfg.mcp.servers;
-        message = "mcp.servers[].url is required for the streamable-http transport.";
-      }
-      {
-        assertion = !cfg.enable || lib.all mcpSecretsOk cfg.mcp.servers;
-        message = "mcp.servers[].env/headers values must be environment variable names ([A-Za-z_][A-Za-z0-9_]*), not secrets.";
-      }
-      {
-        assertion = !cfg.enable
-          || lib.all (server: server.reconnect.maxDelayMs >= server.reconnect.initialDelayMs) cfg.mcp.servers;
-        message = "mcp.servers[].reconnect.maxDelayMs must be at least initialDelayMs.";
-      }
-      {
-        assertion = !cfg.enable || !openViking.enable || openViking.endpoint != null;
-        message = "memory.openviking.endpoint is required when memory.openviking.enable is true.";
-      }
-      {
-        assertion = !cfg.enable
-          || !openViking.enable
-          || openViking.endpoint == null
-          || lib.hasPrefix "http://" openViking.endpoint
-          || lib.hasPrefix "https://" openViking.endpoint;
-        message = "memory.openviking.endpoint must be an http(s) URL when set.";
-      }
-      {
-        assertion = !cfg.enable || !openViking.enable || openViking.apiKeyEnv != "";
-        message = "memory.openviking.apiKeyEnv must name the environment variable holding the OpenViking key.";
-      }
-      {
-        assertion = !cfg.enable || lib.hasPrefix "/" bundledSkillsDir;
-        message = "skill.bundledDir must be an absolute path.";
-      }
-    ];
+  config = lib.mkMerge [
+    {
+      assertions = [
+        {
+          assertion = !cfg.enable || cfg.environmentFile != null;
+          message = "services.nokoribi-agent.environmentFile is required when the service is enabled.";
+        }
+        {
+          assertion = !cfg.enable || cfg.models.main.provider != "" && cfg.models.main.model != "";
+          message = "services.nokoribi-agent.models.main.provider/model must not be empty.";
+        }
+        {
+          assertion = !cfg.enable || cfg.hosts.local.enable || cfg.hosts.sandbox.enable;
+          message = "At least one of hosts.local.enable or hosts.sandbox.enable must be true.";
+        }
+        {
+          assertion = !cfg.enable || cfg.hosts.default != "local:workspace" || cfg.hosts.local.enable;
+          message = "hosts.default local:workspace requires hosts.local.enable = true.";
+        }
+        {
+          assertion = !cfg.enable || cfg.hosts.default != "sandbox:default" || cfg.hosts.sandbox.enable;
+          message = "hosts.default sandbox:default requires hosts.sandbox.enable = true.";
+        }
+        {
+          assertion = !cfg.enable || !cfg.channel.localTest.enable || cfg.channel.localTest.token != "";
+          message = "channel.localTest.token is required when the test channel is enabled.";
+        }
+        {
+          assertion = !cfg.enable || !cfg.channel.localTest.enable
+            || builtins.elem cfg.channel.localTest.bind [ "127.0.0.1" "::1" "localhost" ];
+          message = "channel.localTest.bind must be a loopback address.";
+        }
+        {
+          assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.channel.qqBot.appId != "";
+          message = "channel.qqBot.appId is required when the QQ bot channel is enabled.";
+        }
+        {
+          assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.channel.qqBot.clientSecretEnv != "";
+          message = "channel.qqBot.clientSecretEnv must name the EnvironmentFile variable holding the client secret.";
+        }
+        {
+          assertion = !cfg.enable || !cfg.channel.qqBot.enable
+            || cfg.channel.qqBot.reconnectMaxMs >= cfg.channel.qqBot.reconnectBaseMs;
+          message = "channel.qqBot.reconnectMaxMs must be at least channel.qqBot.reconnectBaseMs.";
+        }
+        {
+          assertion = !cfg.enable || !cfg.channel.qqBot.enable || cfg.environmentFile != null;
+          message = "channel.qqBot requires services.nokoribi-agent.environmentFile for the client secret.";
+        }
+        {
+          assertion = !cfg.enable || routePairOk cfg.review.fast;
+          message = "review.fast.provider and review.fast.model must both be set or both be null.";
+        }
+        {
+          assertion = !cfg.enable || routePairOk cfg.review.strong;
+          message = "review.strong.provider and review.strong.model must both be set or both be null.";
+        }
+        {
+          assertion = !cfg.enable || routePairOk cfg.goal;
+          message = "goal.provider and goal.model must both be set or both be null.";
+        }
+        {
+          assertion = !cfg.enable || routePairOk cfg.memory;
+          message = "memory.provider and memory.model must both be set or both be null.";
+        }
+        {
+          assertion = !cfg.enable || lib.all allowedModelOk cfg.goal.allowedModels;
+          message = "goal.allowedModels entries must use the exact provider/model form.";
+        }
+        {
+          assertion = !cfg.enable || cfg.shutdown.stopTimeoutSeconds > cfg.shutdown.graceSeconds + 5;
+          message = "shutdown.stopTimeoutSeconds must exceed shutdown.graceSeconds by more than 5 seconds.";
+        }
+        {
+          assertion = !cfg.enable || lib.hasPrefix "/" cfg.dshHome;
+          message = "dshHome must be an absolute path.";
+        }
+        {
+          assertion = !cfg.enable || lib.hasPrefix "/" workspace;
+          message = "workspace must be an absolute path.";
+        }
+        {
+          assertion = !cfg.enable || lib.all mcpNameOk mcpServerNames;
+          message = "mcp.servers[].name must match [A-Za-z0-9_-]{1,32}.";
+        }
+        {
+          assertion = !cfg.enable
+            || builtins.length (lib.unique mcpServerNames) == builtins.length mcpServerNames;
+          message = "mcp.servers[].name values must be unique.";
+        }
+        {
+          assertion = !cfg.enable
+            || lib.all (server: server.transport != "stdio" || server.command != null) cfg.mcp.servers;
+          message = "mcp.servers[].command is required for the stdio transport.";
+        }
+        {
+          assertion = !cfg.enable
+            || lib.all (server: server.transport != "streamable-http" || server.url != null) cfg.mcp.servers;
+          message = "mcp.servers[].url is required for the streamable-http transport.";
+        }
+        {
+          assertion = !cfg.enable || lib.all mcpSecretsOk cfg.mcp.servers;
+          message = "mcp.servers[].env/headers values must be environment variable names ([A-Za-z_][A-Za-z0-9_]*), not secrets.";
+        }
+        {
+          assertion = !cfg.enable
+            || lib.all (server: server.reconnect.maxDelayMs >= server.reconnect.initialDelayMs) cfg.mcp.servers;
+          message = "mcp.servers[].reconnect.maxDelayMs must be at least initialDelayMs.";
+        }
+        {
+          assertion = !cfg.enable || !openViking.enable || openViking.endpoint != null;
+          message = "memory.openviking.endpoint is required when memory.openviking.enable is true.";
+        }
+        {
+          assertion = !cfg.enable
+            || !openViking.enable
+            || openViking.endpoint == null
+            || lib.hasPrefix "http://" openViking.endpoint
+            || lib.hasPrefix "https://" openViking.endpoint;
+          message = "memory.openviking.endpoint must be an http(s) URL when set.";
+        }
+        {
+          assertion = !cfg.enable || !openViking.enable || openViking.apiKeyEnv != "";
+          message = "memory.openviking.apiKeyEnv must name the environment variable holding the OpenViking key.";
+        }
+        {
+          assertion = !cfg.enable || lib.hasPrefix "/" bundledSkillsDir;
+          message = "skill.bundledDir must be an absolute path.";
+        }
+      ];
 
-    warnings = lib.optional (cfg.enable && cfg.sudo.enable)
-      "services.nokoribi-agent.sudo.enable grants NOPASSWD: ALL; Auto review is the only boundary."
-    ++ lib.optional (cfg.enable && cfg.channel.localTest.enable)
-      "The local test-channel token is stored in the Nix store in plain text."
-    ++ lib.optional (cfg.enable && !cfg.channel.localTest.enable && !cfg.channel.qqBot.enable)
-      "The local test channel is disabled and the QQ bot channel is off; the daemon has no user-facing message channel."
-    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable)
-      "channel.qqBot is enabled: any QQ user who can message the bot or @-mention it in a group can drive the agent; platform limits are the only admission boundary and Auto review is the last gate (D152)."
-    ++ lib.optional
-      (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.activeMessageFallback == "auto")
-      "QQ active message push was announced as removed on 2025-04-21 while the API docs still list active quotas; proactive notices may fail and are deferred to the next inbound (D161)."
-    ++ lib.optional
-      (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.approvalButtons)
-      "QQ approval buttons are C2C-only; INTERACTION intent availability has not passed the real platform gate, and the driver falls back to text when unavailable (see channel health detail)."
-    ++ lib.optional
-      (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.markdown != "none")
-      "QQ Markdown rendering of code blocks and tables is undocumented and untested; lower channel.qqBot.markdown to none if replies render badly."
-    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable && !cfg.channel.localTest.enable)
-      "channel.qqBot is the only message channel: there is no local fallback, so proactive notices are attempted, then deferred or dropped."
-    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.localTest.enable)
-      "channel.localTest and channel.qqBot are both enabled; replies and notices are routed per turn across the two channels."
-    ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable)
-      "The QQ client secret is read from ${cfg.channel.qqBot.clientSecretEnv}; provide it through environmentFile/agenix, never the Nix store."
-    ++ lib.optional (cfg.enable && cfg.mcp.servers != [ ])
-      "mcp.servers attaches external MCP servers: their processes run with the service user's privileges and every MCP tool call is reviewed; configure only trusted servers."
-    ++ lib.optional (cfg.enable && openViking.enable)
-      "memory.openviking.enable disables local memory (tool/store/snapshot) and the memory curator; the OpenViking backend owns memory while enabled (D175)."
-    ++ lib.optional (cfg.enable && openViking.enable && openViking.apiKeyEnv == "")
-      "memory.openviking.apiKeyEnv is empty; the OpenViking key cannot be resolved from the environment.";
-  } // mkIf cfg.enable {
-    services.nokoribi-agent._overlayText = overlayText;
+      warnings = lib.optional (cfg.enable && cfg.sudo.enable)
+        "services.nokoribi-agent.sudo.enable grants NOPASSWD: ALL; Auto review is the only boundary."
+      ++ lib.optional (cfg.enable && cfg.channel.localTest.enable)
+        "The local test-channel token is stored in the Nix store in plain text."
+      ++ lib.optional (cfg.enable && !cfg.channel.localTest.enable && !cfg.channel.qqBot.enable)
+        "The local test channel is disabled and the QQ bot channel is off; the daemon has no user-facing message channel."
+      ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable)
+        "channel.qqBot is enabled: any QQ user who can message the bot or @-mention it in a group can drive the agent; platform limits are the only admission boundary and Auto review is the last gate (D152)."
+      ++ lib.optional
+        (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.activeMessageFallback == "auto")
+        "QQ active message push was announced as removed on 2025-04-21 while the API docs still list active quotas; proactive notices may fail and are deferred to the next inbound (D161)."
+      ++ lib.optional
+        (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.approvalButtons)
+        "QQ approval buttons are C2C-only; INTERACTION intent availability has not passed the real platform gate, and the driver falls back to text when unavailable (see channel health detail)."
+      ++ lib.optional
+        (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.qqBot.markdown != "none")
+        "QQ Markdown rendering of code blocks and tables is undocumented and untested; lower channel.qqBot.markdown to none if replies render badly."
+      ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable && !cfg.channel.localTest.enable)
+        "channel.qqBot is the only message channel: there is no local fallback, so proactive notices are attempted, then deferred or dropped."
+      ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable && cfg.channel.localTest.enable)
+        "channel.localTest and channel.qqBot are both enabled; replies and notices are routed per turn across the two channels."
+      ++ lib.optional (cfg.enable && cfg.channel.qqBot.enable)
+        "The QQ client secret is read from ${cfg.channel.qqBot.clientSecretEnv}; provide it through environmentFile/agenix, never the Nix store."
+      ++ lib.optional (cfg.enable && cfg.mcp.servers != [ ])
+        "mcp.servers attaches external MCP servers: their processes run with the service user's privileges and every MCP tool call is reviewed; configure only trusted servers."
+      ++ lib.optional (cfg.enable && openViking.enable)
+        "memory.openviking.enable disables local memory (tool/store/snapshot) and the memory curator; the OpenViking backend owns memory while enabled (D175).";
+    }
+    (mkIf cfg.enable {
+      services.nokoribi-agent._overlayText = overlayText;
 
-    users.groups.${cfg.group} = { };
-    users.users.${cfg.user} = {
-      isSystemUser = true;
-      group = cfg.group;
-      home = "${cfg.dshHome}/home";
-      createHome = false;
-    };
-
-    security.sudo.extraRules = mkIf cfg.sudo.enable [
-      {
-        users = [ cfg.user ];
-        commands = [
-          {
-            command = "ALL";
-            options = [ "NOPASSWD" ];
-          }
-        ];
-      }
-    ];
-
-    nix.registry.nixpkgs.to = mkIf cfg.hosts.sandbox.enable (lib.mkDefault {
-      type = "path";
-      path = toString pkgs.path;
-    });
-    nix.settings.experimental-features = mkIf cfg.hosts.sandbox.enable (
-      lib.mkAfter [ "nix-command" "flakes" ]
-    );
-
-    systemd.tmpfiles.rules =
-      lib.optional (stateDirectory == null) "d ${cfg.dshHome} 0750 ${cfg.user} ${cfg.group} -"
-      ++ lib.optional openViking.enable "d ${cfg.dshHome}/openviking-state 0700 ${cfg.user} ${cfg.group} -";
-
-    systemd.services.nokoribi-agent = {
-      description = "Nokoribi Agent";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
-      unitConfig = {
-        StartLimitIntervalSec = 300;
-        StartLimitBurst = 5;
+      users.groups.${cfg.group} = { };
+      users.users.${cfg.user} = {
+        isSystemUser = true;
+        group = cfg.group;
+        home = "${cfg.dshHome}/home";
+        createHome = false;
       };
-      environment = serviceEnvironment;
-      serviceConfig = {
-        Type = "notify";
-        ExecStart = "${cfg.package}/bin/nokoribi-agent";
-        NotifyAccess = "all";
-        WatchdogSec = "${toString cfg.watchdog.intervalSeconds}s";
-        TimeoutStartSec = "${toString cfg.shutdown.startTimeoutSeconds}s";
-        TimeoutStopSec = "${toString cfg.shutdown.stopTimeoutSeconds}s";
-        Restart = "on-failure";
-        RestartSec = "5s";
-        User = cfg.user;
-        Group = cfg.group;
-        WorkingDirectory = cfg.dshHome;
-        UMask = "0077";
-        EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
-        KillMode = "mixed";
-        KillSignal = "SIGTERM";
-        NoNewPrivileges = false;
-        ProtectSystem = false;
-        ProtectHome = false;
-        PrivateTmp = false;
-        StandardOutput = "journal";
-        StandardError = "journal";
-        SyslogIdentifier = "nokoribi-agent";
-      } // lib.optionalAttrs (stateDirectory != null) {
-        StateDirectory = stateDirectory;
-        StateDirectoryMode = "0750";
+
+      security.sudo.extraRules = mkIf cfg.sudo.enable [
+        {
+          users = [ cfg.user ];
+          commands = [
+            {
+              command = "ALL";
+              options = [ "NOPASSWD" ];
+            }
+          ];
+        }
+      ];
+
+      nix.registry.nixpkgs.to = mkIf cfg.hosts.sandbox.enable (lib.mkDefault {
+        type = "path";
+        path = toString pkgs.path;
+      });
+      nix.settings.experimental-features = mkIf cfg.hosts.sandbox.enable (
+        lib.mkAfter [ "nix-command" "flakes" ]
+      );
+
+      systemd.tmpfiles.rules =
+        lib.optional (stateDirectory == null) "d ${cfg.dshHome} 0750 ${cfg.user} ${cfg.group} -"
+        ++ lib.optional openViking.enable "d ${cfg.dshHome}/openviking-state 0700 ${cfg.user} ${cfg.group} -";
+
+      systemd.services.nokoribi-agent = {
+        description = "Nokoribi Agent";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        unitConfig = {
+          StartLimitIntervalSec = 300;
+          StartLimitBurst = 5;
+        };
+        environment = serviceEnvironment;
+        serviceConfig = {
+          Type = "notify";
+          ExecStart = "${cfg.package}/bin/nokoribi-agent";
+          NotifyAccess = "all";
+          WatchdogSec = "${toString cfg.watchdog.intervalSeconds}s";
+          TimeoutStartSec = "${toString cfg.shutdown.startTimeoutSeconds}s";
+          TimeoutStopSec = "${toString cfg.shutdown.stopTimeoutSeconds}s";
+          Restart = "on-failure";
+          RestartSec = "5s";
+          User = cfg.user;
+          Group = cfg.group;
+          WorkingDirectory = cfg.dshHome;
+          UMask = "0077";
+          EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
+          KillMode = "mixed";
+          KillSignal = "SIGTERM";
+          NoNewPrivileges = false;
+          ProtectSystem = false;
+          ProtectHome = false;
+          PrivateTmp = false;
+          StandardOutput = "journal";
+          StandardError = "journal";
+          SyslogIdentifier = "nokoribi-agent";
+        } // lib.optionalAttrs (stateDirectory != null) {
+          StateDirectory = stateDirectory;
+          StateDirectoryMode = "0750";
+        };
       };
-    };
-  };
+    })
+  ];
 }

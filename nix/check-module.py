@@ -212,7 +212,34 @@ def check_bundle(bundle):
         expect_js(qq_bot.get(key), env_name, f"bundle QQ {key}")
 
 
-def check_common(overlay, service, environment, bundle, unit):
+def warnings_text(warnings):
+    if not isinstance(warnings, list) or not all(
+        isinstance(entry, str) for entry in warnings
+    ):
+        fail(f"warnings must be a list of strings: {warnings!r}")
+    return "\n".join(warnings)
+
+
+def check_warnings_common(warnings):
+    # U2: assertions and warnings used to be dropped by `// mkIf`; the shared
+    # sample enables the QQ bot and the test channel, so those warnings must
+    # survive the module merge.
+    text = warnings_text(warnings)
+    if len(warnings) < 6:
+        fail(f"config.warnings was dropped or truncated: {warnings!r}")
+    for needle in (
+        "can drive the agent",
+        "client secret",
+        "Markdown rendering",
+        "both enabled",
+    ):
+        if needle not in text:
+            fail(f"config.warnings is missing the {needle!r} entry: {warnings!r}")
+    if "NOPASSWD: ALL" in text:
+        fail("config.warnings must not include the sudo warning while sudo is off")
+
+
+def check_common(overlay, service, environment, bundle, unit, warnings):
     if not isinstance(overlay, list):
         fail("overlay must be a list")
     duplicates = duplicate_ids(overlay)
@@ -363,6 +390,8 @@ def check_common(overlay, service, environment, bundle, unit):
         if expected_line not in unit.splitlines():
             fail(f"unit must contain {expected_line!r}")
 
+    check_warnings_common(warnings)
+
     if environment.get("DSH_HOME") != "/var/lib/nokoribi-agent":
         fail("DSH_HOME mismatch")
     if environment.get("HOME") != "/var/lib/nokoribi-agent/home":
@@ -375,7 +404,12 @@ def check_common(overlay, service, environment, bundle, unit):
         fail("overlay path missing")
 
 
-def check_enabled(overlay, environment, tmpfiles):
+def check_enabled(overlay, environment, tmpfiles, warnings):
+    if "external MCP servers" not in warnings_text(warnings):
+        fail("enabled sample must warn about configured mcp.servers")
+    if "disables local memory" in warnings_text(warnings):
+        fail("enabled sample must not warn about the OpenViking memory switch")
+
     sandbox_policy = row(overlay, "sandbox-policy")
     if sandbox_policy.get("mode") != "danger-full-access":
         fail("sandbox-policy mode mismatch")
@@ -522,7 +556,10 @@ def check_enabled(overlay, environment, tmpfiles):
         fail("openviking state dir rule must be absent when OpenViking is disabled")
 
 
-def check_disabled(overlay, environment, tmpfiles):
+def check_disabled(overlay, environment, tmpfiles, warnings):
+    if "external MCP servers" in warnings_text(warnings):
+        fail("disabled sample must not warn about mcp.servers")
+
     for row_id in (
         "sandbox-policy",
         "terminal",
@@ -567,7 +604,7 @@ def check_disabled(overlay, environment, tmpfiles):
             fail(f"{key} must be absent when OpenViking is disabled")
 
 
-def check_openviking(overlay, environment, tmpfiles):
+def check_openviking(overlay, environment, tmpfiles, warnings):
     expected_environment = {
         "NOKORIBI_OPENVIKING_ENABLED": "true",
         "NOKORIBI_MEMORY_ENABLED": "false",
@@ -582,6 +619,11 @@ def check_openviking(overlay, environment, tmpfiles):
         if environment.get(key) != value:
             fail(f"OpenViking environment {key} mismatch: {environment.get(key)!r}")
 
+    if "disables local memory" not in warnings_text(warnings):
+        fail("OpenViking sample must warn that local memory is disabled")
+    if "external MCP servers" not in warnings_text(warnings):
+        fail("OpenViking sample must warn about configured mcp.servers")
+
     memory_row = entry(overlay, "nokoribi-memory")
     if memory_row.get("disabled") is True:
         fail("local memory row must stay enabled in the overlay; the env switch owns the M17 toggle")
@@ -593,7 +635,7 @@ def check_openviking(overlay, environment, tmpfiles):
         fail("openviking state dir tmpfiles rule missing")
 
 
-def check_single_mcp(overlay):
+def check_single_mcp(overlay, warnings):
     rows = overlay_rows(overlay)
     mcp_ids = [
         candidate.get("id")
@@ -602,6 +644,9 @@ def check_single_mcp(overlay):
     ]
     if mcp_ids != ["mcp-solo"]:
         fail(f"single mcp row mismatch: {mcp_ids!r}")
+    if "external MCP servers" not in warnings_text(warnings):
+        fail("single-MCP sample must warn about configured mcp.servers")
+
     config = row(rows, "mcp-solo")
     expected = {
         "serverName": "solo",
@@ -626,6 +671,32 @@ def check_single_mcp(overlay):
         fail("mcp-solo must omit cwd when it is null")
 
 
+def check_invalid_assertions(valid, invalid):
+    """U2: a required-field violation must still add a failed assertion.
+
+    The valid sample sets every required option; clearing environmentFile (and
+    disabling the QQ channel, which also requires it) must add exactly one
+    false assertion instead of silently evaluating.
+    """
+    if not isinstance(valid, list) or not isinstance(invalid, list):
+        fail("assertion exports must be JSON lists")
+    if not all(isinstance(value, bool) for value in valid + invalid):
+        fail("assertion exports must contain booleans")
+    if len(valid) != len(invalid):
+        fail(
+            "valid and invalid samples must collect the same assertions; "
+            f"{len(valid)} != {len(invalid)}"
+        )
+    valid_false = len([value for value in valid if not value])
+    invalid_false = len([value for value in invalid if not value])
+    if invalid_false != valid_false + 1:
+        fail(
+            "invalid sample must add exactly one failed assertion "
+            f"(valid={valid_false}, invalid={invalid_false}); "
+            "module assertions are probably dropped again"
+        )
+
+
 def main():
     mode = "enabled"
     paths = []
@@ -636,14 +707,29 @@ def main():
             mode = "openviking"
         elif argument == "--mcp-single":
             mode = "mcp-single"
+        elif argument == "--invalid-assertions":
+            mode = "invalid-assertions"
         elif argument.startswith("-"):
             fail(f"unknown option {argument}")
         else:
             paths.append(argument)
-    if len(paths) != 6:
+    if mode == "invalid-assertions":
+        if len(paths) != 2:
+            fail(
+                "usage: check-module.py --invalid-assertions "
+                "VALID_ASSERTIONS INVALID_ASSERTIONS"
+            )
+        valid_path, invalid_path = paths
+        with open(valid_path, encoding="utf-8") as handle:
+            valid = json.load(handle)
+        with open(invalid_path, encoding="utf-8") as handle:
+            invalid = json.load(handle)
+        check_invalid_assertions(valid, invalid)
+        return
+    if len(paths) != 7:
         fail(
             "usage: check-module.py [--disabled|--openviking|--mcp-single] "
-            "OVERLAY SERVICE ENVIRONMENT TMPFILES BUNDLE UNIT"
+            "OVERLAY SERVICE ENVIRONMENT TMPFILES BUNDLE UNIT WARNINGS"
         )
     (
         overlay_path,
@@ -652,6 +738,7 @@ def main():
         tmpfiles_path,
         bundle_path,
         unit_path,
+        warnings_path,
     ) = paths
     with open(overlay_path, encoding="utf-8") as handle:
         overlay = yaml.safe_load(handle)
@@ -665,16 +752,18 @@ def main():
         bundle = yaml.safe_load(handle)
     with open(unit_path, encoding="utf-8") as handle:
         unit = handle.read()
+    with open(warnings_path, encoding="utf-8") as handle:
+        warnings = json.load(handle)
 
-    check_common(overlay, service, environment, bundle, unit)
+    check_common(overlay, service, environment, bundle, unit, warnings)
     if mode == "disabled":
-        check_disabled(overlay, environment, tmpfiles)
+        check_disabled(overlay, environment, tmpfiles, warnings)
     elif mode == "openviking":
-        check_openviking(overlay, environment, tmpfiles)
+        check_openviking(overlay, environment, tmpfiles, warnings)
     elif mode == "mcp-single":
-        check_single_mcp(overlay)
+        check_single_mcp(overlay, warnings)
     else:
-        check_enabled(overlay, environment, tmpfiles)
+        check_enabled(overlay, environment, tmpfiles, warnings)
 
 
 if __name__ == "__main__":

@@ -161,6 +161,24 @@
               }
             ];
           };
+          # U2/U3: a negative sample clears a required option; the eval-time
+          # assertion flags must still contain one additional failure, so a
+          # regression back to dropping assertions fails `nix flake check`.
+          invalidSample = nixpkgs.lib.nixosSystem {
+            system = pkgs.stdenv.hostPlatform.system;
+            modules = [
+              self.nixosModules.default
+              sampleOptions
+              {
+                services.nokoribi-agent = {
+                  environmentFile = pkgs.lib.mkForce null;
+                  channel.qqBot.enable = pkgs.lib.mkForce false;
+                };
+              }
+            ];
+          };
+          assertionFlags = nixos: builtins.toJSON
+            (map (assertion: assertion.assertion) nixos.config.assertions);
           moduleEval = name: flag: nixos:
             pkgs.runCommand "nokoribi-${name}" {
               nativeBuildInputs = [ python ];
@@ -175,8 +193,10 @@
               bundle = ./packages/bundle/cordis.patch.yml;
               unit = pkgs.writeText "${name}-unit.txt"
                 nixos.config.systemd.units."nokoribi-agent.service".text;
+              warnings = pkgs.writeText "${name}-warnings.json"
+                (builtins.toJSON nixos.config.warnings);
             } ''
-              python ${./nix/check-module.py} ${flag} "$overlay" "$serviceConfig" "$environment" "$tmpfiles" "$bundle" "$unit"
+              python ${./nix/check-module.py} ${flag} "$overlay" "$serviceConfig" "$environment" "$tmpfiles" "$bundle" "$unit" "$warnings"
               touch $out
             '';
         in
@@ -231,6 +251,17 @@
           module-eval-openviking = moduleEval "module-eval-openviking" "--openviking" openVikingSample;
 
           module-eval-mcp-single = moduleEval "module-eval-mcp-single" "--mcp-single" singleMcpSample;
+
+          module-eval-invalid = pkgs.runCommand "nokoribi-module-eval-invalid" {
+            nativeBuildInputs = [ python ];
+            validAssertions = pkgs.writeText "module-eval-valid-assertions.json"
+              (assertionFlags sample);
+            invalidAssertions = pkgs.writeText "module-eval-invalid-assertions.json"
+              (assertionFlags invalidSample);
+          } ''
+            python ${./nix/check-module.py} --invalid-assertions "$validAssertions" "$invalidAssertions"
+            touch $out
+          '';
         });
     };
 }
