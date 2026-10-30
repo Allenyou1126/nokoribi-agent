@@ -173,8 +173,10 @@
               tmpfiles = pkgs.writeText "${name}-tmpfiles.json"
                 (builtins.toJSON nixos.config.systemd.tmpfiles.rules);
               bundle = ./packages/bundle/cordis.patch.yml;
+              unit = pkgs.writeText "${name}-unit.txt"
+                nixos.config.systemd.units."nokoribi-agent.service".text;
             } ''
-              python ${./nix/check-module.py} ${flag} "$overlay" "$serviceConfig" "$environment" "$tmpfiles" "$bundle"
+              python ${./nix/check-module.py} ${flag} "$overlay" "$serviceConfig" "$environment" "$tmpfiles" "$bundle" "$unit"
               touch $out
             '';
         in

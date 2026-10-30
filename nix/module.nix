@@ -1028,6 +1028,7 @@ in
       ++ lib.optional openViking.enable "d ${cfg.dshHome}/openviking-state 0700 ${cfg.user} ${cfg.group} -";
 
     systemd.services.nokoribi-agent = {
+      description = "Nokoribi Agent";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
@@ -1038,6 +1039,7 @@ in
       environment = serviceEnvironment;
       serviceConfig = {
         Type = "notify";
+        ExecStart = "${cfg.package}/bin/nokoribi-agent";
         NotifyAccess = "all";
         WatchdogSec = "${toString cfg.watchdog.intervalSeconds}s";
         TimeoutStartSec = "${toString cfg.shutdown.startTimeoutSeconds}s";

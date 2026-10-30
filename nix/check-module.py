@@ -212,7 +212,7 @@ def check_bundle(bundle):
         expect_js(qq_bot.get(key), env_name, f"bundle QQ {key}")
 
 
-def check_common(overlay, service, environment, bundle):
+def check_common(overlay, service, environment, bundle, unit):
     if not isinstance(overlay, list):
         fail("overlay must be a list")
     duplicates = duplicate_ids(overlay)
@@ -347,6 +347,21 @@ def check_common(overlay, service, environment, bundle):
     for key, value in expected_service.items():
         if service.get(key) != value:
             fail(f"service {key} mismatch: {service.get(key)!r}")
+
+    # U1: Type=notify needs a main process and a unit description; without
+    # ExecStart the unit could never start.
+    exec_start = service.get("ExecStart")
+    if not isinstance(exec_start, str) or not exec_start.endswith(
+        "/bin/nokoribi-agent"
+    ):
+        fail(f"service ExecStart must run the packaged daemon: {exec_start!r}")
+    for expected_line in (
+        "Description=Nokoribi Agent",
+        f"ExecStart={exec_start}",
+        "WantedBy=multi-user.target",
+    ):
+        if expected_line not in unit.splitlines():
+            fail(f"unit must contain {expected_line!r}")
 
     if environment.get("DSH_HOME") != "/var/lib/nokoribi-agent":
         fail("DSH_HOME mismatch")
@@ -625,12 +640,19 @@ def main():
             fail(f"unknown option {argument}")
         else:
             paths.append(argument)
-    if len(paths) != 5:
+    if len(paths) != 6:
         fail(
             "usage: check-module.py [--disabled|--openviking|--mcp-single] "
-            "OVERLAY SERVICE ENVIRONMENT TMPFILES BUNDLE"
+            "OVERLAY SERVICE ENVIRONMENT TMPFILES BUNDLE UNIT"
         )
-    overlay_path, service_path, environment_path, tmpfiles_path, bundle_path = paths
+    (
+        overlay_path,
+        service_path,
+        environment_path,
+        tmpfiles_path,
+        bundle_path,
+        unit_path,
+    ) = paths
     with open(overlay_path, encoding="utf-8") as handle:
         overlay = yaml.safe_load(handle)
     with open(service_path, encoding="utf-8") as handle:
@@ -641,8 +663,10 @@ def main():
         tmpfiles = json.load(handle)
     with open(bundle_path, encoding="utf-8") as handle:
         bundle = yaml.safe_load(handle)
+    with open(unit_path, encoding="utf-8") as handle:
+        unit = handle.read()
 
-    check_common(overlay, service, environment, bundle)
+    check_common(overlay, service, environment, bundle, unit)
     if mode == "disabled":
         check_disabled(overlay, environment, tmpfiles)
     elif mode == "openviking":
