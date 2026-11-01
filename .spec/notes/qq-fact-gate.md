@@ -69,11 +69,11 @@ node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --panels
 
 ## M18：C2C 指令面板门禁（候选，实现后实测）
 
-> 状态：**代码已实现（2026-11-01），待真实 Bot 实测**。daemon 启动后会自动创建/更新一个 c2c 面板；也可用探针 `--panels`（只读列表）查看。凭据与前置同 M8。
+> 状态：**代码已实现（2026-11-01），待真实 Bot 实测**。daemon 启动后会自动创建/更新一个 c2c 面板；也可用探针 `--panels`（只读列表）查看。凭据与前置同 M8。**2026-11-01 首次实机启动：`GET /v2/panels` 可达且鉴权正常；无面板时返回 HTTP 200 `{"is_end":true}`（省略 `records`），旧校验误判为失败、面板从未创建，已修复（D185）；创建/客户端可见性/幂等仍待验证。**
 
 | # | 事实 | 验证方式 | 结果/日期 | 结论 |
 |---|---|---|---|---|
-| 21 | 面板 API 对个人 Bot 的可用性（代码：c2c 全局面板 + 固定 remark） | `GET /v2/panels?scope=c2c`；daemon 启动后确认一个 `target_type=all`、remark=`nokoribi-agent:slash-commands` 的面板；记录 401/400 权限与错误码 | 待实测 | 决定默认 `commandPanel` 与失败日志 |
+| 21 | 面板 API 对个人 Bot 的可用性（代码：c2c 全局面板 + 固定 remark） | `GET /v2/panels?scope=c2c`；daemon 启动后确认一个 `target_type=all`、remark=`nokoribi-agent:slash-commands` 的面板；记录 401/400 权限与错误码 | 部分实测（2026-11-01）：`GET` 200 但无面板时省略 `records`（`{"is_end":true}`），无业务错误码；适配器已容错（D185），创建待验证 | 决定默认 `commandPanel` 与失败日志 |
 | 22 | C2C 客户端可见性与点击插入语义（代码：`name="/name"`） | 手机 QQ 私聊输入 `/` 观察面板；点击 `/stop`、`/status`、`/steer`、`/queue` 后确认填入 `/name` 并发送执行；记录 14/30 字符与 20 项限制的实际表现 | 待实测 | 校准截断/跳过与 `desc` 文案 |
 | 23 | 重启幂等与关闭开关（代码：先 GET 认领再 POST/PUT；`commandPanel=false` 不请求） | 连续重启 daemon 两次，确认仍只有 1 个同 remark 面板；设置 `NOKORIBI_QQ_BOT_COMMAND_PANEL=false` 后无 `/v2/panels` 请求 | 待实测 | 确认不重复创建；若存在多面板，按 26.5 只更新最新一个并 warn |
 
@@ -81,5 +81,6 @@ node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --panels
 
 - SDK 把 `4009` 视为 `SESSION_TIMEOUT` 并重新 Identify（不是 Resume）；其它可恢复断线（如 1000/4008）走 SDK 的 Resume。这是 SDK 1.0.5 行为，与规格“4009 可 resume”的事实描述不同，已记录在 D164。
 - 业务错误可能是 HTTP 200 + body `code`；driver 在 REST 层显式检查，不依赖 SDK `ApiClient` 的非 2xx 判断。
+- 2026-11-01 实测：无面板时 `GET /v2/panels` 返回 HTTP 200 `{"is_end":true}`（省略 `records`）；适配器把缺失/`null` 视为空列表（D185），只有非数组才放弃本轮。
 - `msg_seq` 只随 `msg_id` 发送；active 消息不发送 `msg_seq`（driver 直接走 `ApiClient`，不经过 SDK 的自动注入）。
 - M9 已实现 action payload `{"k":"<token>","t":"<fallback>"}`（token 22 字符 base64url，仅在 broker 内存；一次性、settle/timeout/abort/重启失效）。若 #19 实测 button data 长度受限，压缩字段名或改用短 token 映射表；若 #17 未回传 `button_data`，按 18.9 评估 button_id 兜底。

@@ -382,8 +382,9 @@ QQ Bot v2 的协议面足够做一个「零框架依赖的轻客户端」，但*
 | `PanelItem`：`type=command|link`；`name` ≤14 字符、`desc` ≤30 字符、`remark` ≤255（remark 不对用户展示） | ✅ S42/S45 |
 | `type=command` 点击后 `name` 原样填入聊天输入框；要让 `/ping` 生效需配置 `name="/ping"`；面板不会替框架注册指令 | ✅ 官方文档 + 第三方 S48 |
 | 错误码：`40030006/40030008/40030009/40030011/40030012/40030013/40030015/40030016/40030018/40030020/40030021`；业务错误可能 HTTP 200 + body `code` | ✅ S42/S45/S46 |
+| 空列表响应（实测）：无面板时 `GET /v2/panels?scope=...` 返回 HTTP 200 `{"is_end":true}`，**省略 `records`（和 `next_cursor`）**（文档示例为 `"records": []`） | ✅【实测】2026-11-01 hkg-dog-darell，AppID 102816855；TraceId `79f25052…`/`4ea245f4…` |
 
-M18 口径：只创建 `scope=c2c`、`target_type=all` 的一个面板，固定 remark 认领，先 GET 再 POST/PUT；群聊面板不做。
+M18 口径：只创建 `scope=c2c`、`target_type=all` 的一个面板，固定 remark 认领，先 GET 再 POST/PUT；群聊面板不做。**实测（2026-11-01）：无面板时 `GET` 省略 `records`；适配器按空列表处理（D185），否则会把空列表误判为响应错误。**
 
 来源：
 

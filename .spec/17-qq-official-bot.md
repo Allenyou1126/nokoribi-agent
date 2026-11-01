@@ -373,7 +373,7 @@ channel.qqBot = {
 
 - 自动化：`tests/process/m18-qq-command-panel.test.ts`（2 场景）已通过。
 - 真实平台（手工，需 M8 凭据）：
-  1. `GET /v2/panels?scope=c2c` 可用；daemon 启动后创建一个 `target_type=all`、固定 remark 的面板；记录权限/错误码。
+  1. `GET /v2/panels?scope=c2c` 可用；daemon 启动后创建一个 `target_type=all`、固定 remark 的面板；记录权限/错误码。**2026-11-01 首次实测：`GET` 可达、鉴权正常，无面板时返回 200 `{"is_end":true}`（省略 `records`）；适配器已容错（D185），创建仍待验证。**
   2. C2C 输入框 `/` 出现面板；点击项后 `/name` 原样插入；发送后命令执行（至少 `/stop`、`/status`、`/steer`、`/queue`）。
   3. 连续重启 daemon 不产生第二个同 remark 面板；`commandPanel=false` 无写请求；记录 20/14/30 字符限制与 `40030013`/`40030020` 实际行为。
 - 群聊面板不在范围；群聊命令仍靠手动 @bot 输入。
@@ -462,6 +462,7 @@ channel.qqBot = {
 - 面板：仅 `scope=c2c`、`target_type=all`、固定 `remark=nokoribi-agent:slash-commands`；先 GET 认领再 POST/PUT，同名 items 跳过；>14 字符命令名跳过，描述 ≤30，最多 20 项；可重试错误 30s 后单次重试。
 - 配置：bundle `NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 true）、Nix `channel.qqBot.commandPanel`、overlay/check-module、`.env.example`、launcher helpText。
 - 测试：`channel-core/test/service-commands.test.ts`（3）、`channel-qq-bot/test/panel.test.ts`（12）、rest/driver/config 增量；`tests/process/m18-qq-command-panel.test.ts`（2）。真实平台 V23 待执行。
+- 实机修复（2026-11-01）：首次在 hkg-dog-darell 启动发现 `GET /v2/panels` 无面板时返回 `{"is_end":true}`（省略 `records`），旧校验误判失败导致面板未创建；`listPanels` 改为缺失/`null` 视为空列表，补 rest 单测（D185）。
 
 ## 17.11 决策与待评审项
 
@@ -484,3 +485,4 @@ channel.qqBot = {
 | D160 | 能力位/窗口默认 | `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N | M8 已接入；真实平台校准待门禁 |
 | D161 | 提醒/系统通知降级 | **B：active 尝试 + 失败后 defer（下次入站被动补投）**；A/C 不采用 | 用户已确认（2026-10-27）；M7 core + M8 driver 已实现 |
 | D184 | C2C 指令面板同步（M18） | `/v2/panels` 仅 c2c 全局面板；固定 remark 认领 + 先 GET 再 POST/PUT；core 可选 `syncCommands`；`commandPanel` 默认 true；>20/14/30 限制；失败非阻塞 + 单次重试；不做群面板 | 代码完成（2026-11-01）；V23 待执行 |
+| D185 | 面板空列表响应修复（M18） | 无面板时 `GET` 返回 200 `{"is_end":true}`（省略 `records`）；缺失/`null` 视为空列表继续 POST，仅非数组放弃本轮；补单测 | 已修复（2026-11-01）；创建/可见性仍待 V23 |

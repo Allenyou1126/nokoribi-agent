@@ -34,6 +34,7 @@
 | `PanelItem` | `type=command|link`；`name` ≤14 字符；`desc` ≤30 字符；`remark` ≤255 | 同上 |
 | 点击语义 | `type=command` 时 `name` 原样填入聊天输入框；不会替框架注册指令 | 官方文档 + 第三方 [Kokkoro](https://kokkoro.js.org/develop/command) |
 | 业务错误 | HTTP 200 + body `code`；`40030006/40030011/40030012/40030013/40030015/40030018/40030020/40030021` 等 | 官方文档 |
+| 空列表响应（实测） | 无面板时 `GET /v2/panels` 返回 HTTP 200 `{"is_end":true}`，**省略 `records`/`next_cursor`**；适配器按空列表处理 | 2026-11-01 hkg-dog-darell 实测（AppID 102816855） |
 
 结论：面板项 `name` 必须写 `/name`；本适配器只创建 c2c 全局面板。
 
@@ -54,6 +55,7 @@
   - 有匹配且不同 → `PUT` 覆盖；
   - 多个匹配 → 更新最新一个并 warn，不删除；
   - `target_type !== "all"` → warn，仍更新 items（不修改 target）。
+- 空列表容错：`records` 缺失或为 `null` 时视为空列表（真实平台无面板时只回 `{"is_end":true}`，2026-11-01 实测）；只有 `records` 存在但不是数组才视为畸形响应并放弃本轮。
 - **不重复创建**：`GET` 失败直接放弃本轮，不盲目 `POST`；`POST` 成功但响应丢失时，下次 `GET` 命中后转为更新。单 daemon 正常启动/重启不会产生重复面板（详见 26.5）。
 - 单实例串行：`sync()` 运行中只保留最新目录；items 签名相同跳过写；命令减少时覆盖为最新列表。
 - 命令映射：按 name 排序；`name = "/" + command.name`；超过 14 字符跳过（截断会破坏命令）；描述折叠空白并按 code point 截到 30（29 + `…`），空描述回退命令名；最多 20 项。
@@ -86,6 +88,7 @@ bundle/开发环境：`NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 `true`）。`comm
 |---|---|
 | 面板 API 无权限/不可用 | 每轮 warn，daemon 正常 ready；消息闭环不受影响 |
 | `GET` 失败 | 放弃本轮，不 `POST`；可重试错误 30s 后单次重试 |
+| `GET` 空列表（无 `records`） | 视为空列表，继续 `POST` 创建（2026-11-01 实机修复，D185） |
 | `POST` 成功但响应丢失 | 下次 `GET` 命中 remark 后更新，不重复创建 |
 | 单 daemon 启动/重启 | 先 `GET` 认领，不会重复创建 |
 | 多 daemon 共用同一 AppID | 同 remark 后写者覆盖；可能出现多个同 remark 面板，只更新最新一个并 warn，不自动删除（已知限制） |
@@ -108,7 +111,7 @@ bundle/开发环境：`NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 `true`）。`comm
 
 - `packages/channel-core/test/service-commands.test.ts`：attach 发布、`commands/change` 重发、无 publisher driver 不读目录。
 - `packages/channel-qq-bot/test/panel.test.ts`：items 映射/截断/上限；创建、更新、跳过、ignored remark、多面板、重试/停止、空目录；断言只请求 c2c。
-- `packages/channel-qq-bot/test/rest.test.ts`：面板 GET/POST/PUT、query、HTTP 200 业务错误。
+- `packages/channel-qq-bot/test/rest.test.ts`：面板 GET/POST/PUT、query、HTTP 200 业务错误、空列表响应（`{"is_end":true}` / `records:null`）容错与畸形 `records` 拒绝。
 - `packages/channel-qq-bot/test/{config,driver}.test.ts`：默认开关、关闭时不触达 client、`syncCommands` 转发。
 - `tests/process/m18-qq-command-panel.test.ts`：daemon + fake QQ 启动后一个 c2c 面板包含全部命令、无 group 请求；`NOKORIBI_QQ_BOT_COMMAND_PANEL=false` 无面板请求。
 - 现有 M8/M9/M14/M15 进程/集成测试回归。
@@ -117,7 +120,7 @@ bundle/开发环境：`NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 `true`）。`comm
 
 > 需要真实 Bot（AppID/ClientSecret、开发体验用户）。执行前只可标“代码完成”。
 
-1. C2C 面板 API 可用性：`GET /v2/panels?scope=c2c` 正常；daemon 启动后创建一个面板；记录权限/错误码。
+1. C2C 面板 API 可用性：`GET /v2/panels?scope=c2c` 正常；daemon 启动后创建一个面板；记录权限/错误码。**2026-11-01 首次实测：`GET` 可达、鉴权正常，无面板时返回 200 `{"is_end":true}`（省略 `records`）；适配器已容错（D185），面板创建仍待验证。**
 2. C2C 客户端可见性：输入框 `/` 出现面板；点击项后 `/name` 原样插入；发送后命令执行（至少 `/stop`、`/status`、`/steer`、`/queue`）。
 3. 重启幂等：连续重启 daemon 不产生第二个同 remark 面板；面板 items 与命令表一致；`commandPanel=false` 无写请求。
 4. 限制/错误：20 项上限、14/30 字符上限、`40030020` 内容安全、`40030013` 数量限制的实际表现，必要时回写规格。
@@ -129,6 +132,8 @@ bundle/开发环境：`NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 `true`）。`comm
 修改：`packages/channel-core/src/{contract,service}.ts`；`packages/channel-qq-bot/src/{config,driver,index,rest}.ts` 及其测试；`tests/process/support/fake-qq-bot.ts`；`tests/integration/{m14-message-media,m15-question-buttons}.test.ts`（commands mock）；`packages/bundle/cordis.patch.yml`；`nix/{module,overlay}.nix`、`nix/check-module.py`；`.env.example`；`packages/launcher/src/index.ts`；`README.md`、`AGENTS.md` 与 `.spec/03/06/12/13/14/15/16/17`、notes。
 
 实现日期：2026-11-01。本地门禁见 [13.1](13-testing-and-ops.md)。
+
+实机修复（2026-11-01）：首次在 hkg-dog-darell 启动发现 `GET /v2/panels` 在无面板时返回 200 `{"is_end":true}`（省略 `records`），旧校验误判为响应错误，同步在 `GET` 阶段中止、面板从未创建；`listPanels` 改为缺失/`null` 视为空列表，并补 rest 单测（D185）。
 
 ## 26.10 待决/后续
 
