@@ -140,7 +140,10 @@ async function setup(chatId = "c2c:user-1"): Promise<SetupResult> {
         );
     });
     ctx.provide("agents", {});
-    ctx.provide("commands", { register: () => () => undefined });
+    ctx.provide("commands", {
+        register: () => () => undefined,
+        list: () => [],
+    });
     ctx.provide("approval", {});
     ctx.provide("userQuestions", {});
     ctx.provide("attachments", {

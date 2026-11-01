@@ -125,6 +125,7 @@ async function setup(): Promise<SetupResult> {
     ctx.provide("commands", {
         register: () => () => undefined,
         execute,
+        list: () => [],
     });
     ctx.provide("approval", {});
     ctx.provide("userQuestions", {});

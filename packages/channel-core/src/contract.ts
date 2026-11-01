@@ -11,6 +11,14 @@ import type {
     OutboxKind,
 } from "@nokoribi/shared";
 
+/** Discovery metadata for one registered slash command. */
+export interface ChannelCommand {
+    /** Lowercase command name without the leading slash. */
+    readonly name: string;
+    /** Human-readable summary shown by platform command discovery. */
+    readonly description: string;
+}
+
 export type { OutboundAction, OutboundActionKind };
 export type { FileAttachmentRef, ImageAttachmentRef, ImageMediaType };
 
@@ -127,6 +135,12 @@ export interface ChannelDriver {
         chatId: string,
         content: Pick<OutboundContent, "kind" | "reply">
     ): boolean;
+    /**
+     * Optional best-effort publication of the effective slash-command catalog
+     * to platform-side discovery surfaces (for example QQ's command panel).
+     * Implementations must never affect message delivery.
+     */
+    syncCommands?(commands: readonly ChannelCommand[]): void | Promise<void>;
     /** Optional health snapshot surfaced by `status()`. */
     health?(): ChannelHealth;
 }

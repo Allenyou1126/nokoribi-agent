@@ -72,7 +72,10 @@ async function setup(): Promise<Harness> {
         );
     });
     ctx.provide("agents", {});
-    ctx.provide("commands", { register: () => () => undefined });
+    ctx.provide("commands", {
+        register: () => () => undefined,
+        list: () => [],
+    });
     ctx.provide("approval", {});
     ctx.provide("userQuestions", {});
     const saveImages = vi.fn(async () => [IMAGE_REF]);

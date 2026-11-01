@@ -31,6 +31,7 @@ import {
     IngressBufferFullError,
     NonRetryableDeliveryError,
     PassiveReplyExpiredError,
+    type ChannelCommand,
     type ChannelDriver,
     type ChannelHealth,
     type ChannelRuntime,
@@ -367,6 +368,9 @@ export class ChannelService extends Service {
                 this.broker.requestQuestion(request)
             )
         );
+        ctx.effect(() =>
+            ctx.on("commands/change", () => this.publishCommands())
+        );
         ctx.effect(() => () => this.dispose());
     }
 
@@ -469,6 +473,7 @@ export class ChannelService extends Service {
             throw error;
         }
         this.logger.info("driver started", { channel: driver.id });
+        this.publishCommands();
         void this.pump();
         return () => {
             this.drivers.delete(driver.id);
@@ -489,6 +494,7 @@ export class ChannelService extends Service {
         this.logger.info("runtime attached", {
             session: runtime.mainSessionId,
         });
+        this.publishCommands();
         void this.pump();
     }
 
@@ -1511,6 +1517,56 @@ export class ChannelService extends Service {
                 handler: (invocation) => this.queueCommand(invocation.rawInput),
             })
         );
+    }
+
+    /**
+     * Publish the main agent's effective slash-command catalog to drivers
+     * that expose a platform-side discovery surface (M18).
+     *
+     * Best-effort: a missing runtime, an unreadable registry, or a failing
+     * driver is logged and never blocks ingress, delivery, or startup.
+     */
+    private publishCommands(): void {
+        const runtime = this.runtime;
+        if (this.disposed || runtime === undefined) return;
+        const targets = [...this.drivers.values()].filter(
+            (driver) => driver.syncCommands !== undefined
+        );
+        if (targets.length === 0) return;
+        let commands: readonly ChannelCommand[];
+        try {
+            commands = runtime.commands
+                .list(runtime.agent)
+                .map(({ name, description }) => ({ name, description }));
+        } catch (error) {
+            this.logger.warn("failed to read the command catalog", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return;
+        }
+        for (const driver of targets) {
+            const sync = driver.syncCommands;
+            if (sync === undefined) continue;
+            try {
+                void Promise.resolve(sync.call(driver, commands)).catch(
+                    (error: unknown) => {
+                        this.logger.warn("failed to publish commands", {
+                            channel: driver.id,
+                            error:
+                                error instanceof Error
+                                    ? error.message
+                                    : String(error),
+                        });
+                    }
+                );
+            } catch (error) {
+                this.logger.warn("failed to publish commands", {
+                    channel: driver.id,
+                    error:
+                        error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
     }
 
     private steerCommand(rawInput: string): CommandResult {

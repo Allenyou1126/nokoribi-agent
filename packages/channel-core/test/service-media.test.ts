@@ -170,6 +170,7 @@ async function setup(
     ctx.provide("agents", {});
     ctx.provide("commands", {
         register: () => () => undefined,
+        list: () => [],
     });
     ctx.provide("approval", {});
     ctx.provide("userQuestions", {});
