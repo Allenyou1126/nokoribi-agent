@@ -177,6 +177,7 @@
 | D181 | M15 实现口径（2026-10-30） | 仅单选 1–10 个显式选项生成按钮；label ≤10 字符截断；多选/自定义/超限保持文本；token 绑定 `(interactionId, questionIndex)`；QQ `questionButtons`（默认 true）且仅 C2C；ack/intent 语义沿用 M9 |
 | D182 | M16 实现口径（2026-10-30） | runtime context `required:true`（bundle 保持 `includeRuntimeContext:false`）；freshness 只按 `entries/` 目录签名；快照只含 active；`/status full` 字段 `pinnedEntries`/`snapshotChars`/`inject`；context/工具/提示词默认开启，`NOKORIBI_MEMORY_INJECT_*` 可关 |
 | D183 | M17 实现口径（2026-10-30） | launcher 按 `NOKORIBI_OPENVIKING_ENABLED` 追加插件 bundle + 归一 `OPENVIKING_*` 连接 env + 强制本地 memory 关闭；插件 bundle 缺失/跳过时启动失败；`OPENVIKING_STATE_DIR=$DSH_HOME/openviking-state`；启用/停用由 overlay 之外的环境开关控制；fake server 与非 Nix 门禁通过，真实 server spike 待执行 |
+| D184 | M18 实现口径（2026-11-01） | QQ C2C 指令面板同步：`/v2/panels`（仅 `scope=c2c`、`target_type=all`）；固定 remark 认领 + 先 GET 再 POST/PUT（单 daemon 不重复创建）；channel-core 可选 `ChannelDriver.syncCommands`；`commandPanel` 默认 true；命令名 ≤14、描述 ≤30、面板 ≤20；失败非阻塞 + 单次重试；不做群聊面板/旧频道 commands/skills |
 
 ---
 
@@ -429,6 +430,7 @@
 - **D181 M15 提问按钮（2026-10-30，代码完成）** — ① 仅对 **单选且显式选项 1–10 个** 的 `ask_user_question` 生成 callback action（复用 M9 token 映射，token 绑定 `(interactionId, questionIndex)`）；label 截断 ≤10 字符；多选/自定义输入/超限保持纯文本。② 点击走 `broker.handleAction` → 统一 `applyAnswer()`（结算/推进批次），过期/跨问题 token 拒绝并提示失效；ack 语义沿用 M9（QQ 先 ack 再 ingress）。③ QQ 仅 C2C 渲染 keyboard，新增 `questionButtons`（默认 true）门禁，`approvalButtons` 独立；intent/ack 在任一按钮面开启时启用。④ 门禁：broker/服务/QQ 单测 + local-test/QQ fake 集成 + 进程级“点按钮结算问题 / 文本 fallback”双路径；真实平台沿用 M9 #15–#20 并新增提问按钮事实；见 [24](24-question-buttons.md)。
 - **D182 M16 实现口径（2026-10-30，代码完成）** — 在 D172–D174 基础上：① context 注册 `required: true`（bundle 保持 `includeRuntimeContext:false`，optional context 会被抑制；memory 自带 `inject.enable` 开关）。② freshness 只按 `entries/` 目录签名（外部原地改内容若目录 mtime 不变，下次写/重启生效；口径记录 09）。③ 快照只含 active 条目；预算按字符（非 token）。④ `/status full` memory 行新增 `pinnedEntries`/`snapshotChars`/`inject`；agent-app 不再硬依赖 `memory` 服务（OpenViking/停用本地记忆时 daemon 仍启动）。⑤ curator prompt 增补“用户级偏好/身份写 pinned”。⑥ 门禁：6 场景进程测试（pinned→下轮快照、goal child 无快照、关闭无快照、超预算 footer、重启不重复追加、停用本地记忆无 section/tool）+ m5 回归；见 [09.5](09-prompt-and-memory.md)。
 - **D183 M17 实现口径（2026-10-30，代码完成）** — ① launcher 依据 `NOKORIBI_OPENVIKING_ENABLED` 把 `@openviking/dsh-memory-plugin@0.5.31` 追加到 runtime profile bundle 列表；默认不加载。② 连接配置全部归一到 `NOKORIBI_OPENVIKING_*`，launcher 映射为插件 credential chain 的 `OPENVIKING_URL`/`OPENVIKING_API_KEY`/`OPENVIKING_PEER_ID`/`OPENVIKING_WORKSPACE_PEER`/`OPENVIKING_RECALL_MAX_TOKENS`，并强制 `NOKORIBI_MEMORY_ENABLED=false`；启用但插件 bundle 缺失/被跳过时**启动失败**（不允许静默无记忆后端）。③ Nix `memory.openviking.*`（enable/endpoint/apiKeyEnv/peerId/workspacePeer/recallMaxTokens），启用时注入 systemd env + `OPENVIKING_STATE_DIR=$DSH_HOME/openviking-state`，module-eval 断言启用/停用与 endpoint 必填。④ 门禁：不可达 server 启动不崩 + 本地 memory 工具/提示词/curator 关闭；fake server 下 `/health`/recall/`messages` capture 通过；真实 server spike（外部部署）与本地 entries 迁移仅文档；见 [25](25-openviking-backend.md)。
+- **D184 M18 QQ C2C 指令面板（2026-11-01，代码完成）** — ① 来源 = `CommandRuntime.list(mainAgent)`；channel-core 新增 `ChannelCommand` 与可选 `ChannelDriver.syncCommands`，在 `attachRuntime`、`registerDriver`、`commands/change` 时 best-effort 发布；无 driver 实现时提前返回、不读命令表。② 平台使用 `/v2/panels`（不是旧频道 `/v2/apps/{appid}/commands`）：**仅 c2c**，`target_type=all`，一个面板；固定 `remark=nokoribi-agent:slash-commands` 认领，先 `GET` 列表再决定 `POST`/`PUT`，items 相同跳过；`GET` 失败不盲目创建；多个同 remark 只更新最新一个并 warn、不自动删除（单 daemon 正常重启不重复创建）。③ 映射：`name="/"+command.name`（>14 跳过）、描述折叠空白截到 30、最多 20 项；空目录不创建。④ 配置 `channel.qqBot.commandPanel` / `NOKORIBI_QQ_BOT_COMMAND_PANEL` 默认 true；`false` 不读写面板、不删除已有面板。⑤ 失败只 warn，`retry`/`auth` 30s 后单次重试；面板同步不阻塞 daemon ready/消息闭环。⑥ 不做：群聊面板、skills/未知斜杠、`target_type=specific`、>20 多面板、link/自定义菜单、描述本地化。⑦ 门禁：core/QQ 单测 + fake 进程测试通过；真实平台 V23 待执行；见 [26](26-qq-command-panel.md)。
 
 ---
 
@@ -467,5 +469,6 @@
 - D146 的“SSH 留给 M7” → D149 里程碑重排（M7 = channel-core 扩展；M8 = QQ 官方 Bot；M9 = SSH host）。
 - D149 的“M9 = SSH host” → D165 后续里程碑重排（M9 = QQ 按钮审批；M10 = host-aware 持久终端 + Web；SSH host 顺延，不再占用 M9/M10 编号）。
 - D163 的“M7/M8 不实现按钮渲染/回调” → D166/D167 在 M9 落地审批按钮（群聊按钮、提问按钮仍后置）。
+- M8 规格的“指令面板后置” → D184 在 M18 落地 **C2C** 指令面板同步（群聊面板仍后置）。
 - D143（M5 不做自动注入）→ D172–D174：M16 增加 pinned 快照自动注入（runtime context、每轮最多一次、仅主会话）；主动检索与“不做每轮自动检索”保留。
 - D172 的“不做外部 memory provider” → D175：OpenViking 作为可选后端（默认关闭；启用即停用本地记忆；server 不打包，仅连接配置）。

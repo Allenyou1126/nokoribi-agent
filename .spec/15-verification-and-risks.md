@@ -42,6 +42,7 @@
 | V20 | 真实视觉模型图片调用（M14 入站 / V8） | 当前默认 DeepSeek 路由的图片能力未验证；DSH 会对 text-only 模型投影占位文本 | 有视觉模型时真实发图，确认模型看到图片；无则确认占位与降级文案 | 无多模态模型时按 D69 明确不支持；能力位/提示词说明 |
 | V21 | MCP streamable-http 真实 server 与重连（M13） | fake stdio 已覆盖；HTTP/OAuth/重连/工具更新只按上游行为 | 真实 HTTP MCP server：启动同步、工具调用、断线重连、工具列表变更 | `failOnStartupError=false` 降级；删除该 server 配置；保留 stdio 路径 |
 | V22 | 会话检索的 FTS 索引规模/延迟（M11） | 历史会话增长后索引重建与查询延迟未知 | 目标机长期运行后测 `session_search` 延迟与索引大小；观察 `$DSH_HOME/session-search.db` | `sessionSearch.enable=false` 或 `openAt` 调整；索引可删除重建（派生库） |
+| V23 | QQ C2C 指令面板（M18） | `/v2/panels` 对个人主体 Bot 的权限、可见性、点击插入语义、20/14/30 限制未实测 | 真实 Bot：daemon 启动后确认一个 c2c 面板；客户端 `/` 可见；点击插入 `/name` 并执行；重启不重复创建；记录错误码 | `channel.qqBot.commandPanel=false` 停止同步（不删除已有面板）；群聊面板本就不做 |
 
 ## 15.2 其他实现期需确认的点
 
@@ -131,6 +132,9 @@
 | M16：快照 token/过期/刷新（已实现） | 中 | 快照常驻、旧快照留在历史、精确信息可能过期 | 默认 3000 字符/20 条；每轮最多追加一次；标题+单行摘要；超预算 footer；可配置关闭 |
 | M17：OpenViking 数据出界与额外 provider 密钥面（已实现，spike 待执行） | 高 | 记忆/对话发往外部 server；server 侧 embedding/VLM 密钥与合规由用户承担 | 默认关闭；显式 `memory.openviking.enable`；只保留连接配置（密钥不进 store）；server 不打包；文档明确无本地 fallback；V18 记录 |
 | M17：插件版本/API 漂移（已实现） | 中 | `@openviking/dsh-memory-plugin` 升级可能破坏注入/工具面 | pin `0.5.31`；DSH 固定 `0.2.1-rc.3`；升级时回归 fake server/no-server 进程测试与真实 spike；失败可切回本地记忆 |
+| M18：面板 API 权限/可见性/点击语义（已实现，门禁待测） | 中 | 个人 Bot 可能无面板权限，或点击不插入 `/name`，导致命令不可达 | 仅 c2c；失败只 warn、不阻塞；`commandPanel=false` 可关；V23 先验证；面板只是发现性入口，手输命令始终可用 |
+| M18：多 daemon/遗留多面板（已实现） | 低中 | 同一 AppID 多实例竞态或历史数据可能留下多个同 remark 面板 | 先 GET 按 remark 认领；多匹配只更新最新一个并 warn，不自动删除；文档登记已知限制 |
+| M18：命令描述公开可见（已实现） | 低 | 面板展示命令名/描述，可能暴露内部信息 | 只发布已注册命令的 name/description；禁止把 secret/内部 URL 写入 command description；文档约束 |
 
 ## 15.4 已接受的残余风险（汇总）
 
@@ -162,6 +166,7 @@
 - M14 的入站图片可携带提示注入；出站文件以独立 outbox 条目投递（at-least-once，重复/顺序变化可能出现）；QQ 群聊富媒体不支持（文本降级），真实平台附件门禁（V16）未执行前只能称“代码完成”。
 - M15 的提问按钮复用 M9 平台事实；多选/自定义/群聊仍是文本；平台限制（V17）未执行前只能称“代码完成”。
 - M16 的快照是持久化提示注入面（模型写入、每轮注入）；缓解为 Auto review + secret guard + 数据非指令声明 + 预算上限 + 可关闭；快照可能过期、旧快照留在历史，精确信息仍需 `memory search/read`。
+- M18 的 C2C 指令面板是 app 级发现性配置：失败不影响消息闭环；多 daemon 共用 AppID 时 last-writer-wins 且可能留下多个同 remark 面板（只告警不删除）；群聊面板未实现。
 - M17 启用 OpenViking 后记忆数据出界到用户外部部署的 server（AGPL，含 embedding/VLM provider）；无本地 fallback，server 不可用时记忆能力降级；默认关闭，切换需重启；真实 server spike（V18）未执行前只能称“代码完成”。
 - M11–M17 的本地自动化门禁通过不代表真实平台验收：QQ 图片/文件/提问按钮（V16/V17）、真实 OpenViking（V18）、NixOS 目标机（V19）、视觉模型（V20）、HTTP MCP（V21）、FTS 规模（V22）仍需执行并记录。
 

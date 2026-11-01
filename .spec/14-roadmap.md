@@ -407,11 +407,11 @@
 - 文档（本套）与实现一致；所有偏离回写。
 - 安全检查清单（08）中的已接受风险被再次确认。
 - 手工验收清单（12.12）执行并记录结果。
-- M9/M10 是 v1 后增强，不改变上述 v1 完成定义；其验收标准分别见 [18.6](18-qq-button-approval.md) 与 [19.5](19-persistent-terminal-and-web.md)。
+- M9/M10 是 v1 后增强，不改变上述 v1 完成定义；其验收标准分别见 [18.6](18-qq-button-approval.md) 与 [19.5](19-persistent-terminal-and-web.md)。M11–M18 同样为 v1 后增强，不改变上述定义。
 
-## 14.15 下一阶段里程碑（M11–M17 代码完成，2026-10-30）
+## 14.15 下一阶段里程碑（M11–M18 代码完成，2026-10-30/11-01）
 
-> 状态：**M11–M17 代码完成（2026-10-30），真实平台/目标机门禁待执行**（QQ 图片/文件上传、提问按钮真实平台、真实 OpenViking server、NixOS 目标机；各里程碑只可标“代码完成”）。本节记录 M11–M17 的目标、依赖、范围、验收口径与实现记录；每个里程碑的完整规格见 [20](20-session-search.md)–[25](25-openviking-backend.md)（M16 见 [09.5](09-prompt-and-memory.md)）。实现口径见 [D177–D183](03-decision-log.md)。M11–M17 均为 v1 后增强，不改变 [14.14](14-roadmap.md) 的 v1 完成定义。
+> 状态：**M11–M17 代码完成（2026-10-30），M18 代码完成（2026-11-01）；真实平台/目标机门禁待执行**（QQ 图片/文件上传、提问按钮、指令面板真实平台、真实 OpenViking server、NixOS 目标机；各里程碑只可标“代码完成”）。本节记录 M11–M18 的目标、依赖、范围、验收口径与实现记录；完整规格见 [20](20-session-search.md)–[25](25-openviking-backend.md)（M16 见 [09.5](09-prompt-and-memory.md)，M18 见 [26](26-qq-command-panel.md)）。实现口径见 [D177–D184](03-decision-log.md)。M11–M18 均为 v1 后增强，不改变 [14.14](14-roadmap.md) 的 v1 完成定义。
 
 **当前顺序（2026-10-29 调整）**：M11 → M12 → M13 → M14 → M15 → M16 → M17。**记忆与 OpenViking 放在最后**（M16/M17）；M17 固定晚于 M12（Skill）与 M13（MCP）；其余里程碑可在启动前按优先级调整（D176）。
 
@@ -424,6 +424,7 @@
 | M15 | 提问按钮 | `ask_user_question` 选项按钮（core action + QQ C2C keyboard + 文本 fallback） | M9 action 基础设施、QQ 门禁 #15–#20 | 代码完成（真实平台门禁待执行） |
 | M16 | 记忆本地自动注入 | pinned 快照 + runtime context 注入 + `pin`/`unpin` + 配置/观测/测试 | 无 | 代码完成 |
 | M17 | OpenViking 可选后端 | 开关 + 连接配置；启用即停用本地记忆，OpenViking 接管 | M12 + M13 | 代码完成（真实 server spike 待执行） |
+| M18 | QQ C2C 指令面板 | channel-core 命令目录发布 seam + QQ `/v2/panels` 自动同步 | M8 | 代码完成（V23 真实平台门禁待执行） |
 
 ### M11 会话检索
 
@@ -496,3 +497,14 @@
 - **依赖**：新增 `dsh-tool-session-query`/`dsh-skill`/`dsh-skill-filesystem`/`dsh-tool-skill`/`dsh-mcp-client`/`dsh-mcp-resources` 与 `@openviking/dsh-memory-plugin@0.5.31`（launcher 依赖含显式 DSH peer）；lock 与 `nix/deps.nix` FOD 哈希更新；`skills/` 进发行版 `share/skills`。
 - **最终本地门禁（2026-10-30）**：`pnpm check` 通过；`pnpm test:unit` **60 文件/512 测试**；`pnpm test` **66 文件/537 测试**；`pnpm test:process` **17 文件/84 场景**（新增 M11 2、M12 3、M13 1、M14 4、M15 2、M16 6、M17 2）；`nix flake check --offline`（package/unit/package-smoke/module-eval、module-eval-disabled、module-eval-openviking、module-eval-mcp-single）通过；`nix build --offline .#default` 与 `nix run --offline .#default -- --version`（`nokoribi-agent 0.1.0`）通过。测试记录见 [13.1](13-testing-and-ops.md)。
 - **未完成（不阻塞“代码完成”）**：QQ 真实平台图片/文件/提问按钮门禁（V16/V17）、真实 OpenViking server spike（V18）、NixOS 目标机部署复测（V19）、V20 真实视觉模型调用、V21 MCP streamable-http fake/真实 server、V22 FTS 规模延迟；M13 streamable-http fake 变体在 22 记录。
+
+## 14.16 M18 QQ C2C 指令面板（代码完成，2026-11-01）
+
+> 完整规格见 [26](26-qq-command-panel.md)；实现口径见 [D184](03-decision-log.md)。仅 C2C，不做群聊面板。
+
+- **目标**：主 agent 的已注册斜杠命令自动出现在 QQ C2C 指令面板；用户点击后 `/name` 填入输入框，发送后由 `ctx.commands` 执行。
+- **做**：`ChannelDriver.syncCommands` 可选 seam（channel-core 在 `attachRuntime`/driver 注册/`commands/change` 发布 `CommandRuntime.list(mainAgent)`）；QQ `/v2/panels` 单 c2c 全局面板、固定 remark 认领、先 GET 再 POST/PUT、items 相同跳过；命令名 ≤14/描述 ≤30/最多 20 项；失败非阻塞 + 可重试错误单次重试；Nix `channel.qqBot.commandPanel` 与 `NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 true）。
+- **不做**：群聊面板、旧频道 `/v2/apps/{appid}/commands`、skills/未知斜杠、`target_type=specific`、>20 多面板、link/自定义菜单、面板删除/轮询。
+- **验收**：`pnpm check`/`test:unit`/`test`/`test:process` 通过；`tests/process/m18-qq-command-panel.test.ts` 覆盖 c2c 面板创建、全命令、无 group 请求、关闭开关；真实平台 V23 待执行。
+- **风险**：面板 API 权限/可见性、点击插入语义、多 daemon/遗留多面板（只告警不删除）、命令描述公开展示。
+- **实现记录**：新增 `packages/channel-qq-bot/src/panel.ts` 与 core `publishCommands`；fake QQ server 增加 `/v2/panels` 路由；本地门禁（2026-11-01）：`pnpm check`、`pnpm test:unit` 62/533、`pnpm test` 68/558、`pnpm test:process` 18/86、`nix flake check --offline`（path flake）、`nix build --offline .#default`、`nix run --offline .#default -- --version` 通过；真实平台 V23 待执行。测试记录见 [13.1](13-testing-and-ops.md)。

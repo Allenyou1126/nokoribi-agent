@@ -368,6 +368,33 @@ QQ Bot v2 的协议面足够做一个「零框架依赖的轻客户端」，但*
 - S32 <https://bot.q.qq.com/wiki/bot_FAQ/>（2026-10-27）
 - S38/S39 官方 SDK / DSH 插件源码（2026-10-27，二手佐证）
 
+### 6.6 指令面板（M18 使用，仅 C2C）
+
+| 事实 | 状态/来源 |
+|---|---|
+| 创建面板：`POST /v2/panels`，10 QPM；`scope=c2c|group|channel|dm`，`target_type=all|specific`；c2c/group 支持 specific，channel/dm 只能 all | ✅ S42 |
+| 查询列表：`GET /v2/panels?scope=...`，30 QPM；分页 `cursor/limit`（默认 20，最大 50）；按设置时间倒序 | ✅ S43 |
+| 查询详情：`GET /v2/panels/{panel_id}`，30 QPM；返回 scope/target_type/panel/关联 openid 列表 | ✅ S44 |
+| 修改：`PUT /v2/panels/{panel_id}`，10 QPM；覆盖 items/remark，不影响已关联用户/群 | ✅ S45 |
+| 删除：`DELETE /v2/panels/{panel_id}`，10 QPM | ✅ S46 |
+| 修改关联对象：`PUT /v2/panels/{panel_id}/target`，60 QPM；`op=add|del`，仅 specific 面板 | ✅ S47（M18 不用） |
+| 数量限制：一个机器人最多 20 个面板；一个面板最多 20 个元素 | ✅ S42/S45 |
+| `PanelItem`：`type=command|link`；`name` ≤14 字符、`desc` ≤30 字符、`remark` ≤255（remark 不对用户展示） | ✅ S42/S45 |
+| `type=command` 点击后 `name` 原样填入聊天输入框；要让 `/ping` 生效需配置 `name="/ping"`；面板不会替框架注册指令 | ✅ 官方文档 + 第三方 S48 |
+| 错误码：`40030006/40030008/40030009/40030011/40030012/40030013/40030015/40030016/40030018/40030020/40030021`；业务错误可能 HTTP 200 + body `code` | ✅ S42/S45/S46 |
+
+M18 口径：只创建 `scope=c2c`、`target_type=all` 的一个面板，固定 remark 认领，先 GET 再 POST/PUT；群聊面板不做。
+
+来源：
+
+- S42 <https://bot.qq.com/wiki/develop/api-v2/autogen/api/v2_panels.post.html>（2026-11-01）
+- S43 <https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_panels.get.html>（2026-11-01）
+- S44 <https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_panels_panel_id.get.html>（2026-11-01）
+- S45 <https://bot.qq.com/wiki/develop/api-v2/autogen/api/v2_panels_panel_id.put.html>（2026-11-01）
+- S46 <https://bot.qq.com/wiki/develop/api-v2/autogen/api/v2_panels_panel_id.delete.html>（2026-11-01）
+- S47 <https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_panels_panel_id_target.put.html>（2026-11-01）
+- S48 <https://kokkoro.js.org/develop/command>（2026-11-01，第三方点击语义佐证）
+
 ---
 
 ## 7. 内容与媒体限制

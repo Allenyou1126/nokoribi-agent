@@ -1,6 +1,6 @@
 # 17 真实 IM 适配器：QQ 官方 Bot
 
-> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149/D165 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（已实现，2026-10-27）**、**M8 = QQ 官方 Bot 适配器（代码已实现，2026-10-27；真实平台门禁/验收待执行）**、**M9 = QQ 按钮审批（代码完成，真实平台验收待执行；完整规格见 [18](18-qq-button-approval.md)）**；原“M9 = SSH host”按 D165 顺延。
+> 状态：**P1 规格已评审通过（2026-10-27）**。按 D149/D165 修订，实现拆分为：**M7 = channel-core IM 基础设施扩展（已实现，2026-10-27）**、**M8 = QQ 官方 Bot 适配器（代码已实现，2026-10-27；真实平台门禁/验收待执行）**、**M9 = QQ 按钮审批（代码完成，真实平台验收待执行；完整规格见 [18](18-qq-button-approval.md)）**；**M18 = QQ C2C 指令面板同步（代码完成，2026-11-01；真实平台门禁 V23 待执行，完整规格见 [26](26-qq-command-panel.md)）**；原“M9 = SSH host”按 D165 顺延。
 > 用户已确认：协议层采用官方 SDK（D154）；channel-core 扩展拆成独立里程碑先做（D158）。M7 实现口径见 D162；M8 实现口径见 D164；动作按钮契约见 D163；M9 需求口径 D166、实现口径 D167。
 > 调研材料（工作稿，评审后决定是否入库）：
 > - 平台事实表：[.spec/notes/qq-official-bot-api-facts.md](notes/qq-official-bot-api-facts.md)（807 行，S1–S41 来源）
@@ -28,7 +28,7 @@
 - 群全量消息（`GROUP_MESSAGE_CREATE`，需群主单独授权）；只接 `GROUP_AT_MESSAGE_CREATE`。
 - 频道（guild）/文字子频道、频道私信；多 Bot/多账号；WebHook 接入方式。
 - 入站图片/附件、出站富媒体、Markdown 图片转存（图片链路属 V8，另立里程碑）。
-- 流式消息、消息按钮/内联键盘、指令面板、互动回调（`INTERACTION_CREATE`）。**M8 不实现**；M7 已预留通用动作按钮契约与 outbox 持久化（D163）；**M9 在 C2C 审批落地内联键盘按钮（代码完成，真实门禁待执行）**（D166/D167，见 [18](18-qq-button-approval.md)），流式/群聊按钮/指令面板/提问按钮仍后置。
+- 流式消息、消息按钮/内联键盘、指令面板、互动回调（`INTERACTION_CREATE`）。**M8 不实现**；M7 已预留通用动作按钮契约与 outbox 持久化（D163）；**M9 在 C2C 审批落地内联键盘按钮（代码完成，真实门禁待执行）**（D166/D167，见 [18](18-qq-button-approval.md)）；**M18 已实现 C2C 指令面板同步（代码完成，见 [26](26-qq-command-panel.md)）**；流式、群聊按钮、群聊指令面板、提问按钮仍后置。
 - 驱动级白名单/配对（D152，用户已决策）。
 - C2C `is_wakeup` 互动召回（作为后续提醒降级通道评估）。
 
@@ -105,6 +105,20 @@
 | `event_id` 被动回复 `INTERACTION_CREATE` 是否需要 `INTERACTION_CREATE:` 前缀存在冲突 | ⚡🧪 |
 
 M9 映射（计划）：仅 C2C 审批提示附加 1 行 2 按钮（「允许一次」/「拒绝」，`action.type=1` callback，`data` 携带短 token + fallback 文案）；收到 type=11 事件先 ack 再交 core；群聊不渲染按钮、收到事件仅 ack/忽略。新事实门禁见 [notes/qq-fact-gate.md](notes/qq-fact-gate.md) #15–#20。
+
+### 17.2.6 指令面板（M18 已实现，仅 C2C）
+
+> 状态：**代码完成（2026-11-01），真实平台门禁 V23 待执行**；完整设计见 [26](26-qq-command-panel.md)，事实来源见 [notes/qq-official-bot-api-facts.md](notes/qq-official-bot-api-facts.md) §6.6。
+
+| 事实 | 状态 |
+|---|---|
+| 面板 API：`POST /v2/panels`（10 QPM）/`GET /v2/panels?scope=...`（30 QPM）/`PUT /v2/panels/{panel_id}`（10 QPM）/`GET/DELETE /v2/panels/{panel_id}` | ✅ |
+| `scope` = `c2c`/`group`/`channel`/`dm`；c2c/group 支持 `target_type=all|specific`；一个机器人最多 20 个面板 | ✅ |
+| `PanelItem`：`type=command|link`；`name` ≤14 字符；`desc` ≤30 字符；一个面板最多 20 项；`remark` ≤255 且对用户不可见 | ✅ |
+| `type=command` 点击后 `name` 原样填入聊天输入框；要让 `/ping` 生效必须配置 `name="/ping"` | ✅（第三方佐证） |
+| M18 只创建 c2c `target_type=all` 面板；固定 `remark` 认领；不触碰无标记面板；不实现群聊面板 | ✅（实现口径 D184） |
+
+M18 映射：`ChannelDriver.syncCommands` 由 channel-core 在 runtime 挂载/命令注册表变化时调用；QQ driver 先 `GET` 列表按 remark 认领，找不到才 `POST`，items 相同则跳过，不同则 `PUT`；失败只 warn，可重试错误单次重试。新事实门禁见 [notes/qq-fact-gate.md](notes/qq-fact-gate.md) #21–#23。
 
 ## 17.3 总体设计
 
@@ -265,12 +279,13 @@ channel.qqBot = {
   connectTimeoutSeconds = 30;
   activeMessageFallback = "auto";        # auto | off
   approvalButtons = true;                # C2C 审批按钮；false=纯文本且不订阅交互 intent
+  commandPanel = true;                   # M18：C2C 斜杠命令面板同步；false=不读写面板
   reconnectBaseMs = 1000;
   reconnectMaxMs = 60000;
 };
 ```
 
-- 与 2026-10-27 初稿的差异（D164）：**不暴露** `sandbox`、`platformLimitsOnly`、`allowedUsers/allowedGroups`。QQ 已不支持沙箱群；D152 不做 driver 白名单，假选项只会误导。测试/联调需要的域名覆盖只放 bundle env（`NOKORIBI_QQ_BOT_API_BASE` / `TOKEN_BASE` / `GATEWAY_URL`），不进 Nix option。选项名用 `maxRepliesPerReply`，窗口/超时用扁平字段；overlay 把秒转成 driver 的毫秒字段。**M9** 新增 `approvalButtons`（默认 true；见 17.5.5）。
+- 与 2026-10-27 初稿的差异（D164）：**不暴露** `sandbox`、`platformLimitsOnly`、`allowedUsers/allowedGroups`。QQ 已不支持沙箱群；D152 不做 driver 白名单，假选项只会误导。测试/联调需要的域名覆盖只放 bundle env（`NOKORIBI_QQ_BOT_API_BASE` / `TOKEN_BASE` / `GATEWAY_URL`），不进 Nix option。选项名用 `maxRepliesPerReply`，窗口/超时用扁平字段；overlay 把秒转成 driver 的毫秒字段。**M9** 新增 `approvalButtons`（默认 true；见 17.5.5）。**M18** 新增 `commandPanel`（默认 true；见 [26](26-qq-command-panel.md)）。
 - 断言（`enable = true` 时）：`appId != ""`；`clientSecretEnv != ""`；`reconnectMaxMs >= reconnectBaseMs`；`environmentFile != null`（全局断言已有，显式加一条更清晰）。运行期检查 `clientSecretEnv` 指向的环境变量非空（fail loud，不打印值）。
 - warnings：QQ 平台限制即准入边界（高残余风险）；主动推送争议（2025-04-21 横幅 vs 配额表）；Markdown 代码块/表格未实测；QQ-only 无本地回退时通知 defer/drop；`localTest.enable` 与 `qqBot.enable` 同时启用时使用 per-turn 路由；secret 只走 EnvironmentFile/agenix。
 - overlay：新增 `nokoribi-channel-qq-bot` patch（写全字段，不含 secret/测试 URL）；`nokoribi-channel-core` patch 增加 `trustedChannels = lib.optional qqBot.enable "qq-bot"` 与 `defaultChannelId`（localTest 启用时 `local-test`，否则空串回退首个 driver）。
@@ -289,6 +304,7 @@ channel.qqBot = {
 5. 多 driver 路由（D159）：per-turn 来源路由、notice 的 active-capable 回退/丢弃、显式默认渠道、恢复 `lastActiveChat`。
 6. `channel-local-test` 的 `send()` 签名适配；集成测试 FakeDriver 适配。
 7. **notice defer 等待语义（D161）**：无 reply 上下文的 notice/提醒在 active 不可用时保留为 per-chat pending，下一次该 chat 入站时以被动回复补投（带“⚠️ 补发”标记）；提供上限/清理策略，避免无限堆积。
+8. **命令目录发布（M18，D184）**：`ChannelDriver` 增加可选 `syncCommands`；channel-core 在 `attachRuntime`、driver 注册与 `commands/change` 时把 `CommandRuntime.list(mainAgent)` 发布给 driver；QQ driver 只消费该 seam，不反向依赖 core 内部命令执行逻辑。
 
 ## 17.7 白名单、安全与合规
 
@@ -320,6 +336,7 @@ channel.qqBot = {
   - 临时 `DSH_HOME` + 零依赖 fake QQ server（HTTP token/send + WS 握手/帧），daemon 启动、消息闭环、重启恢复、outbox 重发、网关断线重连、SIGTERM 干净退出。
 - **Nix**
   - `module-eval` 断言新选项/overlay 行/`trustedChannels`；`unit` 覆盖新测试；`package` 构建包含新包；`package-smoke` 增加 `WebSocket`/`fetch` 全局断言。
+- **M18 指令面板**：`packages/channel-core/test/service-commands.test.ts`、`packages/channel-qq-bot/test/panel.test.ts`、`rest/driver/config` 单测；`tests/process/m18-qq-command-panel.test.ts` 验证 c2c 面板创建、全命令覆盖、无 group 请求、`commandPanel=false` 无写请求。
 
 ### 17.8.2 真实 Bot 手工验收
 
@@ -350,6 +367,18 @@ channel.qqBot = {
   6. 群聊不显示按钮；群内文本审批行为与 M8 一致。
 - 通过前 M9 只能标“代码完成”。
 
+### 17.8.4 M18 C2C 指令面板验收（规划，待真实 Bot）
+
+> 状态：**代码完成（2026-11-01），门禁 V23 待实测**；门禁候选见 [notes/qq-fact-gate.md](notes/qq-fact-gate.md) #21–#23，完整设计见 [26](26-qq-command-panel.md)。
+
+- 自动化：`tests/process/m18-qq-command-panel.test.ts`（2 场景）已通过。
+- 真实平台（手工，需 M8 凭据）：
+  1. `GET /v2/panels?scope=c2c` 可用；daemon 启动后创建一个 `target_type=all`、固定 remark 的面板；记录权限/错误码。
+  2. C2C 输入框 `/` 出现面板；点击项后 `/name` 原样插入；发送后命令执行（至少 `/stop`、`/status`、`/steer`、`/queue`）。
+  3. 连续重启 daemon 不产生第二个同 remark 面板；`commandPanel=false` 无写请求；记录 20/14/30 字符限制与 `40030013`/`40030020` 实际行为。
+- 群聊面板不在范围；群聊命令仍靠手动 @bot 输入。
+- 通过前 M18 只能标“代码完成”。
+
 ## 17.9 风险与未决项
 
 | 风险/未决 | 等级 | 缓解 |
@@ -368,6 +397,9 @@ channel.qqBot = {
 | M9：`INTERACTION` intent 未开放/受限 | 中高 | 按钮不可用甚至 Identify 失败；driver 降级：不订阅 `1<<26`、`approvalButtons` 可关；文本审批保持；门禁 #15 先测 |
 | M9：keyboard/button 限制或渲染差异 | 中 | 按钮不显示/点击无效/acked 语义不符；门禁 #16/#19；超限跳过按钮；保留文本 fallback |
 | M9：旧按钮误批新审批 | 中 | 交互错乱/安全影响；action token 只在内存、action 权威、失效提示；C2C-only；不从 fallback 文本回退审批 |
+| M18：面板 API 权限/可见性未知 | 中 | 仅 c2c 全局面板；失败只 warn、不阻塞；`commandPanel` 可关；V23 先测 `GET`/创建/点击插入 |
+| M18：多 daemon/历史遗留产生多个同 remark 面板 | 低中 | 先 `GET` 按 remark 认领；多匹配只更新最新一个并 warn，不自动删除；文档限制 |
+| M18：命令描述公开展示 | 低 | 只发布命令名/代码内描述；禁止把 secret/内部 URL 写入 command description |
 
 ## 17.10 实现计划（M7/M8 已实现；M9 见 18，M10 见 19）
 
@@ -423,6 +455,14 @@ channel.qqBot = {
 - 装配：bundle 行默认 disabled；Nix module `channel.qqBot.*`（13 选项）、assertions/warnings、overlay row、`nix/check-module.py`、flake sample/package-smoke、`.env.example`、launcher helpText；`nix/deps.nix` FOD hash 已更新。
 - 已知边界：QQ-only 且无入站上下文时 `defaultTarget` 可能回退到 `qq-bot:local`（core 未改），但该路径只在人工命令/默认目标回退时出现；通知按 D161 defer/drop。真实平台门禁可能要求校准窗口/长度/域名/Markdown。
 
+### 17.10.5 M18 实现记录（2026-11-01）
+
+- channel-core：`contract.ts` 新增 `ChannelCommand` 与可选 `ChannelDriver.syncCommands`；`service.ts` 在 `attachRuntime`、`registerDriver`、`commands/change` 时发布 `CommandRuntime.list(mainAgent)`，失败只 warn。无 driver 实现时提前返回，不读命令表。
+- QQ：新增 `packages/channel-qq-bot/src/panel.ts`（`buildPanelItems` + `QqCommandPanel`），`rest.ts` 增加 `listPanels/createPanel/updatePanel`（HTTP 200 业务错误检查）；driver 仅当 `commandPanel=true` 且有 panel client 时创建协调器；`index.ts` 传入 `panel: rest`。
+- 面板：仅 `scope=c2c`、`target_type=all`、固定 `remark=nokoribi-agent:slash-commands`；先 GET 认领再 POST/PUT，同名 items 跳过；>14 字符命令名跳过，描述 ≤30，最多 20 项；可重试错误 30s 后单次重试。
+- 配置：bundle `NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 true）、Nix `channel.qqBot.commandPanel`、overlay/check-module、`.env.example`、launcher helpText。
+- 测试：`channel-core/test/service-commands.test.ts`（3）、`channel-qq-bot/test/panel.test.ts`（12）、rest/driver/config 增量；`tests/process/m18-qq-command-panel.test.ts`（2）。真实平台 V23 待执行。
+
 ## 17.11 决策与待评审项
 
 | ID | 主题 | 决议/建议 | 状态 |
@@ -443,3 +483,4 @@ channel.qqBot = {
 | D159 | 多 driver 路由与通知降级 | per-turn 路由 + notice active-capable 回退/丢弃 + 缺 driver 短路 + 显式默认渠道 | M7 已实现；M8 双渠道进程测试通过 |
 | D160 | 能力位/窗口默认 | `markdown=basic`、`maxTextLength=4500`、`maxRepliesPerReply=4`、chatId 命名空间 `c2c:`/`group:`、`replySeq` 1..N | M8 已接入；真实平台校准待门禁 |
 | D161 | 提醒/系统通知降级 | **B：active 尝试 + 失败后 defer（下次入站被动补投）**；A/C 不采用 | 用户已确认（2026-10-27）；M7 core + M8 driver 已实现 |
+| D184 | C2C 指令面板同步（M18） | `/v2/panels` 仅 c2c 全局面板；固定 remark 认领 + 先 GET 再 POST/PUT；core 可选 `syncCommands`；`commandPanel` 默认 true；>20/14/30 限制；失败非阻塞 + 单次重试；不做群面板 | 代码完成（2026-11-01）；V23 待执行 |

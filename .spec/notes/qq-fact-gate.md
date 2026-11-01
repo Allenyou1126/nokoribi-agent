@@ -1,6 +1,6 @@
 # QQ 官方 Bot 平台事实门禁记录
 
-> 状态：**待真实 Bot 实测（2026-10-27 创建；M9 代码 2026-10-29 完成）**。M8 代码与 fake 自动化已完成；本文件的 14 项 M8 门禁需要 AppID/ClientSecret、开发体验用户与自己的群，由用户配合执行。M9（按钮审批，[18](../18-qq-button-approval.md)）另追加 6 项门禁（#15–#20），代码已实现、待实测。执行后把结果写回本表，并同步 [.spec/17](../17-qq-official-bot.md) 17.10/17.8.3 与 [事实表](qq-official-bot-api-facts.md) §13。
+> 状态：**待真实 Bot 实测（2026-10-27 创建；M9 代码 2026-10-29 完成；M18 代码 2026-11-01 完成）**。M8 代码与 fake 自动化已完成；本文件的 14 项 M8 门禁需要 AppID/ClientSecret、开发体验用户与自己的群，由用户配合执行。M9（按钮审批，[18](../18-qq-button-approval.md)）另追加 6 项门禁（#15–#20）；M18（C2C 指令面板，[26](../26-qq-command-panel.md)）追加 3 项（#21–#23）；均代码已实现、待实测。执行后把结果写回本表，并同步 [.spec/17](../17-qq-official-bot.md) 17.8 与 [事实表](qq-official-bot-api-facts.md) §6.6。
 
 ## 探针
 
@@ -30,6 +30,9 @@ node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --keyboard \
   --chat c2c:<user_openid> --message-id <event-id> --seq 1 --text "probe"
 node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --watch-interaction
 node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --ack <interaction-id> 0
+
+# M18 C2C 指令面板：只读列表（不创建/修改）
+node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --panels
 ```
 
 ## M8：14 项门禁
@@ -63,6 +66,16 @@ node packages/channel-qq-bot/scripts/qq-fact-gate.mjs --ack <interaction-id> 0
 | 18 | `PUT /interactions/{id}` ack 语义（代码：先 ack 0/1 再 ingress） | code 0/1/3/4 的实际表现；重复 ack；超时未 ack 的客户端行为 | 待实测 | 校准 ack 时机与错误提示 |
 | 19 | 按钮限制（代码：1 行/2 按钮/label≤10） | label 超 10 字符、单行多按钮、多行、button data 长度、`action.permission` 行为 | 待实测 | 决定 driver 截断/跳过与 permission 配置 |
 | 20 | 群聊按钮关闭行为（代码：群聊剥离 keyboard） | 群聊提示不渲染 keyboard；若人为注入群聊 interaction 事件，driver ack/忽略是否符合预期 | 待实测 | 确认 C2C-only 口径无意外交互 |
+
+## M18：C2C 指令面板门禁（候选，实现后实测）
+
+> 状态：**代码已实现（2026-11-01），待真实 Bot 实测**。daemon 启动后会自动创建/更新一个 c2c 面板；也可用探针 `--panels`（只读列表）查看。凭据与前置同 M8。
+
+| # | 事实 | 验证方式 | 结果/日期 | 结论 |
+|---|---|---|---|---|
+| 21 | 面板 API 对个人 Bot 的可用性（代码：c2c 全局面板 + 固定 remark） | `GET /v2/panels?scope=c2c`；daemon 启动后确认一个 `target_type=all`、remark=`nokoribi-agent:slash-commands` 的面板；记录 401/400 权限与错误码 | 待实测 | 决定默认 `commandPanel` 与失败日志 |
+| 22 | C2C 客户端可见性与点击插入语义（代码：`name="/name"`） | 手机 QQ 私聊输入 `/` 观察面板；点击 `/stop`、`/status`、`/steer`、`/queue` 后确认填入 `/name` 并发送执行；记录 14/30 字符与 20 项限制的实际表现 | 待实测 | 校准截断/跳过与 `desc` 文案 |
+| 23 | 重启幂等与关闭开关（代码：先 GET 认领再 POST/PUT；`commandPanel=false` 不请求） | 连续重启 daemon 两次，确认仍只有 1 个同 remark 面板；设置 `NOKORIBI_QQ_BOT_COMMAND_PANEL=false` 后无 `/v2/panels` 请求 | 待实测 | 确认不重复创建；若存在多面板，按 26.5 只更新最新一个并 warn |
 
 ## 已知实现口径（非门禁结论）
 

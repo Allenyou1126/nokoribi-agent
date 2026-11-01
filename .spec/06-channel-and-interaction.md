@@ -45,6 +45,11 @@ interface ChannelCapabilities {
   inboundActions?: boolean;       // 缺省 false（D163）
 }
 
+interface ChannelCommand {
+  name: string;                  // 不含前导斜杠
+  description: string;
+}
+
 interface ChannelDriver {
   readonly id: string;
   readonly capabilities: ChannelCapabilities;
@@ -53,6 +58,7 @@ interface ChannelDriver {
   stop(): Promise<void>;
   send(chatId: string, content: OutboundContent): Promise<SentRef>;
   canDeliver?(chatId: string, content: Pick<OutboundContent, 'kind' | 'reply'>): boolean;
+  syncCommands?(commands: readonly ChannelCommand[]): void | Promise<void>; // M18 平台命令发现
   health?(): { state: 'online' | 'connecting' | 'offline'; detail?: string };
 }
 
@@ -77,6 +83,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 设计要点：
 
 - driver 负责平台差异（连接、签名、消息 id、媒体下载、重连）；core 不感知平台。
+- **M18 命令发现（D184）**：`ChannelDriver.syncCommands?` 是可选、best-effort 的平台命令发现 seam；channel-core 在 `attachRuntime`、driver 注册与 `commands/change` 时把 `CommandRuntime.list(mainAgent)` 映射为 `ChannelCommand[]` 下发给 driver。实现方（QQ）负责平台同步，失败不得影响消息收发；core 不感知具体平台，也无 driver 实现时提前返回、不读命令表。
 - `capabilities` 用于降级：`markdown: 'none'` 时 core 去格式化；`inboundImages: false` 时拒绝/忽略图片并告知；`maxTextLength` 用于分段；`outboundActions` 决定 core 是否下发 `actions`。
 - v1 的 driver 只需要文本；`outboundFiles` 预留。
 - 真实 IM 适配器：M8 先接 QQ 官方 Bot（见 [17](17-qq-official-bot.md)）；其他平台后置。

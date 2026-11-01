@@ -212,7 +212,7 @@ services.nokoribi-agent = {
 - memory/schedule 行始终挂载；`memory.curator.enable` 只关闭 goal 终态提炼。`schedule.enable`、`models.subagents`、`hosts.ssh.enable` 不是 M6 选项（D146）。
 - `time.zone = null` 时使用系统时区；非 null 时同时写 time-context overlay 与 systemd `TZ`。
 - 没有 token 预算、没有 heartbeat、没有 web-debug 选项。
-- **M11–M17 新增选项**（2026-10-30，`sessionSearch`/`skill`/`mcp.servers`/`sendFile`/`memory.inject`/`memory.openviking`/`channel.qqBot` 新字段）见 12.15；module 仍生成完整 overlay（行 config 替换），本节 M6 代码块不重复列出。
+- **M11–M18 新增选项**（2026-10-30/11-01，`sessionSearch`/`skill`/`mcp.servers`/`sendFile`/`memory.inject`/`memory.openviking`/`channel.qqBot.commandPanel` 等）见 12.15；module 仍生成完整 overlay（行 config 替换），本节 M6 代码块不重复列出。
 
 ## 12.5 生成的运行时配置
 
@@ -431,7 +431,7 @@ age.secrets.nokoribi-agent-env = {
 - 网络出口：目标机可直连 `api.deepseek.com`（以及搜索 API 基址）；无代理时按环境变量代理策略处理。
 - 门禁对照：G2（目标机 local PTY）、G3（sandbox 终端）、G4（真实搜索）、G5（API provider）、G6（真实公网抓取）见 [notes/m10-fact-gate.md](notes/m10-fact-gate.md)；通过前 12.14 只算“代码完成”。
 
-## 12.15 M11–M17 新增选项（2026-10-30，已实现）
+## 12.15 M11–M18 新增选项（2026-10-30/11-01，已实现）
 
 > 状态：**代码完成（2026-10-30）；真实平台/目标机验收按各里程碑门禁待执行**。实现口径见 [D177–D183](03-decision-log.md) 与各里程碑规格 [20](20-session-search.md)–[25](25-openviking-backend.md)。module 仍按 12.5 生成完整 overlay；新增的 `mcp.servers` 动态行、M11/M12/M14/M15/M16/M17 行 config 均由 overlay 写全。
 
@@ -471,12 +471,13 @@ services.nokoribi-agent = {
   # M14 出站文件上限（send_to_user 工具）
   sendFile.maxBytes = 33554432;       # 32 MiB
 
-  # M14/M15 QQ 媒体与提问按钮（channel.qqBot 新字段；approvalButtons 见 12.4）
+  # M14/M15/M18 QQ 媒体、提问按钮与 C2C 指令面板（channel.qqBot 新字段；approvalButtons 见 12.4）
   channel.qqBot = {
     inboundImages = true;             # C2C/群 @ 图片下载 -> 模型图片；失败降级文本
     inboundImageMaxBytes = 10485760;  # 10 MiB
     inboundImageTimeoutSeconds = 15;
     questionButtons = true;           # 单选提问选项按钮（仅 C2C；文本 fallback 保留）
+    commandPanel = true;              # C2C 斜杠命令面板同步；false=不读写 /v2/panels
   };
 
   # M16 本地记忆自动注入
@@ -507,9 +508,10 @@ services.nokoribi-agent = {
 - **M13**：`mcp-resources` 行常挂（无 server 零成本）；`mcp.servers` 为空时不生成任何 client 行。`env`/`headers` 的 value 只写环境变量名，overlay 渲染为 `!!js process.env.NAME`；密钥由 `environmentFile`/agenix 提供。启动失败默认不阻断 daemon（`failOnStartupError=false`）；每个 MCP 工具调用仍过 Auto review。
 - **M14**：入站图片经 driver 下载/解码后交 channel-core 存入 DSH attachment store；出站 `send_to_user` 工具把工作区文件经 attachment store 交给渠道，文件以独立 outbox 条目投递（QQ C2C 富媒体；群聊文本降级、local-test 提供字节下载端点）。真实 QQ 附件 URL/上传门禁未执行。
 - **M15**：`ask_user_question` 单选（1–10 选项）渲染 C2C 按钮，label ≤10 字符；多选/自定义/超限保持文本；`questionButtons=false` 时纯文本；ack/intent 语义沿用 M9，真实平台门禁待执行。
+- **M18**：`channel.qqBot.commandPanel=true`（默认）时 daemon 启动/命令变化后把已注册斜杠命令同步到一个 **C2C** 全局面板（`/v2/panels`，固定 remark 认领，先 GET 再 POST/PUT，单 daemon 不重复创建）；`false` 完全不读写面板、也不删除已有面板。仅 c2c，群聊面板不做；失败只 warn，不阻塞 ready/消息闭环。真实平台门禁 V23 待执行。
 - **M16**：overlay 把 `inject.*` 写进 `nokoribi-memory` 行（bundle 侧默认值用 `NOKORIBI_MEMORY_INJECT_*`）；`/status full` memory 行显示 pinned/snapshotChars/inject；快照走 runtime context（`required:true`），每轮最多刷新一次。
 - **M17**：启用时 module 注入 systemd env `NOKORIBI_OPENVIKING_ENABLED=true`、`NOKORIBI_MEMORY_ENABLED=false`、`NOKORIBI_OPENVIKING_API_KEY_ENV`、连接项（非 null 时）与 `OPENVIKING_STATE_DIR=$DSH_HOME/openviking-state`；launcher 追加 `@openviking/dsh-memory-plugin` bundle 并把 `NOKORIBI_OPENVIKING_*` 归一为 `OPENVIKING_*`。插件 bundle 缺失/被跳过时 launcher 启动失败；本地 memory 行不靠 overlay 停用（env 开关 owns）。`endpoint` 在启用时必填（assertion）。真实 server spike 待外部部署；见 [25](25-openviking-backend.md)。
-- **module-eval**：`nix flake check` 的 `module-eval` 断言 M11/M12/M13/M14/M15/M16/M17 行/enable 分支、`mcp.servers` 0/1/2 server 矩阵、OpenViking env 与 overlay 行；必填校验由 NixOS module 的 `assertions` 执行。`module-eval` 还断言 systemd unit 文本（`Description=`/`ExecStart=`）与 `serviceConfig.ExecStart`、config warnings；`module-eval-invalid` 用 `environmentFile = null` 负样本确认 required-field assertion 仍被收集（防止 assertion/warning 被静默丢弃）；`module-eval-disabled` 覆盖 terminal/web 停用分支。
+- **module-eval**：`nix flake check` 的 `module-eval` 断言 M11/M12/M13/M14/M15/M16/M17/M18 行/enable 分支、`mcp.servers` 0/1/2 server 矩阵、OpenViking env 与 overlay 行；必填校验由 NixOS module 的 `assertions` 执行。`module-eval` 还断言 systemd unit 文本（`Description=`/`ExecStart=`）与 `serviceConfig.ExecStart`、config warnings；`module-eval-invalid` 用 `environmentFile = null` 负样本确认 required-field assertion 仍被收集（防止 assertion/warning 被静默丢弃）；`module-eval-disabled` 覆盖 terminal/web 停用分支。
 - **依赖与哈希**：M11–M17 新增 `dsh-tool-session-query`/`dsh-skill*`/`dsh-tool-skill`/`dsh-mcp-client`/`dsh-mcp-resources` 与 `@openviking/dsh-memory-plugin@0.5.31`（launcher 依赖，含显式 DSH peer），lock 与 `nix/deps.nix` FOD 哈希已更新；M12 的 `share/skills` 由 `nix/package.nix` 打包，package-smoke 断言存在。
-- **验收**：本地自动化门禁通过（见 13.1 的 M11–M17 记录）；真实平台项（QQ 图片/文件上传、提问按钮、真实 OpenViking server）与目标机 NixOS 部署仍需执行，执行前只标“代码完成”。
+- **验收**：本地自动化门禁通过（见 13.1 的 M11–M18 记录）；真实平台项（QQ 图片/文件上传、提问按钮、C2C 指令面板、真实 OpenViking server）与目标机 NixOS 部署仍需执行，执行前只标“代码完成”。
 - **不做**：不在 NixOS module 中提供 openviking-server 的 package/systemd unit/模型服务；server 由用户外部部署，本仓库只读取连接配置。

@@ -32,6 +32,7 @@
 | M9 的“`ask_user_question` 选项按钮后置” | D181：M15 落地单选提问选项按钮（2026-10-30 代码完成；真实平台门禁待执行） | M9 action/token 基础设施可复用；多选/自定义仍文本，群聊按钮仍后置 |
 | D143 的“memory 自动注入后移”实现状态 | D182：M16 已实现 pinned 快照 runtime context 自动注入（2026-10-30） | 设计 D172–D174 已确认；实现口径 D182 |
 | 12.15“规划中的选项（M16/M17，未实现）” | 12.15 M11–M17 新增选项（2026-10-30 已实现） | M16/M17 选项随实现落地，见 [12.15](12-nixos-deployment.md) |
+| M8 的“指令面板后置” | D184：M18 落地 **C2C** 指令面板同步（2026-11-01 代码完成；真实平台门禁 V23 待执行） | 面板 API `/v2/panels` 可直接按 remark 认领并幂等更新；群聊面板仍后置 |
 
 ## 16.2 被否决的方案（未采用，但讨论过）
 
@@ -204,6 +205,8 @@
 | outbox files（M14） | `OutboundContent.files`/outbox 条目持久化的 `FileAttachmentRef[]`；文件以独立空文本条目投递，deferred 不带附件 |
 | question button（M15） | `ask_user_question` 单选选项的 callback action；QQ C2C keyboard 渲染，点击结算问题，文本 fallback 保留 |
 | pinned snapshot（M16） | 主会话每轮冻结注入的 runtime context（`nokoribi:memory`）：pinned + `type:person`/`type:preference`，有字符/条数预算与“数据非指令”声明 |
+| command panel / 指令面板（M18） | QQ 开放平台的 `/v2/panels` 能力：面板元素（command/link）供用户点击填入输入框；本适配器只同步 c2c `type=command` 的 `/name` 项，用固定 `remark` 认领自己的面板 |
+| syncCommands（M18） | `ChannelDriver` 可选 seam：channel-core 把 `CommandRuntime.list(mainAgent)` 下发给 driver 做平台命令发现；best-effort，不影响消息收发 |
 | pin / unpin（M16） | memory 工具新增 action；pin 后条目进入下一轮快照，unpin 后退出 |
 | OpenViking backend（M17） | 可选外部记忆后端（`@openviking/dsh-memory-plugin` 作为 profile bundle）；启用即停用本地 memory，server 外部部署，只保留连接配置 |
 | OPENVIKING_STATE_DIR（M17） | 插件本地状态（去重/降级缓存/待写队列）目录；NixOS 默认 `$DSH_HOME/openviking-state` |
