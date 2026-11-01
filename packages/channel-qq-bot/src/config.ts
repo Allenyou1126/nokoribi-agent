@@ -21,6 +21,8 @@ export interface QqBotConfig {
     readonly approvalButtons: boolean;
     /** Render and accept C2C question button callbacks (default true). */
     readonly questionButtons?: boolean;
+    /** Publish registered slash commands to the C2C command panel (default true). */
+    readonly commandPanel?: boolean;
     /** Download and forward inbound images (default true). */
     readonly inboundImages?: boolean;
     /** Maximum bytes for one downloaded inbound image (default 10 MiB). */
@@ -87,6 +89,11 @@ export function resolveInboundImageTimeoutMs(config: QqBotConfig): number {
 /** Whether question buttons are enabled. */
 export function resolveQuestionButtons(config: QqBotConfig): boolean {
     return config.questionButtons ?? true;
+}
+
+/** Whether slash commands are published to the C2C command panel (M18). */
+export function resolveCommandPanel(config: QqBotConfig): boolean {
+    return config.commandPanel ?? true;
 }
 
 /** Whether any interactive button surface (approval or question) is enabled. */

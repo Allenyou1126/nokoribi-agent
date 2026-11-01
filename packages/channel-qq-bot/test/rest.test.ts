@@ -17,6 +17,7 @@ interface FakeServer {
     readonly requests: RecordedRequest[];
     readonly tokens: string[];
     failNextSend: boolean;
+    panelCode: number;
     close(): Promise<void>;
 }
 
@@ -32,6 +33,7 @@ async function startServer(): Promise<FakeServer> {
     const requests: RecordedRequest[] = [];
     const tokens: string[] = [];
     let failNextSend = false;
+    let panelCode = 0;
     const server: Server = createServer((request, response) => {
         void (async () => {
             const raw = await readBody(request);
@@ -79,6 +81,31 @@ async function startServer(): Promise<FakeServer> {
                 );
                 return;
             }
+            if (path.startsWith("/v2/panels")) {
+                if (panelCode !== 0) {
+                    response.writeHead(200, {
+                        "content-type": "application/json",
+                    });
+                    response.end(
+                        JSON.stringify({
+                            code: panelCode,
+                            message: "panel failure",
+                        })
+                    );
+                    return;
+                }
+                response.writeHead(200, {
+                    "content-type": "application/json",
+                });
+                if (request.method === "GET") {
+                    response.end(JSON.stringify({ records: [] }));
+                } else if (request.method === "POST") {
+                    response.end(JSON.stringify({ panel_id: "panel-1" }));
+                } else {
+                    response.end(JSON.stringify({ version: 2 }));
+                }
+                return;
+            }
             if (failNextSend) {
                 failNextSend = false;
                 response.writeHead(401, {
@@ -111,6 +138,12 @@ async function startServer(): Promise<FakeServer> {
         },
         set failNextSend(value: boolean) {
             failNextSend = value;
+        },
+        get panelCode(): number {
+            return panelCode;
+        },
+        set panelCode(value: number) {
+            panelCode = value;
         },
         async close(): Promise<void> {
             await new Promise<void>((resolve) => {
@@ -341,5 +374,52 @@ describe("qq REST wrapper", () => {
         const { rest: client } = await rest();
         client.stop();
         client.stop();
+    });
+
+    it("lists, creates, and updates C2C command panels", async () => {
+        const { rest: client, server } = await rest();
+        const items = [
+            { type: "command" as const, name: "/stop", desc: "Stop" },
+        ];
+        const records = await client.listPanels("c2c");
+        expect(records).toEqual([]);
+        const created = await client.createPanel("c2c", {
+            items,
+            remark: "nokoribi-agent:slash-commands",
+        });
+        expect(created.panel_id).toBe("panel-1");
+        const updated = await client.updatePanel("panel 1", { items });
+        expect(updated.version).toBe(2);
+        const panels = server.requests.filter((request) =>
+            request.path.startsWith("/v2/panels")
+        );
+        expect(panels[0]).toMatchObject({
+            method: "GET",
+            path: "/v2/panels?scope=c2c&limit=50",
+        });
+        expect(panels[1]).toMatchObject({
+            method: "POST",
+            path: "/v2/panels",
+            body: {
+                scope: "c2c",
+                target_type: "all",
+                panel: { items, remark: "nokoribi-agent:slash-commands" },
+            },
+        });
+        expect(panels[2]).toMatchObject({
+            method: "PUT",
+            path: "/v2/panels/panel%201",
+            body: { panel: { items } },
+        });
+    });
+
+    it("surfaces panel business errors as ApiError", async () => {
+        const { rest: client, server } = await rest();
+        server.panelCode = 40030016;
+        await expect(client.createPanel("c2c", { items: [] })).rejects.toThrow(
+            /API Error/
+        );
+        server.panelCode = 0;
+        await expect(client.listPanels("c2c")).resolves.toEqual([]);
     });
 });

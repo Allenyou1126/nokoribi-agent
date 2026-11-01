@@ -44,6 +44,7 @@ function parseArgs(argv) {
         ack: false,
         ackId: "",
         ackCode: 0,
+        panels: false,
         markdown: false,
         chat: "",
         messageId: "",
@@ -61,6 +62,7 @@ function parseArgs(argv) {
         else if (arg === "--interaction-connect") {
             options.interactionConnect = true;
         } else if (arg === "--keyboard") options.keyboard = true;
+        else if (arg === "--panels") options.panels = true;
         else if (arg === "--watch-interaction") {
             options.watchInteraction = true;
         } else if (arg === "--ack") {
@@ -89,6 +91,7 @@ function usage() {
             "",
             "Modes: --token | --gateway | --watch | --passive | --active",
             "       --interaction-connect | --keyboard | --watch-interaction | --ack <id> <code>",
+            "       --panels (read-only C2C command-panel list)",
             "Passive fields: --chat c2c:<openid>|group:<openid> --message-id <id> --seq <n>",
             "Keyboard adds two callback buttons; --markdown selects msg_type=2.",
         ].join("\n") + "\n"
@@ -458,6 +461,30 @@ async function sendMode(options) {
     }
 }
 
+async function panelsMode() {
+    const { tokens, api } = client();
+    const token = await tokens.getAccessToken(APP_ID, CLIENT_SECRET);
+    const scope = "c2c";
+    const path = `/v2/panels?scope=${scope}&limit=50`;
+    const data = await api.request(token, "GET", path);
+    const records = Array.isArray(data.records) ? data.records : [];
+    process.stdout.write(
+        `${JSON.stringify({
+            event: "panels",
+            scope,
+            count: records.length,
+            panels: records.map((record) => ({
+                panelId: record.panel_id,
+                targetType: record.target_type ?? null,
+                remark: record.panel?.remark ?? null,
+                items: Array.isArray(record.panel?.items)
+                    ? record.panel.items.map((item) => item.name)
+                    : [],
+            })),
+        })}\n`
+    );
+}
+
 async function main() {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
@@ -468,6 +495,10 @@ async function main() {
     if (options.token) {
         await probeToken("https://api.bot.qq.com");
         await probeToken("https://bots.qq.com");
+        return;
+    }
+    if (options.panels) {
+        await panelsMode();
         return;
     }
     if (options.watchInteraction) {

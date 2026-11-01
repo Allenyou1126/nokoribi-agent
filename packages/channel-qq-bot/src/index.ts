@@ -37,6 +37,23 @@ export type { QqGatewayOptions } from "./gateway.js";
 export { SendLimiter } from "./limiter.js";
 export type { SendLimiterOptions } from "./limiter.js";
 export {
+    buildPanelItems,
+    MAX_PANEL_DESC_CHARS,
+    MAX_PANEL_ITEMS,
+    MAX_PANEL_NAME_CHARS,
+    QqCommandPanel,
+    QQ_COMMAND_PANEL_REMARK,
+    QQ_COMMAND_PANEL_SCOPES,
+} from "./panel.js";
+export type {
+    QqCommandPanelOptions,
+    QqPanelClient,
+    QqPanelItem,
+    QqPanelPayload,
+    QqPanelRecord,
+    QqPanelScope,
+} from "./panel.js";
+export {
     interactionAckCode,
     normalizeInbound,
     normalizeInteraction,
@@ -78,6 +95,7 @@ export const Config: unknown = z.object({
     activeMessageFallback: z.union(["auto", "off"]).default("auto"),
     approvalButtons: z.boolean().default(true),
     questionButtons: z.boolean().default(true),
+    commandPanel: z.boolean().default(true),
     inboundImages: z.boolean().default(true),
     inboundImageMaxBytes: z.natural().min(1).default(10485760),
     inboundImageTimeoutMs: z.natural().min(1).default(15000),
@@ -102,6 +120,7 @@ export async function apply(ctx: Context, config: QqBotConfig): Promise<void> {
         rest,
         gateway,
         logger,
+        panel: rest,
         readFile: (file) => ctx.attachments.readFileStream(file),
     });
     const disposeDriver = await ctx.channels.registerDriver(driver);

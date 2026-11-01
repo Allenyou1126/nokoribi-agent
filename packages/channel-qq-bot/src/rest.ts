@@ -21,6 +21,12 @@ import {
 import { classifySendError } from "./errors.js";
 import { createSdkLogger } from "./logger.js";
 import type {
+    QqPanelClient,
+    QqPanelPayload,
+    QqPanelRecord,
+    QqPanelScope,
+} from "./panel.js";
+import type {
     DownloadedImage,
     DownloadImageOptions,
     QqRestClient,
@@ -68,7 +74,7 @@ async function readBoundedBody(
  * Only token caching, message sends and gateway-url resolution are used; the
  * SDK facade, middleware and business semantics stay out of the driver.
  */
-export class QqRest implements QqRestClient {
+export class QqRest implements QqRestClient, QqPanelClient {
     private readonly config: QqBotConfig;
     private readonly credentials: QqCredentials;
     private readonly logger: Logger;
@@ -201,6 +207,64 @@ export class QqRest implements QqRestClient {
         return { file_info: response.file_info };
     }
 
+    /**
+     * List the panels visible in one scene (M18).
+     *
+     * The platform caps a bot at 20 panels, so a single 50-record page always
+     * covers every panel the marker could hide in.
+     */
+    async listPanels(scope: QqPanelScope): Promise<readonly QqPanelRecord[]> {
+        const path = `/v2/panels?scope=${encodeURIComponent(scope)}&limit=50`;
+        const data = await this.requestPanel<{
+            records?: readonly QqPanelRecord[];
+        }>("GET", path);
+        if (!Array.isArray(data.records)) {
+            throw new ApiError(
+                `API Error [${path}]: missing records`,
+                200,
+                path
+            );
+        }
+        return data.records;
+    }
+
+    /** Create one command panel in the requested scene. */
+    async createPanel(
+        scope: QqPanelScope,
+        panel: QqPanelPayload
+    ): Promise<{ readonly panel_id: string }> {
+        const path = "/v2/panels";
+        const data = await this.requestPanel<{ panel_id?: string }>(
+            "POST",
+            path,
+            { scope, target_type: "all", panel }
+        );
+        if (typeof data.panel_id !== "string" || data.panel_id === "") {
+            throw new ApiError(
+                `API Error [${path}]: missing panel_id`,
+                200,
+                path
+            );
+        }
+        return { panel_id: data.panel_id };
+    }
+
+    /** Replace the items/remark of one existing command panel. */
+    async updatePanel(
+        panelId: string,
+        panel: QqPanelPayload
+    ): Promise<{ readonly version: number }> {
+        const path = `/v2/panels/${encodeURIComponent(panelId)}`;
+        const data = await this.requestPanel<{ version?: number }>(
+            "PUT",
+            path,
+            { panel }
+        );
+        return {
+            version: typeof data.version === "number" ? data.version : 0,
+        };
+    }
+
     async getGatewayUrl(): Promise<string> {
         const fixed = resolveGatewayUrl(this.config);
         if (fixed !== undefined) return fixed;
@@ -226,6 +290,32 @@ export class QqRest implements QqRestClient {
 
     stop(): void {
         this.tokens.stopBackgroundRefresh(this.credentials.appId);
+    }
+
+    /**
+     * One panel API call with token handling and the platform's HTTP-200
+     * business-error convention.
+     */
+    private async requestPanel<T>(
+        method: string,
+        path: string,
+        body?: unknown
+    ): Promise<T> {
+        const token = await this.getAccessToken();
+        const response = await this.api.request<
+            T & { code?: number; err_code?: number; message?: string }
+        >(token, method, path, body);
+        const code = response.code ?? response.err_code;
+        if (typeof code === "number" && code !== 0) {
+            throw new ApiError(
+                `API Error [${path}]: ${response.message ?? String(code)}`,
+                200,
+                path,
+                code,
+                response.message
+            );
+        }
+        return response;
     }
 
     private async requestSend(

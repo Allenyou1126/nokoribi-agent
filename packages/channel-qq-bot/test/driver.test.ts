@@ -17,6 +17,13 @@ import { describe, expect, it } from "vitest";
 import type { QqBotConfig } from "../src/config.js";
 import { QqBotDriver } from "../src/driver.js";
 import { SendLimiter } from "../src/limiter.js";
+import {
+    QQ_COMMAND_PANEL_REMARK,
+    type QqPanelClient,
+    type QqPanelPayload,
+    type QqPanelRecord,
+    type QqPanelScope,
+} from "../src/panel.js";
 import type {
     QqGatewayClient,
     QqGatewayHandlers,
@@ -33,6 +40,37 @@ interface SentUpload {
     readonly scope: "c2c" | "group";
     readonly targetId: string;
     readonly body: Record<string, unknown>;
+}
+
+class FakePanelClient implements QqPanelClient {
+    readonly lists: QqPanelScope[] = [];
+    readonly creates: {
+        scope: QqPanelScope;
+        panel: QqPanelPayload;
+    }[] = [];
+    readonly updates: { panelId: string; panel: QqPanelPayload }[] = [];
+    records: readonly QqPanelRecord[] = [];
+
+    async listPanels(scope: QqPanelScope): Promise<readonly QqPanelRecord[]> {
+        this.lists.push(scope);
+        return this.records.filter((record) => record.scope === scope);
+    }
+
+    async createPanel(
+        scope: QqPanelScope,
+        panel: QqPanelPayload
+    ): Promise<{ readonly panel_id: string }> {
+        this.creates.push({ scope, panel });
+        return { panel_id: "panel-1" };
+    }
+
+    async updatePanel(
+        panelId: string,
+        panel: QqPanelPayload
+    ): Promise<{ readonly version: number }> {
+        this.updates.push({ panelId, panel });
+        return { version: 1 };
+    }
 }
 
 class FakeRest implements QqRestClient {
@@ -241,6 +279,7 @@ function setup(
         config?: Partial<QqBotConfig>;
         now?: () => number;
         readFile?: (file: FileAttachmentRef) => AsyncIterable<Uint8Array>;
+        panel?: QqPanelClient;
     } = {}
 ): {
     driver: QqBotDriver;
@@ -269,6 +308,7 @@ function setup(
         ...(options.readFile === undefined
             ? {}
             : { readFile: options.readFile }),
+        ...(options.panel === undefined ? {} : { panel: options.panel }),
     });
     return {
         driver,
@@ -954,5 +994,42 @@ describe("qq bot outbound files", () => {
         await expect(
             driver.send("c2c:u1", content({ text: "", files: [IMAGE_FILE] }))
         ).rejects.toThrow(/delivery failed/);
+    });
+});
+
+describe("qq bot command panel", () => {
+    it("publishes commands to the C2C panel when enabled", async () => {
+        const panel = new FakePanelClient();
+        const { driver } = setup({ panel });
+        driver.syncCommands([
+            { name: "stop", description: "Stop the current turn" },
+        ]);
+        await waitFor(() => panel.creates.length === 1);
+        expect(panel.lists).toEqual(["c2c"]);
+        expect(panel.creates[0]?.scope).toBe("c2c");
+        expect(panel.creates[0]?.panel.remark).toBe(QQ_COMMAND_PANEL_REMARK);
+        expect(panel.creates[0]?.panel.items?.map((item) => item.name)).toEqual(
+            ["/stop"]
+        );
+    });
+
+    it("does not touch the panel when commandPanel is false", async () => {
+        const panel = new FakePanelClient();
+        const { driver } = setup({ panel, config: { commandPanel: false } });
+        driver.syncCommands([
+            { name: "stop", description: "Stop the current turn" },
+        ]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(panel.lists).toHaveLength(0);
+        expect(panel.creates).toHaveLength(0);
+    });
+
+    it("does not touch the panel without a panel client", async () => {
+        const { driver } = setup();
+        expect(() =>
+            driver.syncCommands([
+                { name: "stop", description: "Stop the current turn" },
+            ])
+        ).not.toThrow();
     });
 });

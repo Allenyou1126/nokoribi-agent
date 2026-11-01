@@ -1,5 +1,6 @@
 import type {
     ChannelCapabilities,
+    ChannelCommand,
     ChannelDriver,
     ChannelHealth,
     FileAttachmentRef,
@@ -23,6 +24,7 @@ import type {
 
 import {
     resolveActiveMessageDisableMs,
+    resolveCommandPanel,
     resolveInboundImageMaxBytes,
     resolveInboundImages,
     resolveInboundImageTimeoutMs,
@@ -43,6 +45,7 @@ import {
     normalizeInteraction,
     type InboundImageSource,
 } from "./normalize.js";
+import { QqCommandPanel, type QqPanelClient } from "./panel.js";
 import type { QqGatewayClient, QqRestClient } from "./transport.js";
 
 /** One parsed `chatId` with its QQ scope. */
@@ -72,6 +75,8 @@ export interface QqBotDriverOptions {
     readonly logger: Logger;
     readonly now?: () => number;
     readonly limiter?: SendLimiter;
+    /** Optional command-panel REST surface for slash-command discovery. */
+    readonly panel?: QqPanelClient;
     /** Read one stored outbound file's bytes from the attachment service. */
     readonly readFile?: (file: FileAttachmentRef) => AsyncIterable<Uint8Array>;
 }
@@ -258,6 +263,7 @@ export class QqBotDriver implements ChannelDriver {
     private readonly readFile:
         | ((file: FileAttachmentRef) => AsyncIterable<Uint8Array>)
         | undefined;
+    private readonly commandPanel: QqCommandPanel | undefined;
     private readonly windowMarginMs: number;
     private readonly activeDisableMs: number;
     private readonly inboundImages: boolean;
@@ -284,6 +290,13 @@ export class QqBotDriver implements ChannelDriver {
             options.config
         );
         this.readFile = options.readFile;
+        this.commandPanel =
+            resolveCommandPanel(options.config) && options.panel !== undefined
+                ? new QqCommandPanel({
+                      client: options.panel,
+                      logger: this.logger,
+                  })
+                : undefined;
     }
 
     get capabilities(): ChannelCapabilities {
@@ -318,7 +331,17 @@ export class QqBotDriver implements ChannelDriver {
         if (this.stopped) return;
         this.stopped = true;
         this.limiter.close();
+        await this.commandPanel?.stop();
         await this.gateway.stop();
+    }
+
+    /**
+     * Publish the effective slash-command catalog to the C2C command panel.
+     * Best-effort: panel failures are contained by the panel synchronizer.
+     */
+    syncCommands(commands: readonly ChannelCommand[]): void {
+        if (this.stopped) return;
+        this.commandPanel?.sync(commands);
     }
 
     /** Normalize one SDK event and download its images before delivery. */

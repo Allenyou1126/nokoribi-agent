@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
     resolveActiveMessageDisableMs,
     resolveApiBaseUrl,
+    resolveCommandPanel,
     resolveCredentials,
     resolveGatewayUrl,
     resolveReplyWindowMarginMs,
@@ -45,7 +46,18 @@ describe("qq bot config", () => {
         expect(defaults.groupReplyWindowSeconds).toBe(300);
         expect(defaults.activeMessageFallback).toBe("auto");
         expect(defaults.approvalButtons).toBe(true);
+        expect(defaults.commandPanel).toBe(true);
         expect(defaults.gatewayUrl).toBe("");
+    });
+
+    it("enables the C2C command panel unless disabled", () => {
+        expect(resolveCommandPanel(config)).toBe(true);
+        expect(resolveCommandPanel({ ...config, commandPanel: false })).toBe(
+            false
+        );
+        expect(resolveCommandPanel({ ...config, commandPanel: true })).toBe(
+            true
+        );
     });
 
     it("reads the secret from the named environment variable", () => {

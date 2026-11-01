@@ -20,6 +20,22 @@ export interface FakeQqSend {
     readonly body: Record<string, unknown>;
 }
 
+/** One command panel created or updated by the daemon. */
+export interface FakeQqPanel {
+    readonly panel_id: string;
+    readonly scope: string;
+    readonly target_type: string;
+    readonly panel: {
+        readonly items?: readonly {
+            readonly type: string;
+            readonly name: string;
+            readonly desc: string;
+        }[];
+        readonly remark?: string;
+        readonly version?: number;
+    };
+}
+
 /** One scripted REST failure. */
 export interface FakeQqFailure {
     readonly httpStatus?: number;
@@ -132,8 +148,10 @@ export class FakeQqBot {
     private readonly identifies: Record<string, unknown>[] = [];
     private readonly resumes: Record<string, unknown>[] = [];
     private readonly connections: FakeWsConnection[] = [];
+    private readonly panelRecords: FakeQqPanel[] = [];
     private rejectNext = false;
     private sequence = 1;
+    private panelSeq = 0;
 
     private constructor(
         api: Server,
@@ -184,6 +202,11 @@ export class FakeQqBot {
         return this.requests;
     }
 
+    /** Command panels currently stored by the fake platform. */
+    get panels(): readonly FakeQqPanel[] {
+        return this.panelRecords;
+    }
+
     get tokenRequests(): readonly string[] {
         return this.tokens;
     }
@@ -219,6 +242,21 @@ export class FakeQqBot {
                 throw new Error(
                     `timed out waiting for QQ send; got ${JSON.stringify(
                         this.sends.map((send) => send.path)
+                    )}`
+                );
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+    }
+
+    /** Wait until at least `count` command panels were stored. */
+    async waitForPanels(count: number, timeoutMs = 15000): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+        while (this.panelRecords.length < count) {
+            if (Date.now() > deadline) {
+                throw new Error(
+                    `timed out waiting for ${String(count)} QQ panels; got ${JSON.stringify(
+                        this.panelRecords.map((panel) => panel.panel_id)
                     )}`
                 );
             }
@@ -441,6 +479,62 @@ export class FakeQqBot {
             this.acks.push({ interactionId, code, path });
             this.json(response, 200, {});
             return;
+        }
+        if (path.startsWith("/v2/panels")) {
+            const url = new URL(path, "http://fake.local");
+            if (request.method === "GET") {
+                const scope = url.searchParams.get("scope") ?? "";
+                this.json(response, 200, {
+                    records: this.panelRecords.filter(
+                        (panel) => panel.scope === scope
+                    ),
+                    next_cursor: "",
+                    is_end: true,
+                });
+                return;
+            }
+            if (request.method === "POST") {
+                const scope = typeof body.scope === "string" ? body.scope : "";
+                const panel =
+                    typeof body.panel === "object" && body.panel !== null
+                        ? (body.panel as FakeQqPanel["panel"])
+                        : {};
+                this.panelSeq += 1;
+                const record: FakeQqPanel = {
+                    panel_id: `panel-${String(this.panelSeq)}`,
+                    scope,
+                    target_type:
+                        typeof body.target_type === "string"
+                            ? body.target_type
+                            : "all",
+                    panel,
+                };
+                this.panelRecords.push(record);
+                this.json(response, 200, { panel_id: record.panel_id });
+                return;
+            }
+            if (request.method === "PUT") {
+                const panelId = decodeURIComponent(
+                    url.pathname.slice("/v2/panels/".length)
+                );
+                const index = this.panelRecords.findIndex(
+                    (panel) => panel.panel_id === panelId
+                );
+                if (index < 0) {
+                    this.json(response, 404, { code: 40030006 });
+                    return;
+                }
+                const panel =
+                    typeof body.panel === "object" && body.panel !== null
+                        ? (body.panel as FakeQqPanel["panel"])
+                        : {};
+                const record = this.panelRecords[index];
+                if (record !== undefined) {
+                    this.panelRecords[index] = { ...record, panel };
+                }
+                this.json(response, 200, { version: 2 });
+                return;
+            }
         }
         if (path.endsWith("/messages")) {
             if (this.rejectNext) {
