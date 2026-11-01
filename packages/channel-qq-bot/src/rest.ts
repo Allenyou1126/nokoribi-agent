@@ -212,15 +212,20 @@ export class QqRest implements QqRestClient, QqPanelClient {
      *
      * The platform caps a bot at 20 panels, so a single 50-record page always
      * covers every panel the marker could hide in.
+     *
+     * QQ omits `records` (and `next_cursor`) entirely and answers
+     * `{"is_end":true}` when the scene has no panels, so an absent or null
+     * list means empty. Only a present, non-array value is malformed.
      */
     async listPanels(scope: QqPanelScope): Promise<readonly QqPanelRecord[]> {
         const path = `/v2/panels?scope=${encodeURIComponent(scope)}&limit=50`;
         const data = await this.requestPanel<{
-            records?: readonly QqPanelRecord[];
+            records?: readonly QqPanelRecord[] | null;
         }>("GET", path);
+        if (data.records === undefined || data.records === null) return [];
         if (!Array.isArray(data.records)) {
             throw new ApiError(
-                `API Error [${path}]: missing records`,
+                `API Error [${path}]: invalid records`,
                 200,
                 path
             );

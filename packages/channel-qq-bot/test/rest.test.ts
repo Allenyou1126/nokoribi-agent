@@ -18,6 +18,7 @@ interface FakeServer {
     readonly tokens: string[];
     failNextSend: boolean;
     panelCode: number;
+    panelListBody: Record<string, unknown>;
     close(): Promise<void>;
 }
 
@@ -34,6 +35,7 @@ async function startServer(): Promise<FakeServer> {
     const tokens: string[] = [];
     let failNextSend = false;
     let panelCode = 0;
+    let panelListBody: Record<string, unknown> = { records: [] };
     const server: Server = createServer((request, response) => {
         void (async () => {
             const raw = await readBody(request);
@@ -98,7 +100,7 @@ async function startServer(): Promise<FakeServer> {
                     "content-type": "application/json",
                 });
                 if (request.method === "GET") {
-                    response.end(JSON.stringify({ records: [] }));
+                    response.end(JSON.stringify(panelListBody));
                 } else if (request.method === "POST") {
                     response.end(JSON.stringify({ panel_id: "panel-1" }));
                 } else {
@@ -144,6 +146,12 @@ async function startServer(): Promise<FakeServer> {
         },
         set panelCode(value: number) {
             panelCode = value;
+        },
+        get panelListBody(): Record<string, unknown> {
+            return panelListBody;
+        },
+        set panelListBody(value: Record<string, unknown>) {
+            panelListBody = value;
         },
         async close(): Promise<void> {
             await new Promise<void>((resolve) => {
@@ -421,5 +429,21 @@ describe("qq REST wrapper", () => {
         );
         server.panelCode = 0;
         await expect(client.listPanels("c2c")).resolves.toEqual([]);
+    });
+
+    it("treats an omitted or null panel list as empty", async () => {
+        const { rest: client, server } = await rest();
+        // Observed real-platform shape when the scene has no panels: HTTP 200
+        // `{"is_end":true}` without any `records` field.
+        server.panelListBody = { is_end: true };
+        await expect(client.listPanels("c2c")).resolves.toEqual([]);
+        server.panelListBody = { records: null, is_end: true };
+        await expect(client.listPanels("c2c")).resolves.toEqual([]);
+    });
+
+    it("rejects a malformed panel list", async () => {
+        const { rest: client, server } = await rest();
+        server.panelListBody = { records: { broken: true } };
+        await expect(client.listPanels("c2c")).rejects.toThrow(/API Error/);
     });
 });
