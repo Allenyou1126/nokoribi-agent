@@ -208,6 +208,7 @@ def check_bundle(bundle):
         ("inboundImageMaxBytes", "NOKORIBI_QQ_BOT_INBOUND_IMAGE_MAX_BYTES"),
         ("inboundImageTimeoutMs", "NOKORIBI_QQ_BOT_INBOUND_IMAGE_TIMEOUT_MS"),
         ("questionButtons", "NOKORIBI_QQ_BOT_QUESTION_BUTTONS"),
+        ("commandPanel", "NOKORIBI_QQ_BOT_COMMAND_PANEL"),
     ):
         expect_js(qq_bot.get(key), env_name, f"bundle QQ {key}")
 
@@ -295,6 +296,7 @@ def check_common(overlay, service, environment, bundle, unit, warnings):
         "activeMessageFallback": "auto",
         "approvalButtons": True,
         "questionButtons": True,
+        "commandPanel": True,
         "inboundImages": True,
         "inboundImageMaxBytes": 10485760,
         "inboundImageTimeoutMs": 15000,

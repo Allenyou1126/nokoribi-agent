@@ -520,6 +520,11 @@ in
         default = true;
         description = "Render C2C buttons for single-select ask_user_question options (M15); false keeps text-only questions.";
       };
+      commandPanel = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Publish every registered slash command to the QQ C2C command panel through the /v2/panels API (M18); false disables panel writes entirely.";
+      };
       inboundImages = mkOption {
         type = types.bool;
         default = true;

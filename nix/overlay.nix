@@ -96,6 +96,7 @@ let
     activeMessageFallback = cfg.channel.qqBot.activeMessageFallback;
     approvalButtons = cfg.channel.qqBot.approvalButtons;
     questionButtons = cfg.channel.qqBot.questionButtons;
+    commandPanel = cfg.channel.qqBot.commandPanel;
     inboundImages = cfg.channel.qqBot.inboundImages;
     inboundImageMaxBytes = cfg.channel.qqBot.inboundImageMaxBytes;
     inboundImageTimeoutMs = cfg.channel.qqBot.inboundImageTimeoutSeconds * 1000;
