@@ -24,7 +24,15 @@ import {
 } from "@nokoribi/shared";
 import type {} from "@nokoribi/shell-bash";
 
+import {
+    GOAL_ACTIVATION_LABELS,
+    GOAL_CHILD_LABELS,
+    GOAL_PHASE_LABELS,
+    labelOf,
+    SUBAGENT_STOP_LABELS,
+} from "../labels.js";
 import { contentText } from "../replies.js";
+import { formatSandboxDetail, normalizeSandboxStatus } from "../status.js";
 import { killTerminalsForSession } from "../terminal-cleanup.js";
 import { GoalArchive, type GoalArchiveRecord } from "./archive.js";
 import { GOAL_HELP, type GoalCommand } from "./commands.js";
@@ -282,7 +290,7 @@ export class GoalManager {
             }
             if (child !== undefined && child.mode !== "continuable") {
                 await this.config.notify(
-                    `⚠️ goal ${shortGoalId(tracked.sessionId)} 不是 continuable 子代理，无法恢复。`
+                    `⚠️ goal ${shortGoalId(tracked.sessionId)} 不是可续跑的子代理，无法恢复。`
                 );
                 this.removeTracked(tracked.sessionId);
                 continue;
@@ -398,7 +406,7 @@ export class GoalManager {
         ) {
             this.blockedNotified.set(state.sessionId, state.revision);
             await this.config.notify(
-                `⚠️ goal ${shortGoalId(state.sessionId)} 阻塞：${state.objective ?? "(unknown)"}`
+                `⚠️ goal ${shortGoalId(state.sessionId)} 已阻塞：${state.objective ?? "（未记录）"}`
             );
         }
     }
@@ -433,7 +441,8 @@ export class GoalManager {
         this.endedNotified.add(info.id);
         void this.config
             .notify(
-                `⚠️ goal ${shortGoalId(info.id)} 子代理停止（${info.stopReason}）。`
+                `⚠️ goal ${shortGoalId(info.id)} 的子代理停止：` +
+                    `${labelOf(SUBAGENT_STOP_LABELS, info.stopReason)}。`
             )
             .catch((error: unknown) => {
                 this.config.logger.error("goal stop notice failed", {
@@ -457,7 +466,7 @@ export class GoalManager {
             if (view.phase !== "active") return;
             if (view.roundsStarted >= view.maxGoalRounds) {
                 await this.config.notify(
-                    `⚠️ goal ${shortId} 已达到轮次上限，未重新 arm。`
+                    `⚠️ goal ${shortId} 已达到轮次上限，未重新开启自动续跑。`
                 );
                 return;
             }
@@ -538,24 +547,34 @@ export class GoalManager {
         }
     }
 
+    private childStateLabel(sessionId: string): string {
+        const child = this.ctx.agents.get(SessionId(sessionId));
+        if (child === undefined) return GOAL_CHILD_LABELS.cold;
+        return child.status === "running"
+            ? GOAL_CHILD_LABELS.running
+            : GOAL_CHILD_LABELS.idle;
+    }
+
     private async listCommand(): Promise<CommandResult> {
         const goals = this.tracker.list();
         if (goals.length === 0) {
             return { kind: "success", text: "当前没有 goal。" };
         }
+        const lines = goals.map((goal) => {
+            const max = goal.maxGoalRounds ?? 0;
+            return (
+                `· ${shortGoalId(goal.sessionId)}：` +
+                `${labelOf(GOAL_PHASE_LABELS, goal.phase)} · ` +
+                `轮次 ${String(goal.lastKnownRounds)}/${String(max)} · ` +
+                `子会话 ${this.childStateLabel(goal.sessionId)} · ` +
+                `目标：${goal.objective ?? "（未记录）"}`
+            );
+        });
         return {
             kind: "success",
-            text: goals
-                .map((goal) => {
-                    const max = goal.maxGoalRounds ?? 0;
-                    const live =
-                        this.ctx.agents.get(SessionId(goal.sessionId)) ===
-                        undefined
-                            ? "cold"
-                            : "live";
-                    return `- ${shortGoalId(goal.sessionId)}  ${goal.phase}  ${String(goal.lastKnownRounds)}/${String(max)}  ${live}  ${goal.objective ?? "(unknown)"}`;
-                })
-                .join("\n"),
+            text: [`goal 列表（${String(goals.length)} 个）`, ...lines].join(
+                "\n"
+            ),
         };
     }
 
@@ -586,21 +605,27 @@ export class GoalManager {
         const sandbox = await this.sandboxStatus(tracked.sessionId);
         const lines = [
             `goal ${shortGoalId(tracked.sessionId)}`,
-            `session: ${tracked.sessionId}`,
-            `objective: ${current.objective ?? "(unknown)"}`,
-            `model: ${
+            `· 会话：${tracked.sessionId}`,
+            `· 目标：${current.objective ?? "（未记录）"}`,
+            `· 模型：${
                 current.model === undefined
-                    ? "(default)"
+                    ? "主模型（默认）"
                     : formatModelRoute(current.model)
             }`,
-            `phase: ${current.phase}`,
-            `rounds: ${String(current.lastKnownRounds)}/${String(current.maxGoalRounds ?? 0)}`,
-            `activation: ${view?.activation ?? "unknown"}`,
-            `child: ${child?.status ?? "cold"}`,
-            `sandbox: ${sandbox}`,
+            `· 阶段：${labelOf(GOAL_PHASE_LABELS, current.phase)}`,
+            `· 轮次：${String(current.lastKnownRounds)}/${String(
+                current.maxGoalRounds ?? 0
+            )}`,
+            `· 自动续跑：${
+                view === undefined
+                    ? "未知"
+                    : labelOf(GOAL_ACTIVATION_LABELS, view.activation)
+            }`,
+            `· 子会话：${this.childStateLabel(tracked.sessionId)}`,
+            `· 沙箱：${sandbox}`,
         ];
         if (view?.blockedReason !== undefined) {
-            lines.push(`blocked: ${view.blockedReason.message}`);
+            lines.push(`· 阻塞原因：${view.blockedReason.message}`);
         }
         return { kind: "success", text: lines.join("\n") };
     }
@@ -613,7 +638,9 @@ export class GoalManager {
         if (child === undefined) {
             return {
                 kind: "error",
-                text: `goal ${shortGoalId(tracked.sessionId)} 当前不在线，无法 pause。`,
+                text:
+                    `goal ${shortGoalId(tracked.sessionId)} 的子会话未加载，` +
+                    `无法暂停；可先 /goal resume ${shortGoalId(tracked.sessionId)} 再重试。`,
             };
         }
         try {
@@ -622,12 +649,12 @@ export class GoalManager {
                 return { kind: "error", text: "子会话没有 goal。" };
             }
             if (view.phase === "paused") {
-                return { kind: "success", text: "goal 已经是 paused。" };
+                return { kind: "success", text: "goal 已处于暂停状态。" };
             }
             if (view.phase !== "active") {
                 return {
                     kind: "error",
-                    text: `goal 当前 phase=${view.phase}，不能 pause。`,
+                    text: `goal 当前为「${labelOf(GOAL_PHASE_LABELS, view.phase)}」，无法暂停。`,
                 };
             }
             const paused = this.ctx.goals.pause(child, {
@@ -656,7 +683,7 @@ export class GoalManager {
         if (tracked.phase === "blocked" || tracked.phase === "complete") {
             return {
                 kind: "error",
-                text: `goal phase=${tracked.phase}，不能 resume。`,
+                text: `goal 当前为「${labelOf(GOAL_PHASE_LABELS, tracked.phase)}」，无法恢复。`,
             };
         }
         const child = this.ctx.agents.get(SessionId(tracked.sessionId));
@@ -673,7 +700,7 @@ export class GoalManager {
                 if (view.phase === "blocked" || view.phase === "complete") {
                     return {
                         kind: "error",
-                        text: `goal phase=${view.phase}，不能 resume。`,
+                        text: `goal 当前为「${labelOf(GOAL_PHASE_LABELS, view.phase)}」，无法恢复。`,
                     };
                 }
                 const resumed = this.ctx.goals.resume(live, {
@@ -705,11 +732,11 @@ export class GoalManager {
             if (view.phase === "blocked" || view.phase === "complete") {
                 return {
                     kind: "error",
-                    text: `goal phase=${view.phase}，不能 resume。`,
+                    text: `goal 当前为「${labelOf(GOAL_PHASE_LABELS, view.phase)}」，无法恢复。`,
                 };
             }
             if (view.phase === "active" && view.activation === "armed") {
-                return { kind: "success", text: "goal 已经在运行。" };
+                return { kind: "success", text: "goal 已在运行。" };
             }
             const resumed = this.ctx.goals.resume(child, {
                 id: view.id,
@@ -761,7 +788,7 @@ export class GoalManager {
                 if (view.phase !== "complete") {
                     return {
                         kind: "error",
-                        text: `只有 complete 的 goal 可以 archive；当前 ${view.phase}。`,
+                        text: `只有已完成的 goal 可以归档；当前为「${labelOf(GOAL_PHASE_LABELS, view.phase)}」。`,
                     };
                 }
                 this.tracker.upsert(
@@ -778,7 +805,7 @@ export class GoalManager {
         if (current.phase !== "complete") {
             return {
                 kind: "error",
-                text: `只有 complete 的 goal 可以 archive；当前 ${current.phase}。`,
+                text: `只有已完成的 goal 可以归档；当前为「${labelOf(GOAL_PHASE_LABELS, current.phase)}」。`,
             };
         }
         try {
@@ -912,19 +939,22 @@ export class GoalManager {
                 session: sessionId,
                 error: errorMessage(error),
             });
-            return ` sandbox 清理失败：${errorMessage(error)}`;
+            return ` 沙箱清理失败：${errorMessage(error)}`;
         }
     }
 
     private async sandboxStatus(sessionId: string): Promise<string> {
         try {
-            const status = await this.ctx.shellHosts.status(
-                this.ctx.shellHosts.defaultHost,
-                sessionId
+            const host = this.ctx.shellHosts.defaultHost;
+            return formatSandboxDetail(
+                normalizeSandboxStatus(
+                    host,
+                    sessionId,
+                    await this.ctx.shellHosts.status(host, sessionId)
+                )
             );
-            return JSON.stringify(status);
-        } catch {
-            return "n/a";
+        } catch (error) {
+            return `读取失败（${errorMessage(error)}）`;
         }
     }
 

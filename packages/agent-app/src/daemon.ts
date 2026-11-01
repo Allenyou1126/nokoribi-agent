@@ -59,7 +59,11 @@ import { createStartGoalTool } from "./goals/tool.js";
 import { MemoryCurator } from "./memory/curator.js";
 import { assistantText, planTurnEnd } from "./replies.js";
 import type {} from "./session-bridge.js";
-import { formatFullStatus, normalizeSandboxStatus } from "./status.js";
+import {
+    formatFullStatus,
+    formatStatusSummary,
+    normalizeSandboxStatus,
+} from "./status.js";
 import { killTerminalsForAgent } from "./terminal-cleanup.js";
 
 /** Resolved agent-app configuration. */
@@ -464,9 +468,8 @@ export class Daemon {
             commandCtx.effect(() =>
                 commandCtx.commands.register({
                     name: "permission",
-                    description:
-                        "Report the current permission preset; switching is disabled",
-                    input: { hint: "<preset>" },
+                    description: "查看权限预设（Auto，不可切换）",
+                    input: { hint: "<预设>" },
                     handler: (invocation) => {
                         const current = this.ctx.permissionPresets.current(
                             invocation.agent.session
@@ -474,12 +477,16 @@ export class Daemon {
                         if (invocation.rawInput.trim() !== "") {
                             return {
                                 kind: "error",
-                                text: `不支持切换权限预设；当前为 ${current}。v1 没有 DSH 沙箱回退，切走会绕过 Auto review。`,
+                                text:
+                                    `不支持切换权限预设；当前为 ${current}（自动审查）。` +
+                                    "自动审查已启用，切换预设会绕过审查。",
                             };
                         }
                         return {
                             kind: "success",
-                            text: `permission: ${current}\nAuto review 已启用；切换预设会绕过审查，v1 不支持。`,
+                            text:
+                                `权限预设：${current}（自动审查）\n` +
+                                "自动审查已启用；当前版本不支持切换预设（切换会绕过审查）。",
                         };
                     },
                 })
@@ -612,21 +619,20 @@ export class Daemon {
         };
         register({
             name: "stop",
-            description: "Stop the main agent's current turn",
+            description: "停止当前回复并中止待审批/提问",
             handler: () => this.stopCommand(),
         });
         register({
             name: "status",
-            description: "Show daemon status; use /status full for paths",
+            description: "查看运行状态；加 full 看详情",
             input: { hint: "full" },
             handler: (invocation) => this.statusCommand(invocation.rawInput),
         });
         register({
             name: "goal",
-            description:
-                "Create and control goal subagents: new/list/status/pause/resume/clear/archive",
+            description: "创建或管理 goal 子代理",
             input: {
-                hint: "new <objective> [--rounds N] | list | status <id>",
+                hint: "new <目标> [--rounds N] | list | status <id>",
             },
             handler: (invocation) =>
                 this.goals.runCommand(
@@ -636,13 +642,12 @@ export class Daemon {
         });
         register({
             name: "clear",
-            description:
-                "Create a new main session and keep the old one archived",
+            description: "新建主会话并归档旧会话",
             handler: () => this.clearCommand(),
         });
         register({
             name: "new",
-            description: "Alias of /clear",
+            description: "同 /clear：新建主会话",
             handler: () => this.clearCommand(),
         });
     }
@@ -661,32 +666,22 @@ export class Daemon {
 
     private async statusCommand(rawInput: string): Promise<CommandResult> {
         const status = this.ctx.channels.status();
-        const lines = [
-            `version: ${status.version}`,
-            `uptime: ${status.uptimeSec}s`,
-            `agent: ${status.agentStatus}`,
-            `mainSession: ${status.mainSessionId ?? "-"}`,
-            `model: ${this.config.model}`,
-            `permission: ${status.permission ?? "-"}`,
-            `goals: ${status.goals.length}`,
-            `pendingInteractions: ${status.pendingInteractions}`,
-            `outbox: ${status.outboxLength}`,
-            `channels: ${
-                (status.channels ?? [])
-                    .map((channel) => `${channel.id}=${channel.state}`)
-                    .join(",") || "-"
-            }`,
-            `deferredNotices: ${status.deferredNotices ?? 0}`,
-            `lastRestart: ${status.lastRestartReason ?? "-"}`,
-        ];
+        const model = formatModelRoute({
+            provider: this.config.provider,
+            model: this.config.model,
+            ...(this.config.reasoningEffort === undefined
+                ? {}
+                : { reasoningEffort: this.config.reasoningEffort }),
+        });
+        const text = [formatStatusSummary(status, model)];
         if (rawInput.trim() === "full") {
             try {
-                lines.push(formatFullStatus(await this.fullStatus()));
+                text.push("", formatFullStatus(await this.fullStatus()));
             } catch (error) {
-                lines.push(`fullStatusError: ${errorMessage(error)}`);
+                text.push("", `详细状态读取失败：${errorMessage(error)}`);
             }
         }
-        return { kind: "success", text: lines.join("\n") };
+        return { kind: "success", text: text.join("\n") };
     }
 
     private async fullStatus(): Promise<FullStatusDetails> {

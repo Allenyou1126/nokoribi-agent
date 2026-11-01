@@ -24,8 +24,8 @@ export type GoalCommand =
 export const GOAL_HELP: string = [
     "用法：",
     "/goal new <目标> [--rounds N] [--model provider/model] [--effort ID] — 创建 goal 子代理",
-    "/goal list — 列出 tracked goals",
-    "/goal status <前缀> — 查看详情",
+    "/goal list — 列出已跟踪的 goal",
+    "/goal status <前缀> — 查看 goal 详情",
     "/goal pause <前缀> / resume <前缀> — 暂停/恢复自动续跑",
     "/goal clear <前缀> — 停止并归档",
     "/goal archive <前缀> — 归档已完成的 goal",

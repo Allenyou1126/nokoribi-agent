@@ -1502,18 +1502,16 @@ export class ChannelService extends Service {
         this.ctx.effect(() =>
             this.ctx.commands.register({
                 name: "steer",
-                description:
-                    "Force the next delivery to steer; bare sets one-shot mode",
-                input: { hint: "text" },
+                description: "下一条消息打断当前轮",
+                input: { hint: "<文本>" },
                 handler: (invocation) => this.steerCommand(invocation.rawInput),
             })
         );
         this.ctx.effect(() =>
             this.ctx.commands.register({
                 name: "queue",
-                description:
-                    "Force the next delivery to followup; bare sets one-shot mode",
-                input: { hint: "text" },
+                description: "下一条消息排队到当前轮后",
+                input: { hint: "<文本>" },
                 handler: (invocation) => this.queueCommand(invocation.rawInput),
             })
         );
@@ -1592,8 +1590,8 @@ export class ChannelService extends Service {
                 kind: "success",
                 text:
                     mode === "steer"
-                        ? "下一条消息将强制使用 steer"
-                        : "下一条消息将强制使用 followup",
+                        ? "已设置：下一条消息会立即打断当前轮。"
+                        : "已设置：下一条消息会排队到当前轮结束后处理。",
             };
         }
         const chat =
@@ -1611,7 +1609,10 @@ export class ChannelService extends Service {
         );
         return {
             kind: "success",
-            text: mode === "steer" ? "已 steer" : "已排队",
+            text:
+                mode === "steer"
+                    ? "已打断当前轮并投递。"
+                    : "已排队，将在当前轮结束后处理。",
         };
     }
 

@@ -498,10 +498,10 @@ describe("M5 process scenarios", () => {
         await postInbound(running, "查看状态", "m5-status-1");
         await waitForText(running, "状态正常");
         await postInbound(running, "/status full", "m5-status-2");
-        const fullText = await waitForText(running, "recentErrors:");
-        expect(fullText).toContain("workspace:");
-        expect(fullText).toContain("memory:");
-        expect(fullText).toContain("reviewer:");
+        const fullText = await waitForText(running, "最近错误");
+        expect(fullText).toContain("工作目录：");
+        expect(fullText).toContain("【记忆】");
+        expect(fullText).toContain("审查模型：");
         const full = await statusFull(running);
         expect(full.details.dshVersion).toMatch(/^0\.2\.1/);
         expect(full.details.memory.activeEntries).toBe(0);

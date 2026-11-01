@@ -104,7 +104,7 @@ describe("M2 process scenarios", () => {
         const permission = await postInbound(running, "/permission", "p-1");
         expect(permission.status).toBe(202);
         const permissionItems = await waitForOutbound(running, 0);
-        expect(permissionItems.items[0]?.text).toContain("permission: auto");
+        expect(permissionItems.items[0]?.text).toContain("权限预设：auto");
         const switchAttempt = await postInbound(
             running,
             "/permission auto",
@@ -360,9 +360,9 @@ describe("M2 process scenarios", () => {
         const promptSeq = first.items.at(-1)?.seq ?? 0;
         await postInbound(running, "/steer focus", "b-2");
         const steered = await waitForOutbound(running, promptSeq, 10);
-        expect(steered.items.some((item) => item.text === "已 steer")).toBe(
-            true
-        );
+        expect(
+            steered.items.some((item) => item.text === "已打断当前轮并投递。")
+        ).toBe(true);
         expect((await status(running)).pendingInteractions).toBe(1);
         const steerSeq = steered.items.at(-1)?.seq ?? promptSeq;
         await postInbound(running, "允许", "b-3");
@@ -427,7 +427,7 @@ describe("M2 process scenarios", () => {
         const clearedSeq = cleared.items.at(-1)?.seq ?? promptSeq;
         await postInbound(running, "/permission", "c-3");
         const permission = await waitForOutbound(running, clearedSeq, 10);
-        expect(permission.items[0]?.text).toContain("permission: auto");
+        expect(permission.items[0]?.text).toContain("权限预设：auto");
         const { access } = await import("node:fs/promises");
         await expect(
             access(join(running.home, "workspace/probe.txt"))

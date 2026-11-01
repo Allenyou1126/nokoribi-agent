@@ -226,9 +226,9 @@ describe("M16 memory injection process scenarios", () => {
         );
 
         await postInbound(running, "/status full", "m16-inject-3");
-        const statusText = await waitForText(running, "inject=enabled");
-        expect(statusText).toContain("pinned=1");
-        expect(statusText).toMatch(/snapshotChars=[1-9][0-9]*/);
+        const statusText = await waitForText(running, "自动注入：已开启");
+        expect(statusText).toContain("已 pin 1 条");
+        expect(statusText).toMatch(/快照：已 pin 1 条 · [1-9][0-9]* 字/);
     });
 
     it("injects the snapshot into the main session but not a goal child", async () => {

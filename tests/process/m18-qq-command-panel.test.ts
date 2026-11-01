@@ -109,7 +109,10 @@ describe("M18 QQ command panel process scenarios", () => {
             expect(item.type).toBe("command");
             expect(Array.from(item.name).length).toBeLessThanOrEqual(14);
             expect(Array.from(item.desc).length).toBeLessThanOrEqual(30);
+            expect(item.desc).toMatch(/[\u4e00-\u9fff]/);
         }
+        const statusItem = items.find((item) => item.name === "/status");
+        expect(statusItem?.desc).toContain("full");
         const panelRequests = fake.httpRequests.filter((request) =>
             request.path.startsWith("/v2/panels")
         );

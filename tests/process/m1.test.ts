@@ -97,7 +97,7 @@ describe("M1 process scenarios", () => {
         const before = await status(running);
         expect((await postInbound(running, "/status", "s-1")).status).toBe(202);
         const statusItems = await waitForOutbound(running, 0);
-        expect(statusItems.items[0]?.text).toContain("mainSession:");
+        expect(statusItems.items[0]?.text).toContain("主会话：");
 
         expect((await postInbound(running, "/clear", "c-1")).status).toBe(202);
         const cleared = await waitForOutbound(
@@ -194,7 +194,9 @@ describe("M1 process scenarios", () => {
             (await postInbound(running, "/steer forced", "st-1")).status
         ).toBe(202);
         const first = await waitForOutbound(running, 0, 10);
-        expect(first.items.some((item) => item.text === "已 steer")).toBe(true);
+        expect(
+            first.items.some((item) => item.text === "已打断当前轮并投递。")
+        ).toBe(true);
         const second = await waitForOutbound(
             running,
             first.items.at(-1)?.seq ?? 0,
@@ -211,7 +213,9 @@ describe("M1 process scenarios", () => {
             5
         );
         expect(
-            queued.items.some((item) => item.text.includes("强制使用 followup"))
+            queued.items.some((item) =>
+                item.text.includes("排队到当前轮结束后处理")
+            )
         ).toBe(true);
     });
 

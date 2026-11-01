@@ -247,7 +247,7 @@ describe("M4 process scenarios", () => {
             "m4-status-1"
         );
         expect(status.status).toBe(202);
-        await waitForText(running, 0, "phase: complete");
+        await waitForText(running, 0, "阶段：已完成");
         await mkdir(join(running.home, "sandboxes", childId), {
             recursive: true,
         });
