@@ -249,6 +249,8 @@
 
       - id: spill-policy
         name: "@deepseek-ai/dsh-spill-policy"
+        config:
+            maxInlineBytes: 12500
 
       - id: repeat-tool-reminder
         name: "@deepseek-ai/dsh-repeat-tool-reminder"
@@ -456,6 +458,7 @@
             activeMessageFallback: !!js process.env.NOKORIBI_QQ_BOT_ACTIVE_FALLBACK ?? 'auto'
             approvalButtons: !!js (process.env.NOKORIBI_QQ_BOT_APPROVAL_BUTTONS ?? 'true') === 'true'
             questionButtons: !!js (process.env.NOKORIBI_QQ_BOT_QUESTION_BUTTONS ?? 'true') === 'true'
+            commandPanel: !!js (process.env.NOKORIBI_QQ_BOT_COMMAND_PANEL ?? 'true') === 'true'
             inboundImages: !!js (process.env.NOKORIBI_QQ_BOT_INBOUND_IMAGES ?? 'true') === 'true'
             inboundImageMaxBytes: !!js Number(process.env.NOKORIBI_QQ_BOT_INBOUND_IMAGE_MAX_BYTES ?? 10485760)
             inboundImageTimeoutMs: !!js Number(process.env.NOKORIBI_QQ_BOT_INBOUND_IMAGE_TIMEOUT_MS ?? 15000)
