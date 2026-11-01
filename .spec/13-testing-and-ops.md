@@ -139,17 +139,21 @@ M11–M17 落点（已实现，2026-10-30）：
 
 ## 13.7 `/status`
 
-- 摘要（默认）：version、uptime、agentStatus（running/idle）、mainSessionId、model、permission、活跃 goal 数、待应答数、outbox 长度。M7 增加 `channels`（每个 driver 的 `id=online|connecting|offline`）与 `deferredNotices` 计数。
-- `/status full`：
-  - 每个 goal：短 id、phase、rounds、model、child 运行状态、sandbox generation/TTL/active；
-  - 每个 sandbox：session、目录、存在性、generation、activity、`terminals=N`（活动持久终端数，M10）、TTL、临时包、最近使用；
-  - active schedule：id/title/kind/scheduledAt/state；
-  - memory：active/archived/invalid/bytes；M16 增加 pinned、snapshotChars、inject=enabled|disabled（本地 memory 停用/OpenViking 后端时显示 disabled）；
-  - 最近 10 条 warn/error（进程内存环形缓冲，不持久化，不含字段值）；
-  - last restart reason/时间、lastVersion、workspace/state/lock/storage 路径；
-  - reviewer 两档与超时；DSH/app 版本。
+- IM 文本固定简体中文，用描述性标签代替内部字段名；HTTP JSON 字段名保持英文（D186）。
+- 摘要（默认）：「📊 运行状态」+ 主会话状态（启动中/空闲/运行中）、版本与运行时长（如「已运行 1 小时 1 分」）、主会话 id、模型路由、权限预设（`auto（自动审查）`）、Goal 总数与阶段分布、待处理（审批/提问/待发送/延后通知）、频道状态（在线/连接中/离线）、上次重启原因。
+- `/status full`：在摘要后追加「📋 详细状态」，分区输出：
+  - 【环境】工作目录/状态文件/锁文件/存储目录；
+  - 【版本】DSH/应用版本、上次版本、上次启动、上次重启原因；
+  - 【模型】主模型（含推理强度）与审查两档（快速/强化/超时）；
+  - 【记忆】活跃/归档/无效条目、占用字节、已 pin 条数与快照字数、自动注入开关；
+  - 【投递】下一条待发送序号；
+  - 【Goal】每个 goal 的短 id、阶段、轮次、子会话、模型、沙箱代次、目标；
+  - 【定时任务】id/标题/类型/触发时间/状态；
+  - 【沙箱】host/session、代次、目录存在性、活动/后台命令、持久终端（M10）、空闲回收、临时包、最近使用；
+  - 【最近错误】最近 10 条警告/错误（进程内存环形缓冲，不持久化）。
+  - 枚举值映射中文标签，未知值保留原码；时长/字节可读化；空集合显示「（无）」，sandbox 读取失败显示「读取失败（原因）」。
 - 不展示 API key、完整消息内容、提醒 prompt、memory 正文或 sandbox 包以外的敏感信息。
-- `GET /v1/status?full=1` 返回摘要 + `details`；默认 `GET /v1/status` 仍只有摘要。
+- `GET /v1/status?full=1` 返回摘要 + `details`；默认 `GET /v1/status` 仍只有摘要。机器接口与 IM 文本共享同一状态数据源，中文标签只影响 IM 渲染。
 
 ## 13.8 运维手册（草案）
 

@@ -59,6 +59,7 @@ Nokoribi Agent 的仓库开发指南。项目定位与技术规格见 [README.md
 - lint 规则：correctness 类别为 warn，`eslint/no-unused-vars` 为 error；不要用 disable 注释绕过，除非有明确原因并注释说明。
 - 新增依赖需要有明确理由；保持依赖方向：`shared` 最低，`bundle` 只做装配，细节见 `.spec/04`。
 - 不在代码中写死超时/路径/模型等部署参数；按规格从配置读取。
+- 面向 IM 用户的文案固定简体中文，状态输出用描述性中文标签而不是内部字段名（未知枚举保留原码）；HTTP/JSON 契约与模型可见文案保持英文（D186）。
 
 ## 提交约定
 

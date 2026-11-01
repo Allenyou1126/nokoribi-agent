@@ -147,7 +147,7 @@ interface SentRef { channelId: string; chatId: string; messageId: string; }
 | `/permission` | 只报告当前 permission preset（Auto）；任何切换参数返回错误。v1 没有 DSH 沙箱回退，切走会绕过审查（见 08） |
 | 其他已注册 DSH 命令 | 透传 `ctx.commands.execute`；未知命令回错误，不进入模型 |
 
-命令输出会按渠道上限分段；命令不进入模型历史（DSH commands 自带记录到会话日志）。
+命令输出会按渠道上限分段；命令不进入模型历史（DSH commands 自带记录到会话日志）。命令 description 与回包固定简体中文（D186），命令名（`/stop` 等）与 `goal` 术语保留英文；状态类输出用描述性中文标签替代内部字段名（如「待处理：审批/提问」代替 `pendingInteractions`），枚举值映射中文、未知值回落「未知（raw）」，时长/字节可读化。机器接口 `GET /v1/status` 的 JSON 字段名保持不变。
 
 ## 6.6 审批/提问 broker
 

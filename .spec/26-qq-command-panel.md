@@ -20,7 +20,7 @@
 - skills（`/skill-name`）或未知斜杠透传命令进入面板。
 - `target_type=specific` 的用户定向面板、target 修改接口。
 - >20 命令的多面板拆分、link 项、自定义菜单 `/v2/menu`。
-- `commandPanel=false` 时删除已有面板；运行期轮询面板变化；命令描述本地化。
+- `commandPanel=false` 时删除已有面板；运行期轮询面板变化。命令描述本地化在 M18 初版不做，后由 [D186](03-decision-log.md) 落地（固定简体中文）。
 
 ## 26.2 平台事实
 
@@ -58,7 +58,7 @@
 - 空列表容错：`records` 缺失或为 `null` 时视为空列表（真实平台无面板时只回 `{"is_end":true}`，2026-11-01 实测）；只有 `records` 存在但不是数组才视为畸形响应并放弃本轮。
 - **不重复创建**：`GET` 失败直接放弃本轮，不盲目 `POST`；`POST` 成功但响应丢失时，下次 `GET` 命中后转为更新。单 daemon 正常启动/重启不会产生重复面板（详见 26.5）。
 - 单实例串行：`sync()` 运行中只保留最新目录；items 签名相同跳过写；命令减少时覆盖为最新列表。
-- 命令映射：按 name 排序；`name = "/" + command.name`；超过 14 字符跳过（截断会破坏命令）；描述折叠空白并按 code point 截到 30（29 + `…`），空描述回退命令名；最多 20 项。
+- 命令映射：按 name 排序；`name = "/" + command.name`；超过 14 字符跳过（截断会破坏命令）；描述折叠空白并按 code point 截到 30（29 + `…`），空描述回退命令名；最多 20 项。描述由命令注册处提供，固定简体中文（D186），所有内置命令描述均 ≤30 字符。
 - 失败：每个 scope 独立 try/catch；`classifySendError` 为 `retry`/`auth` 时 30s 后单次重试，永久错误不重试；`stop()` 清理重试并等待在途同步。
 
 ### 26.3.3 数据流
@@ -102,7 +102,7 @@ bundle/开发环境：`NOKORIBI_QQ_BOT_COMMAND_PANEL`（默认 `true`）。`comm
 
 ## 26.6 安全与风险
 
-- 面板内容仅为命令名与描述（代码内公开文案）；不得把 secret、内部 URL、用户数据写入 command description（命令描述会展示给用户）。
+- 面板内容仅为命令名与描述（代码内公开文案，简体中文，D186）；不得把 secret、内部 URL、用户数据写入 command description（命令描述会展示给用户）。
 - 面板写入使用 Bot access token，属 app 级配置；默认开启，可用 `commandPanel=false` 关闭。
 - 面板是发现性能力，失败不改变消息闭环与审批/提问路径；Auto review 不覆盖面板同步（非工具调用），但也不接触用户消息内容。
 - 群聊面板未实现：群聊命令仍依赖用户手动 @bot 输入；不在 V23 验收范围。
